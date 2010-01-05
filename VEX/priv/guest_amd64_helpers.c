@@ -578,9 +578,9 @@ static void initCounts ( void )
 
 
 /* CALLED FROM GENERATED CODE: CLEAN HELPER */
+/* called from assembly */
 /* Calculate all the 6 flags from the supplied thunk parameters.
    Worker function, not directly called from generated code. */
-static
 ULong amd64g_calculate_rflags_all_WRK ( ULong cc_op, 
                                         ULong cc_dep1_formal, 
                                         ULong cc_dep2_formal,

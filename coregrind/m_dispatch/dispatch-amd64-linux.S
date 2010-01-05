@@ -136,6 +136,9 @@ VG_(run_innerloop__dispatch_unprofiled):
 	subl	$1, 0(%rsp)
 	jz	counter_is_zero
 
+	cmpl    $0, VG_(run_natively)
+	jne     run_natively
+	
 	/* try a fast lookup in the translation cache */
 	movq	%rax, %rbx		/* next guest addr */
 	andq	$VG_TT_FAST_MASK, %rbx	/* entry# */
@@ -152,6 +155,42 @@ VG_(run_innerloop__dispatch_unprofiled):
 	   VG_(run_innerloop__dispatch_unprofiled). */
 	/*NOTREACHED*/
 
+run_natively:
+	/* %rbp is client state.  Restore it all. */
+	movq OFFSET_amd64_RSP(%rbp), %r10
+	movq OFFSET_amd64_RIP(%rbp), %rbx
+	movq OFFSET_amd64_RBP(%rbp), %rcx
+	movq %rbx, -8(%r10)
+	movq %rcx, -16(%r10)
+
+	/* Figure out the flags */
+	pushq %r10
+	movq OFFSET_amd64_CC_OP(%rbp), %rdi
+	movq OFFSET_amd64_CC_DEP1(%rbp), %rsi
+	movq OFFSET_amd64_CC_DEP2(%rbp), %rdx
+	movq OFFSET_amd64_CC_NDEP(%rbp), %rcx
+	call amd64g_calculate_rflags_all_WRK@GOTPCREL(%rip)
+	popq %r10
+	movq %rax, -24(%r10)
+	subq $24, %r10
+
+	movq %r10, %rsp /* Back on the client stack */
+	movq OFFSET_amd64_RAX(%rbp), %rax
+	movq OFFSET_amd64_RBX(%rbp), %rbx
+	movq OFFSET_amd64_RCX(%rbp), %rcx
+	movq OFFSET_amd64_RDX(%rbp), %rdx
+	movq OFFSET_amd64_R8(%rbp), %r8
+	movq OFFSET_amd64_R9(%rbp), %r9
+	movq OFFSET_amd64_R10(%rbp), %r10
+	movq OFFSET_amd64_R11(%rbp), %r11
+	movq OFFSET_amd64_R12(%rbp), %r12
+	movq OFFSET_amd64_R13(%rbp), %r13
+	movq OFFSET_amd64_R14(%rbp), %r14
+	movq OFFSET_amd64_R15(%rbp), %r15
+	popf
+	popq %rbp
+	ret
+	
 /*----------------------------------------------------*/
 /*--- PROFILING dispatcher (can be much slower)    ---*/
 /*----------------------------------------------------*/

@@ -73,6 +73,8 @@
 #endif
 
 
+int VG_(run_natively);
+
 /*====================================================================*/
 /*=== Counters, for profiling purposes only                        ===*/
 /*====================================================================*/
@@ -447,6 +449,8 @@ void main_process_cmd_line_options ( /*OUT*/Bool* logging_to_fd,
       else if VG_BOOL_CLO(arg, "--error-limit",    VG_(clo_error_limit)) {}
       else if VG_INT_CLO (arg, "--error-exitcode", VG_(clo_error_exitcode)) {}
       else if VG_BOOL_CLO(arg, "--show-emwarns",   VG_(clo_show_emwarns)) {}
+
+      else if VG_BOOL_CLO(arg, "--native",         VG_(run_natively)) {}
 
       else if VG_BOOL_CLO(arg, "--run-libc-freeres", VG_(clo_run_libc_freeres)) {}
       else if VG_BOOL_CLO(arg, "--show-below-main",  VG_(clo_show_below_main)) {}
