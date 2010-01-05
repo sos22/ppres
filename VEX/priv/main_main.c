@@ -542,9 +542,12 @@ VexTranslateResult LibVEX_Translate ( VexTranslateArgs* vta )
       vex_printf("\n");
    }
 
-   if (vta->instrument1 || vta->instrument2)
-      sanityCheckIRSB( irsb, "after instrumentation",
-                       True/*must be flat*/, guest_word_type );
+   if (vta->instrument1 || vta->instrument2) {
+     irsb = do_iropt_BB ( irsb, specHelper, preciseMemExnsFn, 
+			  vta->guest_bytes_addr );
+     sanityCheckIRSB( irsb, "after instrumentation",
+		      True/*must be flat*/, guest_word_type );
+   }
 
    /* Do a post-instrumentation cleanup pass. */
    if (vta->instrument1 || vta->instrument2) {
