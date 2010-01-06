@@ -1716,12 +1716,12 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, IRExpr* e )
       /* Marshal args, do the call. */
       doHelperCall( env, False, NULL, e->Iex.CCall.cee, e->Iex.CCall.args );
 
-      /* Move to dst, and zero out the top 32 bits if the result type is
-         Ity_I32.  Probably overkill, but still .. */
+      /* Move to dst, and zero out the top 32 bits if the result
+	 type is Ity_I32.  Probably overkill, but still .. */
       if (e->Iex.CCall.retty == Ity_I64)
-         addInstr(env, mk_iMOVsd_RR(hregAMD64_RAX(), dst));
+	  addInstr(env, mk_iMOVsd_RR(hregAMD64_RAX(), dst));
       else
-         addInstr(env, AMD64Instr_MovZLQ(hregAMD64_RAX(), dst));
+	  addInstr(env, AMD64Instr_MovZLQ(hregAMD64_RAX(), dst));
 
       return dst;
    }
@@ -3574,6 +3574,17 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, IRExpr* e )
       return dst;
    }
 
+   if (e->tag == Iex_CCall) {
+       AMD64AMode *rsp = AMD64AMode_IR(0, hregAMD64_RSP());
+       HReg dst = newVRegV(env);
+
+       doHelperCall( env, False, NULL, e->Iex.CCall.cee, e->Iex.CCall.args );
+       addInstr(env, AMD64Instr_Push(AMD64RMI_Reg(hregAMD64_RDX())));
+       addInstr(env, AMD64Instr_Push(AMD64RMI_Reg(hregAMD64_RAX())));
+       addInstr(env, AMD64Instr_SseLdSt(True, 16, dst, rsp));
+       add_to_rsp(env, 16);
+       return dst;
+   }
    vec_fail:
    vex_printf("iselVecExpr (amd64, subarch = %s): can't reduce\n",
               LibVEX_ppVexHwCaps(VexArchAMD64, env->hwcaps));
