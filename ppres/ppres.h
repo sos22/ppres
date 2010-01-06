@@ -32,3 +32,15 @@ struct rdtsc_record {
 #define RECORD_rdtsc 4
 	ULong stashed_tsc;
 };
+
+struct mem_read_record {
+#define RECORD_mem_read 5
+	void *ptr;
+	/* Followed by the data */
+};
+
+struct mem_write_record {
+#define RECORD_mem_write 6
+	void *ptr;
+	/* Followed by the data */
+};
