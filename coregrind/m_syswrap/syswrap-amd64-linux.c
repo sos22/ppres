@@ -139,6 +139,14 @@ Long do_syscall_clone_amd64_linux ( Word (*fn)(void *),
                                     Long* child_tid, 
                                     Long* parent_tid, 
                                     vki_modify_ldt_t * );
+Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
+				    void *stack,
+				    Long flags,
+				    void *arg,
+				    Long *child_tid,
+				    Long *parent_tid,
+				    vki_modify_ldt_t *) =
+	do_syscall_clone_amd64_linux;
 asm(
 ".text\n"
 "do_syscall_clone_amd64_linux:\n"
@@ -291,7 +299,7 @@ static SysRes do_clone ( ThreadId ptid,
    VG_(sigprocmask)(VKI_SIG_SETMASK, &blockall, &savedmask);
 
    /* Create the new thread */
-   rax = do_syscall_clone_amd64_linux(
+   rax = tool_provided_clone_syscall(
             ML_(start_thread_NORETURN), stack, flags, &VG_(threads)[ctid],
             child_tidptr, parent_tidptr, NULL
          );

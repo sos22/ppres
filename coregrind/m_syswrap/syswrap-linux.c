@@ -59,6 +59,8 @@
 #include "priv_syswrap-linux.h"
 
 
+void (*VG_(tool_provided_thread_starting))(void);
+
 // Run a thread from beginning to end and return the thread's
 // scheduler-return-code.
 static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
@@ -87,6 +89,9 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
 
    /* Thread created with all signals blocked; scheduler will set the
       appropriate mask */
+
+   if (VG_(tool_provided_thread_starting))
+	   VG_(tool_provided_thread_starting)();
 
    ret = VG_(scheduler)(tid);
 

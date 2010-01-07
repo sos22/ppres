@@ -36,6 +36,8 @@
 #include "pub_core_libcproc.h"      // For VG_(gettid)()
 #include "priv_sema.h"
 
+Bool VG_(tool_handles_synchronisation);
+
 /* 
    Slower (than the removed futex-based sema scheme) but more portable
    pipe-based token passing scheme.
@@ -93,6 +95,9 @@ void ML_(sema_down)( vg_sema_t *sema, Bool as_LL )
    Int ret;
    Int lwpid = VG_(gettid)();
 
+   if (VG_(tool_handles_synchronisation))
+      return;
+
    vg_assert(sema->owner_lwpid != lwpid); /* can't have it already */
    vg_assert(sema->pipe[0] != sema->pipe[1]);
 
@@ -122,6 +127,10 @@ void ML_(sema_up)( vg_sema_t *sema, Bool as_LL )
 {
    Int ret;
    Char buf[2];
+
+   if (VG_(tool_handles_synchronisation))
+      return;
+
    vg_assert(as_LL == sema->held_as_LL);
    buf[0] = sema_char; 
    buf[1] = 0;

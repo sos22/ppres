@@ -26,16 +26,36 @@
 #include "coroutines.h"
 
 #define NONDETERMINISM_POISON 0xf001dead
+extern ThreadId VG_(running_tid);
+extern Bool VG_(in_generated_code);
+extern Bool VG_(tool_handles_synchronisation);
 
 extern ULong (*tool_provided_rdtsc)(void);
+extern void (*VG_(tool_provided_thread_starting))(void);
+extern Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
+					   void *stack,
+					   Long flags,
+					   void *arg,
+					   Long *child_tid,
+					   Long *parent_tid,
+					   vki_modify_ldt_t *);
 
 /* Shouldn't really be calling these from here.  Oh well. */
 extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
+struct replay_thread {
+	struct replay_thread *next_thread;
+	struct coroutine coroutine;
+	ThreadId id;
+	Bool in_generated;
+};
+
 static struct coroutine
-replay_state_machine,
-root_thread_context;
+replay_state_machine;
+static struct replay_thread *
+head_thread, *
+current_thread;
 
 #define CSR_BUFFER 16
 
@@ -59,6 +79,25 @@ static struct {
 		} mem_write;
 	} u;
 } client_stop_reason;
+
+static inline Word
+syscall_sysnr(void)
+{
+	return client_stop_reason.state->guest_RAX;
+}
+
+static inline Word
+syscall_arg_1(void)
+{
+	return client_stop_reason.state->guest_RDI;
+}
+
+static inline Word
+syscall_arg_2(void)
+{
+	return client_stop_reason.state->guest_RSI;
+}
+
 
 static struct {
 	unsigned long rdtsc;
@@ -156,15 +195,22 @@ coroutine_bad_return_c(const char *name)
 }
 
 static void
-run_client(void)
+run_client(struct replay_thread *who)
 {
-	run_coroutine(&replay_state_machine, &root_thread_context);
+	current_thread = who;
+	run_coroutine(&replay_state_machine, &who->coroutine);
 }
 
 static void
-run_replay_machine()
+run_replay_machine(void)
 {
-	run_coroutine(&root_thread_context, &replay_state_machine);
+	struct replay_thread *whom;
+	whom = current_thread;
+	current_thread->in_generated = VG_(in_generated_code);
+	run_coroutine(&whom->coroutine, &replay_state_machine);
+	tl_assert(current_thread == whom);
+	VG_(running_tid) = current_thread->id;
+	VG_(in_generated_code) = current_thread->in_generated;
 }
 
 static void
@@ -603,10 +649,22 @@ instrument_func(VgCallbackClosure *closure,
 	return sb_out;
 }
 
-static void
-replay_footstep_record(struct footstep_record *fr)
+static struct replay_thread *
+get_thread(ThreadId id)
 {
-	run_client();
+	struct replay_thread *rt;
+
+	for (rt = head_thread; rt && rt->id != id; rt = rt->next_thread)
+		;
+	tl_assert(rt != NULL);
+	return rt;
+}
+
+static void
+replay_footstep_record(struct footstep_record *fr,
+		       struct record_header *rh)
+{
+	run_client(get_thread(rh->tid));
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_footstep);
 	tl_assert(client_stop_reason.state->guest_RIP == fr->rip);
 	tl_assert(client_stop_reason.state->guest_RAX == fr->rax);
@@ -641,7 +699,7 @@ process_memory_records(void)
 static void
 replay_syscall_record(struct syscall_record *sr)
 {
-	run_client();
+	run_client(current_thread);
 
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_syscall);
 	tl_assert(client_stop_reason.state->guest_RAX == sr->syscall_nr);
@@ -681,7 +739,7 @@ replay_syscall_record(struct syscall_record *sr)
 	case __NR_set_robust_list:
 	case __NR_rt_sigaction:
 	case __NR_rt_sigprocmask:
-
+	case __NR_exit:
 	case __NR_futex: /* XXX not quite right, but good enough for
 			  * now. */
 
@@ -696,9 +754,13 @@ replay_syscall_record(struct syscall_record *sr)
 		finish_this_record(&logfile);
 		break;
 
+	case __NR_clone: /* XXX hmm... */
+		client_stop_reason.state->guest_RIP += 2;
+
 		/* Bizarre calling convention: returns the PID, so we need
 		   to run the call and then shove the results in. */
 	case __NR_set_tid_address:
+
 		if (sr_isError(sr->syscall_res)) {
 			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
 		} else {
@@ -739,6 +801,7 @@ replay_syscall_record(struct syscall_record *sr)
 		client_stop_reason.state->guest_RAX = addr;
 		break;
 	}
+
 	default:
 		VG_(printf)("don't know how to replay syscall %lld yet\n",
 			    client_stop_reason.state->guest_RAX);
@@ -749,7 +812,7 @@ replay_syscall_record(struct syscall_record *sr)
 static void
 replay_rdtsc_record(struct rdtsc_record *rr)
 {
-	run_client();
+	run_client(current_thread);
 
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_rdtsc);
 	client_resume.rdtsc = rr->stashed_tsc;
@@ -765,7 +828,7 @@ replay_mem_read_record(struct record_header *rh,
 	void *recorded_read;
 	int safe;
 
-	run_client();
+	run_client(current_thread);
 
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_mem_read);
 	tl_assert(client_stop_reason.u.mem_read.ptr == mrr->ptr);
@@ -803,7 +866,7 @@ replay_mem_write_record(struct record_header *rh,
 	void *recorded_write;
 	int safe;
 
-	run_client();
+	run_client(current_thread);
 
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_mem_write);
 	tl_assert(client_stop_reason.u.mem_write.ptr == mwr->ptr);
@@ -846,7 +909,7 @@ replay_state_machine_fn(void)
 				    rh->tid, VG_(get_running_tid)());
 		switch (rh->cls) {
 		case RECORD_footstep:
-			replay_footstep_record(payload);
+			replay_footstep_record(payload, rh);
 			break;
 		case RECORD_syscall:
 			replay_syscall_record(payload);
@@ -864,11 +927,20 @@ replay_state_machine_fn(void)
 		case RECORD_mem_write:
 			replay_mem_write_record(rh, payload);
 			break;
+		case RECORD_new_thread:
+			/* Don't actually need to do anything here:
+			   we'll get a clone syscall record in a
+			   second, and that's more useful. */
+			finish_this_record(&logfile);
+			break;
 		default:
 			VG_(tool_panic)((signed char *)"Unknown replay record type!");
 		}
 	}
 }
+
+static struct replay_thread *
+spawning_thread;
 
 static void
 init(void)
@@ -884,10 +956,15 @@ init(void)
 		       replay_state_machine_fn,
 		       0);
 
+	head_thread = VG_(malloc)("head_thread", sizeof(*head_thread));
+	VG_(memset)(head_thread, 0, sizeof(*head_thread));
+	head_thread->id = 1;
+
 	/* Run it.  It should come back here to get the first
 	   instruction of the program executed. */
 	VG_(printf)("Invoking replay state machine.\n");
-	run_replay_machine();
+	current_thread = head_thread;
+	run_coroutine(&head_thread->coroutine, &replay_state_machine);
 	VG_(printf)("Replay state machine activated client.\n");
 }
 
@@ -906,9 +983,64 @@ replay_rdtsc(void)
 }
 
 static void
+new_thread_starting(void)
+{
+	if (spawning_thread) {
+		VG_(printf)("New thread starting, in gen %d.\n",
+			    VG_(in_generated_code));
+		spawning_thread->id = VG_(get_running_tid)();
+		run_replay_machine();
+		VG_(printf)("New thread starting for real, in gen %d.\n",
+			    VG_(in_generated_code));
+	}
+}
+
+static Long
+replay_clone_syscall(Word (*fn)(void *),
+		     void* stack,
+		     Long  flags,
+		     void* arg,
+		     Long* child_tid,
+		     Long* parent_tid,
+		     vki_modify_ldt_t *foo)
+{
+	struct replay_thread *rt, *local_thread;
+
+	VG_(printf)("Clone syscall\n");
+	rt = VG_(malloc)("child thread", sizeof(*rt));
+	VG_(memset)(rt, 0, sizeof(*rt));
+	spawning_thread = rt;
+	make_coroutine(&rt->coroutine,
+		       "child client thread",
+		       stack,
+		       0,
+		       fn,
+		       1,
+		       arg);
+
+	VG_(printf)("Running new child briefly.\n");
+	VG_(running_tid) = VG_INVALID_THREADID;
+	local_thread = current_thread;
+	VG_(in_generated_code) = False;
+	run_client(spawning_thread);
+	current_thread = local_thread;
+	VG_(running_tid) = current_thread->id;
+	VG_(printf)("Back from child.\n");
+
+	rt->next_thread = head_thread;
+	head_thread = rt;
+
+	return 52;
+}
+
+static void
 pre_clo_init(void)
 {
+	VG_(tool_handles_synchronisation) = True;
 	tool_provided_rdtsc = replay_rdtsc;
+	VG_(tool_provided_thread_starting) = new_thread_starting;
+	tool_provided_clone_syscall =
+		replay_clone_syscall;
 
 	VG_(details_name)((signed char *)"ppres_rep");
 	VG_(details_version)((signed char *)"0.0");

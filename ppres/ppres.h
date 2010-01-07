@@ -45,3 +45,6 @@ struct mem_write_record {
 	void *ptr;
 	/* Followed by the data */
 };
+
+/* No payload data */
+#define RECORD_new_thread 7

@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 #include <sys/fcntl.h>
 #include <sys/resource.h>
+#include <linux/sched.h>
 #include <linux/utsname.h>
 #include <setjmp.h>
 #include <time.h>
@@ -585,6 +586,15 @@ pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 		syscall_args[3] = flags;
 		break;
 	}
+	case __NR_clone: {
+		UWord flags = syscall_args[0];
+		tl_assert(flags ==
+			  (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
+			   CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS |
+			   CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID));
+		emit_record(&logfile, RECORD_new_thread, 0);
+		break;
+	}
 	}
 }
 
@@ -620,6 +630,8 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_rt_sigaction:
 	case __NR_rt_sigprocmask:
 	case __NR_lseek:
+	case __NR_clone:
+	case __NR_exit:
 		break;
 
 	case __NR_mmap: {
