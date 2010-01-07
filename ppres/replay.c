@@ -136,12 +136,15 @@ close_logfile(struct record_consumer *rc)
 	VG_(free)(rc->current_chunk);
 }
 
+static void success(void);
+
 static void
 advance_chunk(struct record_consumer *rc)
 {
 	unsigned to_read;
 	Int actually_read;
 
+	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
 	VG_(memmove)(rc->current_chunk,
 		     rc->current_chunk + rc->offset_in_current_chunk,
 		     rc->avail_in_current_chunk - rc->offset_in_current_chunk);
@@ -153,6 +156,12 @@ advance_chunk(struct record_consumer *rc)
 			  rc->current_chunk + rc->avail_in_current_chunk,
 			  to_read);
 	rc->avail_in_current_chunk += actually_read;
+	if (actually_read == 0) {
+		/* We've hit the end of the logfile.  That counts as
+		 * success. */
+		success();
+		/* Don't get here */
+	}
 }
 
 static struct record_header *
@@ -163,19 +172,27 @@ get_current_record(struct record_consumer *rc)
 	if (rc->offset_in_current_chunk + sizeof(struct record_header) >
 	    rc->avail_in_current_chunk)
 		advance_chunk(rc);
+	tl_assert(rc->avail_in_current_chunk >=
+		  rc->offset_in_current_chunk + sizeof(struct record_header));
 	res = rc->current_chunk + rc->offset_in_current_chunk;
 	if (rc->offset_in_current_chunk + res->size >
 	    rc->avail_in_current_chunk) {
 		advance_chunk(rc);
 		res = rc->current_chunk + rc->offset_in_current_chunk;
 	}
+	tl_assert(rc->avail_in_current_chunk >=
+		  rc->offset_in_current_chunk + sizeof(struct record_header));
+	tl_assert(rc->avail_in_current_chunk >=
+		  rc->offset_in_current_chunk + res->size);
 	return res;
 }
 
 static void
 finish_this_record(struct record_consumer *rc)
 {
+	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
 	rc->offset_in_current_chunk += get_current_record(rc)->size;
+	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
 }
 
 static struct record_consumer
@@ -218,13 +235,99 @@ run_replay_machine(void)
 	VG_(in_generated_code) = current_thread->in_generated;
 }
 
+struct pending_footstep_record {
+	struct pending_footstep_record *next;
+	struct pending_footstep_record *prev;
+	struct footstep_record fr;
+};
+
+/* We allow footstep records to deviate slightly during validation,
+   because threads don't have to match up *exactly* if they happen not
+   to be communicating. */
+struct thread_footstep_list {
+	struct thread_footstep_list *next;
+	ThreadId thread;
+	/* Footsteps which have gone past in the log but which we
+	   haven't yet seen */
+	struct pending_footstep_record *first_in_log_not_seen;
+	struct pending_footstep_record *last_in_log_not_seen;
+	/* Footsteps which we've seen in real life but haven't yet
+	   appeared in the log. */
+	struct pending_footstep_record *first_seen_not_in_log;
+	struct pending_footstep_record *last_seen_not_in_log;
+};
+
+static struct thread_footstep_list *
+tfl;
+
+static void
+capture_footstep_record(const VexGuestAMD64State *state,
+			struct footstep_record *fr)
+{
+	fr->rip = state->guest_RIP;
+	fr->rax = state->guest_RAX;
+	fr->rdx = state->guest_RDX;
+	fr->rcx = state->guest_RCX;
+}
+
+static struct thread_footstep_list *
+get_tfl(ThreadId thread)
+{
+	struct thread_footstep_list *t;
+	for (t = tfl; t && t->thread != thread; t = t->next)
+		;
+	if (!t) {
+		t = VG_(malloc)("thread_footstep_list", sizeof(*t));
+		VG_(memset)(t, 0, sizeof(*t));
+		t->next = tfl;
+		t->thread = thread;
+		tfl = t;
+	}
+	return t;
+}
+
+static void
+validate_footstep_record(const struct footstep_record *reference,
+			 struct footstep_record *seen)
+{
+	tl_assert(reference->rip == seen->rip);
+	tl_assert(reference->rax == seen->rax);
+	tl_assert(reference->rdx == seen->rdx);
+	tl_assert(reference->rcx == seen->rcx ||
+		  reference->rcx == NONDETERMINISM_POISON);
+}
+
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
-	client_stop_reason.cls = CLIENT_STOP_footstep;
-	client_stop_reason.state = state;
+	struct thread_footstep_list *t;
+	struct pending_footstep_record *pfr;
+	struct footstep_record fr;
+
+	if (search_mode)
+		return;
+
 	state->guest_RIP = rip;
-	run_replay_machine();
+
+	t = get_tfl(VG_(get_running_tid)());
+	if ((pfr = t->first_in_log_not_seen)) {
+		capture_footstep_record(state, &fr);
+		validate_footstep_record(&pfr->fr, &fr);
+		t->first_in_log_not_seen = pfr->next;
+		if (t->last_in_log_not_seen == pfr)
+			t->last_in_log_not_seen = NULL;
+		VG_(free)(pfr);
+	} else {
+		pfr = VG_(malloc)("pending_footstep_record",
+				  sizeof(*pfr));
+		VG_(memset)(pfr, 0, sizeof(*pfr));
+		capture_footstep_record(state, &pfr->fr);
+		if (t->last_seen_not_in_log)
+			t->last_seen_not_in_log->next = pfr;
+		t->last_seen_not_in_log = pfr;
+		if (!t->first_seen_not_in_log)
+			t->first_seen_not_in_log = pfr;
+	}
 }
 
 static void
@@ -669,13 +772,32 @@ static void
 replay_footstep_record(struct footstep_record *fr,
 		       struct record_header *rh)
 {
-	run_client(get_thread(rh->tid));
-	tl_assert(client_stop_reason.cls == CLIENT_STOP_footstep);
-	tl_assert(client_stop_reason.state->guest_RIP == fr->rip);
-	tl_assert(client_stop_reason.state->guest_RAX == fr->rax);
-	tl_assert(client_stop_reason.state->guest_RDX == fr->rdx);
-	tl_assert(client_stop_reason.state->guest_RCX == fr->rcx ||
-		  client_stop_reason.state->guest_RCX == NONDETERMINISM_POISON);
+	struct pending_footstep_record *pfr;
+	struct thread_footstep_list *t;
+
+	if (search_mode) {
+		finish_this_record(&logfile);
+		return;
+	}
+
+	t = get_tfl(rh->tid);
+	if ((pfr = t->first_seen_not_in_log)) {
+		validate_footstep_record(fr, &pfr->fr);
+		t->first_seen_not_in_log = pfr->next;
+		if (t->last_seen_not_in_log == pfr)
+			t->last_seen_not_in_log = NULL;
+		VG_(free)(pfr);
+	} else {
+		pfr = VG_(malloc)("pending_footstep_record",
+				  sizeof(*pfr));
+		VG_(memset)(pfr, 0, sizeof(*pfr));
+		pfr->fr = *fr;
+		if (t->last_in_log_not_seen)
+			t->last_in_log_not_seen->next = pfr;
+		t->last_in_log_not_seen = pfr;
+		if (!t->first_in_log_not_seen)
+			t->first_in_log_not_seen = pfr;
+	}
 	finish_this_record(&logfile);
 }
 
@@ -723,6 +845,8 @@ replay_syscall_record(struct syscall_record *sr)
 	case __NR_getrlimit:
 	case __NR_clock_gettime:
 	case __NR_lseek:
+	case __NR_exit_group:
+	case __NR_exit:
 
 	case __NR_write: /* Should maybe do something special with
 			    these so that we see stuff on stdout? */
@@ -740,11 +864,9 @@ replay_syscall_record(struct syscall_record *sr)
 	case __NR_mprotect:
 	case __NR_arch_prctl:
 	case __NR_munmap:
-	case __NR_exit_group:
 	case __NR_set_robust_list:
 	case __NR_rt_sigaction:
 	case __NR_rt_sigprocmask:
-	case __NR_exit:
 	case __NR_futex: /* XXX not quite right, but good enough for
 			  * now. */
 
@@ -833,7 +955,7 @@ replay_mem_read_record(struct record_header *rh,
 	void *recorded_read;
 	int safe;
 
-	run_client(current_thread);
+	run_client(get_thread(rh->tid));
 
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_mem_read);
 	tl_assert(client_stop_reason.u.mem_read.ptr == mrr->ptr);
@@ -871,7 +993,7 @@ replay_mem_write_record(struct record_header *rh,
 	void *recorded_write;
 	int safe;
 
-	run_client(current_thread);
+	run_client(get_thread(rh->tid));
 
 	tl_assert(client_stop_reason.cls == CLIENT_STOP_mem_write);
 	tl_assert(client_stop_reason.u.mem_write.ptr == mwr->ptr);
@@ -906,6 +1028,8 @@ replay_state_machine_fn(void)
 	void *payload;
 
 	VG_(printf)("Replay state machine starting...\n");
+	if (VG_(running_tid) == 0)
+		VG_(running_tid) = 1;
 	while (1) {
 		rh = get_current_record(&logfile);
 		payload = rh + 1;
@@ -958,6 +1082,7 @@ init_replay_machine(void)
 	current_thread = head_thread;
 	run_coroutine(&head_thread->coroutine, &replay_state_machine);
 	VG_(printf)("Replay state machine activated client.\n");
+	VG_(running_tid) = VG_INVALID_THREADID;
 }
 
 static long
@@ -1011,6 +1136,22 @@ init(void)
 static void
 fini(Int ignore)
 {
+	VG_(printf)("Huh? Didn't expect fini() to get called.\n");
+}
+
+static long
+my__exit(int code)
+{
+	long res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_exit), "rdi" (code));
+	return res;
+}
+
+static void
+success(void)
+{
 	close_logfile(&logfile);
 	if (search_mode) {
 		/* Schedules are currently dummy structures. */
@@ -1019,6 +1160,7 @@ fini(Int ignore)
 	} else {
 		VG_(printf)("Finished validation phase.\n");
 	}
+	my__exit(0);
 }
 
 static ULong
@@ -1065,14 +1207,16 @@ replay_clone_syscall(Word (*fn)(void *),
 		       1,
 		       arg);
 
-	VG_(printf)("Running new child briefly.\n");
+	VG_(printf)("Running new child briefly, I am %d.\n",
+		    VG_(running_tid));
 	VG_(running_tid) = VG_INVALID_THREADID;
 	local_thread = current_thread;
 	VG_(in_generated_code) = False;
 	run_client(spawning_thread);
 	current_thread = local_thread;
 	VG_(running_tid) = current_thread->id;
-	VG_(printf)("Back from child.\n");
+	VG_(printf)("Back from child, I am %d.\n",
+		    VG_(running_tid));
 
 	rt->next_thread = head_thread;
 	head_thread = rt;
