@@ -1,3 +1,6 @@
+/* The replay engine itself.  We structure this as, effectively, a
+   pair of co-routines.  One of the co-routines runs the client code
+   and the other one runs the replay engine state machine. */
 #define _LARGEFILE64_SOURCE
 #include <asm/unistd.h>
 #include <sys/mman.h>
@@ -20,6 +23,7 @@
 #include "libvex_trc_values.h"
 
 #include "ppres.h"
+#include "coroutines.h"
 
 #define NONDETERMINISM_POISON 0xf001dead
 
@@ -28,6 +32,37 @@ extern ULong (*tool_provided_rdtsc)(void);
 /* Shouldn't really be calling these from here.  Oh well. */
 extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
+
+static struct coroutine
+replay_state_machine,
+root_thread_context;
+
+#define CSR_BUFFER 16
+
+static struct {
+	enum {CLIENT_STOP_footstep,
+	      CLIENT_STOP_syscall,
+	      CLIENT_STOP_rdtsc,
+	      CLIENT_STOP_mem_read,
+	      CLIENT_STOP_mem_write} cls;
+	VexGuestAMD64State *state;
+	union {
+		struct {
+			void *ptr;
+			unsigned size;
+			unsigned char buffer[CSR_BUFFER];
+		} mem_read;
+		struct {
+			void *ptr;
+			unsigned size;
+			unsigned char buffer[CSR_BUFFER];
+		} mem_write;
+	} u;
+} client_stop_reason;
+
+static struct {
+	unsigned long rdtsc;
+} client_resume;
 
 struct record_consumer {
 	int fd;
@@ -112,224 +147,64 @@ my_mprotect(void *base, size_t len, int prot)
 	     "rsi" (len), "rdx" (prot));
 }
 
-static void
-replay_memory(struct record_header *rh, struct memory_record *mr)
+void
+coroutine_bad_return_c(const char *name)
 {
-	VG_(memcpy)(mr->ptr, mr + 1, rh->size - sizeof(*mr) - sizeof(*rh));
-}
-
-static int
-replay_syscall(VexGuestAMD64State *state)
-{
-	struct record_header *rh;
-	struct syscall_record *sr;
-
-	rh = get_current_record(&logfile);
-	sr = (struct syscall_record *)(rh + 1);
-
-	tl_assert(sr->syscall_nr == state->guest_RAX);
-
-	switch (state->guest_RAX) {
-		/* Very easy syscalls: don't bother running them, and
-		   just drop in the recorded return value. */
-	case __NR_access:
-	case __NR_open:
-	case __NR_read:
-	case __NR_fstat:
-	case __NR_uname:
-	case __NR_getcwd:
-	case __NR_close:
-	case __NR_stat:
-	case __NR_getrlimit:
-	case __NR_clock_gettime:
-	case __NR_lseek:
-
-	case __NR_write: /* Should maybe do something special with
-			    these so that we see stuff on stdout? */
-
-		if (sr_isError(sr->syscall_res))
-			state->guest_RAX = -sr_Err(sr->syscall_res);
-		else
-			state->guest_RAX = sr_Res(sr->syscall_res);
-		finish_this_record(&logfile);
-		return 1;
-
-		/* Moderately easy syscalls: run them and assert that
-		   the result is the same. */
-	case __NR_brk:
-	case __NR_mprotect:
-	case __NR_arch_prctl:
-	case __NR_munmap:
-	case __NR_exit_group:
-	case __NR_set_robust_list:
-	case __NR_rt_sigaction:
-	case __NR_rt_sigprocmask:
-
-	case __NR_futex: /* XXX not quite right, but good enough for
-			  * now. */
-
-		VG_(client_syscall)(VG_(get_running_tid)(),
-				    VEX_TRC_JMP_SYS_SYSCALL);
-		if (sr_isError(sr->syscall_res))
-			tl_assert(-state->guest_RAX ==
-				  sr_Err(sr->syscall_res));
-		else
-			tl_assert(state->guest_RAX ==
-				  sr_Res(sr->syscall_res));
-		finish_this_record(&logfile);
-		return 1;
-
-		/* Bizarre calling convention: returns the PID, so we need
-		   to run the call and then shove the results in. */
-	case __NR_set_tid_address:
-		if (sr_isError(sr->syscall_res)) {
-			state->guest_RAX = -sr_Err(sr->syscall_res);
-		} else {
-			VG_(client_syscall)(VG_(get_running_tid)(),
-					    VEX_TRC_JMP_SYS_SYSCALL);
-			state->guest_RAX = sr_Res(sr->syscall_res);
-		}
-		finish_this_record(&logfile);
-		return 1;
-
-	case __NR_mmap: {
-		Addr addr;
-		ULong length;
-		SysRes map_res;
-		Word prot;
-
-		if (sr_isError(sr->syscall_res)) {
-			state->guest_RAX = -sr_Err(sr->syscall_res);
-			finish_this_record(&logfile);
-			return 1;
-		}
-		addr = sr_Res(sr->syscall_res);
-		length = state->guest_RSI;
-		prot = state->guest_RDX;
-		/* Turn the mmap() into a fixed anonymous one. */
-		/* The syscall record will be followed by a bunch of
-		   memory write ones which will actually populate it
-		   for us, but we need to fiddle with the page
-		   protections to make sure that they can. */
-		map_res = VG_(am_mmap_anon_fixed_client)(addr,
-							 length,
-							 prot | PROT_WRITE);
-		tl_assert(!sr_isError(map_res));
-		finish_this_record(&logfile);
-		rh = get_current_record(&logfile);
-		while (rh->cls == RECORD_memory) {
-			replay_memory(rh, (struct memory_record *)(rh + 1));
-			finish_this_record(&logfile);
-			rh = get_current_record(&logfile);
-		}
-		if (!(prot & PROT_WRITE))
-			my_mprotect((void *)addr, length, prot);
-		state->guest_RAX = addr;
-		return 1;
-	}
-	default:
-		VG_(printf)("don't know how to replay syscall %lld yet\n",
-			    state->guest_RAX);
-		VG_(exit)(1);
-	}
-	return 0;
+	VG_(printf)("Coroutine returned unexpectedly!\n");
+	VG_(printf)("(%s)\n", name);
+	VG_(tool_panic)("Coroutine error");
 }
 
 static void
-replay_footstep(VexGuestAMD64State *state, Word rip,
-		struct footstep_record *fr)
+run_client(void)
 {
-	tl_assert(rip == fr->rip);
-	tl_assert(state->guest_RAX == fr->rax);
-	tl_assert(state->guest_RDX == fr->rdx);
-	if (state->guest_RCX != fr->rcx &&
-	    state->guest_RCX != NONDETERMINISM_POISON)
-		VG_(printf)("Divergence on RCX (%llx vs %lx).\n",
-			    state->guest_RCX, fr->rcx);
+	run_coroutine(&replay_state_machine, &root_thread_context);
 }
 
-static int
-replay_instr(VexGuestAMD64State *state, Word rip)
+static void
+run_replay_machine()
 {
-	struct record_header *rh;
-	int r;
+	run_coroutine(&root_thread_context, &replay_state_machine);
+}
 
-	while (1) {
-		rh = get_current_record(&logfile);
-		switch (rh->cls) {
-		case RECORD_footstep:
-			replay_footstep(state, rip,
-					(struct footstep_record *)(rh + 1));
-			finish_this_record(&logfile);
-			rh = get_current_record(&logfile);
-			if (rh->cls == RECORD_footstep)
-				return 0;
-			break;
+static void
+footstep_event(VexGuestAMD64State *state)
+{
+	client_stop_reason.cls = CLIENT_STOP_footstep;
+	client_stop_reason.state = state;
+	run_replay_machine();
+}
 
-		case RECORD_syscall:
-			r = replay_syscall(state);
-			/* System calls clobber RCX.  Make it obvious
-			   if that's a problem.  It shouldn't be for
-			   programs which use the normal libc wrappers
-			   around syscalls, which is the common case
-			   (remember that we assume the client is
-			   non-malicious). */
-			state->guest_RCX = NONDETERMINISM_POISON;
-			return r;
-
-		case RECORD_memory:
-			replay_memory(rh, (struct memory_record *)(rh + 1));
-			finish_this_record(&logfile);
-			break;
-		case RECORD_rdtsc:
-		case RECORD_mem_read:
-		case RECORD_mem_write:
-			/* Let the instruction run so as we can pick
-			   the result up. */
-			return 0;
-		}
-	}
+static void
+syscall_event(VexGuestAMD64State *state)
+{
+	client_stop_reason.cls = CLIENT_STOP_syscall;
+	client_stop_reason.state = state;
+	run_replay_machine();
 }
 
 static void
 replay_load(void *ptr, unsigned size, const void *read_contents)
 {
-	struct record_header *rh;
-	struct mem_read_record *mrr;
-
-	rh = get_current_record(&logfile);
-	tl_assert(rh->cls == RECORD_mem_read);
-	mrr = (struct mem_read_record *)(rh + 1);
-	if (ptr != mrr->ptr)
-		VG_(printf)("Read from wrong place (%p vs %p)\n",
-			    ptr, mrr->ptr);
-	if (VG_(memcmp)(ptr, mrr + 1, size)) {
-		if (size == 4) {
-			if ( *(unsigned *)ptr != NONDETERMINISM_POISON )
-				VG_(tool_panic)("Memory divergence!\n");
-		} else if (size == 8) {
-			if ( *(unsigned long *)ptr != NONDETERMINISM_POISON )
-				VG_(tool_panic)("Memory divergence!\n");
-		} else {
-			VG_(tool_panic)("Memory divergence!\n");
-		}
-	}
-	finish_this_record(&logfile);
+	client_stop_reason.cls = CLIENT_STOP_mem_read;
+	client_stop_reason.u.mem_read.ptr = ptr;
+	client_stop_reason.u.mem_read.size = size;
+	VG_(memcpy)(client_stop_reason.u.mem_read.buffer,
+		    read_contents,
+		    size);
+	run_replay_machine();
 }
 
 static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
-	struct record_header *rh;
-	struct mem_write_record *mrr;
-
-	rh = get_current_record(&logfile);
-	tl_assert(rh->cls == RECORD_mem_write);
-	mrr = (struct mem_write_record *)(rh + 1);
-	if (ptr != mrr->ptr)
-		VG_(printf)("Wrote to wrong place (%p vs %p)\n",
-			    ptr, mrr->ptr);
-	finish_this_record(&logfile);
+	client_stop_reason.cls = CLIENT_STOP_mem_write;
+	client_stop_reason.u.mem_write.ptr = ptr;
+	client_stop_reason.u.mem_write.size = size;
+	VG_(memcpy)(client_stop_reason.u.mem_write.buffer,
+		    written_bytes,
+		    size);
+	run_replay_machine();
 }
 
 #define mk_helper_load(typ, suffix)                    \
@@ -552,10 +427,8 @@ instrument_func(VgCallbackClosure *closure,
 	IRSB *sb_out;
 	IRStmt *current_in_stmt;
 	IRStmt *out_stmt;
-	IRStmt *tmp_stmt;
 	unsigned i;
 	IRDirty *helper;
-	IRTemp helper_did_instruction;
 
 	sb_out = deepCopyIRSBExceptStmts(sb_in);
 	for (i = 0; i < sb_in->stmts_used; i++) {
@@ -565,16 +438,11 @@ instrument_func(VgCallbackClosure *closure,
 		case Ist_NoOp:
 			break;
 		case Ist_IMark:
-			helper_did_instruction =
-				newIRTemp(sb_out->tyenv,
-					  Ity_I8);
-			helper = unsafeIRDirty_1_N(
-				helper_did_instruction,
-				1,
-				"replay_instr",
-				VG_(fnptr_to_fnentry)(replay_instr),
-				mkIRExprVec_1(
-					IRExpr_Const(IRConst_U64(current_in_stmt->Ist.IMark.addr))));
+			helper = unsafeIRDirty_0_N(
+				0,
+				"footstep_event",
+				VG_(fnptr_to_fnentry)(footstep_event),
+				mkIRExprVec_0());
 
 			/* For now, we ask Valgrind to give us the
 			   entire world state, and to allow us to
@@ -590,17 +458,8 @@ instrument_func(VgCallbackClosure *closure,
 			helper->fxState[0].offset = 0;
 			helper->fxState[0].size = sizeof(VexGuestAMD64State);
 
-			addStmtToIRSB(sb_out, IRStmt_Dirty(helper));
-
-			tmp_stmt = IRStmt_Exit(
-				IRExpr_Binop(Iop_CmpNE8,
-					     IRExpr_Const(IRConst_U8(0)),
-					     IRExpr_RdTmp(helper_did_instruction)),
-				Ijk_Boring,
-				IRConst_U64(
-					current_in_stmt->Ist.IMark.addr +
-					current_in_stmt->Ist.IMark.len));
-			addStmtToIRSB(sb_out, tmp_stmt);
+			addStmtToIRSB(sb_out, out_stmt);
+			out_stmt = IRStmt_Dirty(helper);
 			break;
 		case Ist_AbiHint:
 			break;
@@ -712,13 +571,319 @@ instrument_func(VgCallbackClosure *closure,
 		}
 		addStmtToIRSB(sb_out, out_stmt);
 	}
+
+	if (sb_out->jumpkind == Ijk_Sys_syscall) {
+		helper = unsafeIRDirty_0_N(
+			0,
+			"syscall_event",
+			VG_(fnptr_to_fnentry)(syscall_event),
+			mkIRExprVec_0());
+
+		helper->needsBBP = True;
+
+		helper->mFx = Ifx_Modify;
+		helper->mAddr = IRExpr_Const(IRConst_U64(0));
+		helper->mSize = -1;
+
+		helper->nFxState = 1;
+		helper->fxState[0].fx = Ifx_Modify;
+		helper->fxState[0].offset = 0;
+		helper->fxState[0].size = sizeof(VexGuestAMD64State);
+
+		out_stmt = IRStmt_Dirty(helper);
+		addStmtToIRSB(sb_out, out_stmt);
+		sb_out->jumpkind = Ijk_Boring;
+	}
+	tl_assert(sb_out->jumpkind == Ijk_Boring ||
+		  sb_out->jumpkind == Ijk_Call ||
+		  sb_out->jumpkind == Ijk_Ret);
+
 	return sb_out;
+}
+
+static void
+replay_footstep_record(struct footstep_record *fr)
+{
+	run_client();
+	tl_assert(client_stop_reason.cls == CLIENT_STOP_footstep);
+	tl_assert(client_stop_reason.state->guest_RIP == fr->rip);
+	tl_assert(client_stop_reason.state->guest_RAX == fr->rax);
+	tl_assert(client_stop_reason.state->guest_RDX == fr->rdx);
+	tl_assert(client_stop_reason.state->guest_RCX == fr->rcx ||
+		  client_stop_reason.state->guest_RCX == NONDETERMINISM_POISON);
+	finish_this_record(&logfile);
+}
+
+static void
+replay_memory_record(struct record_header *rh,
+		     struct memory_record *mr)
+{
+	VG_(memcpy)(mr->ptr,
+		    mr + 1,
+		    rh->size - sizeof(*rh) - sizeof(*mr));
+}
+
+static void
+process_memory_records(void)
+{
+	struct record_header *rh;
+
+	rh = get_current_record(&logfile);
+	while (rh->cls == RECORD_memory) {
+		replay_memory_record(rh, (struct memory_record *)(rh + 1));
+		finish_this_record(&logfile);
+		rh = get_current_record(&logfile);
+	}
+}
+
+static void
+replay_syscall_record(struct syscall_record *sr)
+{
+	run_client();
+
+	tl_assert(client_stop_reason.cls == CLIENT_STOP_syscall);
+	tl_assert(client_stop_reason.state->guest_RAX == sr->syscall_nr);
+
+	switch (sr->syscall_nr) {
+		/* Very easy syscalls: don't bother running them, and
+		   just drop in the recorded return value. */
+	case __NR_access:
+	case __NR_open:
+	case __NR_read:
+	case __NR_fstat:
+	case __NR_uname:
+	case __NR_getcwd:
+	case __NR_close:
+	case __NR_stat:
+	case __NR_getrlimit:
+	case __NR_clock_gettime:
+	case __NR_lseek:
+
+	case __NR_write: /* Should maybe do something special with
+			    these so that we see stuff on stdout? */
+
+		if (sr_isError(sr->syscall_res))
+			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
+		else
+			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
+		finish_this_record(&logfile);
+		break;
+
+		/* Moderately easy syscalls: run them and assert that
+		   the result is the same. */
+	case __NR_brk:
+	case __NR_mprotect:
+	case __NR_arch_prctl:
+	case __NR_munmap:
+	case __NR_exit_group:
+	case __NR_set_robust_list:
+	case __NR_rt_sigaction:
+	case __NR_rt_sigprocmask:
+
+	case __NR_futex: /* XXX not quite right, but good enough for
+			  * now. */
+
+		VG_(client_syscall)(VG_(get_running_tid)(),
+				    VEX_TRC_JMP_SYS_SYSCALL);
+		if (sr_isError(sr->syscall_res))
+			tl_assert(-client_stop_reason.state->guest_RAX ==
+				  sr_Err(sr->syscall_res));
+		else
+			tl_assert(client_stop_reason.state->guest_RAX ==
+				  sr_Res(sr->syscall_res));
+		finish_this_record(&logfile);
+		break;
+
+		/* Bizarre calling convention: returns the PID, so we need
+		   to run the call and then shove the results in. */
+	case __NR_set_tid_address:
+		if (sr_isError(sr->syscall_res)) {
+			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
+		} else {
+			VG_(client_syscall)(VG_(get_running_tid)(),
+					    VEX_TRC_JMP_SYS_SYSCALL);
+			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
+		}
+		finish_this_record(&logfile);
+		break;
+
+	case __NR_mmap: {
+		Addr addr;
+		ULong length;
+		SysRes map_res;
+		Word prot;
+
+		if (sr_isError(sr->syscall_res)) {
+			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
+			finish_this_record(&logfile);
+			break;
+		}
+		addr = sr_Res(sr->syscall_res);
+		length = client_stop_reason.state->guest_RSI;
+		prot = client_stop_reason.state->guest_RDX;
+		/* Turn the mmap() into a fixed anonymous one. */
+		/* The syscall record will be followed by a bunch of
+		   memory write ones which will actually populate it
+		   for us, but we need to fiddle with the page
+		   protections to make sure that they can. */
+		map_res = VG_(am_mmap_anon_fixed_client)(addr,
+							 length,
+							 prot | PROT_WRITE);
+		tl_assert(!sr_isError(map_res));
+		finish_this_record(&logfile);
+		process_memory_records();
+		if (!(prot & PROT_WRITE))
+			my_mprotect((void *)addr, length, prot);
+		client_stop_reason.state->guest_RAX = addr;
+		break;
+	}
+	default:
+		VG_(printf)("don't know how to replay syscall %lld yet\n",
+			    client_stop_reason.state->guest_RAX);
+		VG_(exit)(1);
+	}
+}
+
+static void
+replay_rdtsc_record(struct rdtsc_record *rr)
+{
+	run_client();
+
+	tl_assert(client_stop_reason.cls == CLIENT_STOP_rdtsc);
+	client_resume.rdtsc = rr->stashed_tsc;
+
+	finish_this_record(&logfile);
+}
+
+static void
+replay_mem_read_record(struct record_header *rh,
+		       struct mem_read_record *mrr)
+{
+	unsigned recorded_read_size;
+	void *recorded_read;
+	int safe;
+
+	run_client();
+
+	tl_assert(client_stop_reason.cls == CLIENT_STOP_mem_read);
+	tl_assert(client_stop_reason.u.mem_read.ptr == mrr->ptr);
+	recorded_read_size = rh->size - sizeof(*rh) - sizeof(*mrr);
+	recorded_read = mrr + 1;
+	tl_assert(client_stop_reason.u.mem_read.size == recorded_read_size);
+	safe = 1;
+	if (VG_(memcmp)(client_stop_reason.u.mem_read.buffer,
+			recorded_read,
+			recorded_read_size)) {
+		safe = 0;
+		switch (recorded_read_size) {
+		case 4:
+			if (*(unsigned *)client_stop_reason.u.mem_read.buffer ==
+			    NONDETERMINISM_POISON)
+				safe = 1;
+			break;
+		case 8:
+			if (*(unsigned long *)client_stop_reason.u.mem_read.buffer ==
+			    NONDETERMINISM_POISON)
+				safe = 1;
+			break;
+		}
+	}
+	if (!safe)
+		VG_(tool_panic)((signed char *)"Memory divergence!");
+	finish_this_record(&logfile);
+}
+
+static void
+replay_mem_write_record(struct record_header *rh,
+			struct mem_write_record *mwr)
+{
+	unsigned recorded_write_size;
+	void *recorded_write;
+	int safe;
+
+	run_client();
+
+	tl_assert(client_stop_reason.cls == CLIENT_STOP_mem_write);
+	tl_assert(client_stop_reason.u.mem_write.ptr == mwr->ptr);
+	recorded_write_size = rh->size - sizeof(*rh) - sizeof(*mwr);
+	recorded_write = mwr + 1;
+	tl_assert(client_stop_reason.u.mem_write.size == recorded_write_size);
+	safe = 1;
+	if (VG_(memcmp)(client_stop_reason.u.mem_write.buffer,
+			recorded_write,
+			recorded_write_size)) {
+		safe = 0;
+		switch (recorded_write_size) {
+		case 4:
+			if (*(unsigned *)client_stop_reason.u.mem_write.buffer == NONDETERMINISM_POISON)
+				safe = 1;
+			break;
+		case 8:
+			if (*(unsigned long *)client_stop_reason.u.mem_write.buffer == NONDETERMINISM_POISON)
+				safe = 1;
+			break;
+		}
+	}
+	if (!safe)
+		VG_(tool_panic)((signed char *)"Memory divergence!");
+	finish_this_record(&logfile);
+}
+
+static void
+replay_state_machine_fn(void)
+{
+	struct record_header *rh;
+	void *payload;
+
+	VG_(printf)("Replay state machine starting...\n");
+	while (1) {
+		rh = get_current_record(&logfile);
+		payload = rh + 1;
+		switch (rh->cls) {
+		case RECORD_footstep:
+			replay_footstep_record(payload);
+			break;
+		case RECORD_syscall:
+			replay_syscall_record(payload);
+			process_memory_records();
+			break;
+		case RECORD_memory:
+			VG_(tool_panic)((signed char *)"Got a memory record not in a syscall record");
+			break;
+		case RECORD_rdtsc:
+			replay_rdtsc_record(payload);
+			break;
+		case RECORD_mem_read:
+			replay_mem_read_record(rh, payload);
+			break;
+		case RECORD_mem_write:
+			replay_mem_write_record(rh, payload);
+			break;
+		default:
+			VG_(tool_panic)((signed char *)"Unknown replay record type!");
+		}
+	}
 }
 
 static void
 init(void)
 {
+	static unsigned char replay_state_machine_stack[16384];
+
 	open_logfile(&logfile, (signed char *)"logfile1");
+
+	make_coroutine(&replay_state_machine,
+		       "replay_state_machine",
+		       replay_state_machine_stack,
+		       sizeof(replay_state_machine_stack),
+		       replay_state_machine_fn,
+		       0);
+
+	/* Run it.  It should come back here to get the first
+	   instruction of the program executed. */
+	VG_(printf)("Invoking replay state machine.\n");
+	run_replay_machine();
+	VG_(printf)("Replay state machine activated client.\n");
 }
 
 static void
@@ -730,15 +895,9 @@ fini(Int ignore)
 static ULong
 replay_rdtsc(void)
 {
-	struct record_header *rh;
-	struct rdtsc_record *rr;
-
-	rh = get_current_record(&logfile);
-	tl_assert(rh->cls == RECORD_rdtsc);
-	rr = (struct rdtsc_record *)(rh + 1);
-	VG_(printf)("Replay a rdtsc.\n");
-	finish_this_record(&logfile);
-	return rr->stashed_tsc;
+	client_stop_reason.cls = CLIENT_STOP_rdtsc;
+	run_replay_machine();
+	return client_resume.rdtsc;
 }
 
 static void
