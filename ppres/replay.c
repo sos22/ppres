@@ -168,10 +168,11 @@ run_replay_machine()
 }
 
 static void
-footstep_event(VexGuestAMD64State *state)
+footstep_event(VexGuestAMD64State *state, Addr rip)
 {
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
+	state->guest_RIP = rip;
 	run_replay_machine();
 }
 
@@ -442,7 +443,8 @@ instrument_func(VgCallbackClosure *closure,
 				0,
 				"footstep_event",
 				VG_(fnptr_to_fnentry)(footstep_event),
-				mkIRExprVec_0());
+				mkIRExprVec_1(
+					IRExpr_Const(IRConst_U64(current_in_stmt->Ist.IMark.addr))));
 
 			/* For now, we ask Valgrind to give us the
 			   entire world state, and to allow us to
@@ -839,6 +841,9 @@ replay_state_machine_fn(void)
 	while (1) {
 		rh = get_current_record(&logfile);
 		payload = rh + 1;
+		if (rh->tid != VG_(get_running_tid)())
+			VG_(printf)("Ooops: thread %d != %d\n",
+				    rh->tid, VG_(get_running_tid)());
 		switch (rh->cls) {
 		case RECORD_footstep:
 			replay_footstep_record(payload);

@@ -14,8 +14,11 @@
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_options.h"
 #include "pub_tool_tooliface.h"
+#include "pub_tool_signals.h"
+#include "pub_tool_threadstate.h"
 #include "pub_tool_vki.h"
 #include "pub_tool_libcfile.h"
+#include "pub_tool_libcsignal.h"
 #include "libvex_guest_amd64.h"
 
 #include "ppres.h"
@@ -67,6 +70,7 @@ emit_record(struct record_emitter *re,
 	hdr = re->current_block + re->current_block_used;
 	hdr->cls = record_class;
 	hdr->size = record_size;
+	hdr->tid = VG_(get_running_tid)();
 	re->current_block_used += record_size;
 	return hdr + 1;
 }

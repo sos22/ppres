@@ -6,6 +6,7 @@
 struct record_header {
 	unsigned cls;
 	unsigned size;
+	unsigned tid;
 };
 
 struct footstep_record {
