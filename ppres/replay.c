@@ -57,6 +57,11 @@ static struct replay_thread *
 head_thread, *
 current_thread;
 
+static Bool
+search_mode;
+static int
+search_mode_output_fd;
+
 #define CSR_BUFFER 16
 
 static struct {
@@ -943,11 +948,34 @@ static struct replay_thread *
 spawning_thread;
 
 static void
+init_replay_machine(void)
+{
+	open_logfile(&logfile, (signed char *)"logfile1");
+
+	/* Run the state machine.  It should come back here to get the
+	   first instruction of the program executed. */
+	VG_(printf)("Invoking replay state machine.\n");
+	current_thread = head_thread;
+	run_coroutine(&head_thread->coroutine, &replay_state_machine);
+	VG_(printf)("Replay state machine activated client.\n");
+}
+
+static long
+my_fork(void)
+{
+	long res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_fork));
+	return res;
+}
+
+static void
 init(void)
 {
 	static unsigned char replay_state_machine_stack[16384];
-
-	open_logfile(&logfile, (signed char *)"logfile1");
+	int fds[2];
+	unsigned char buf;
 
 	make_coroutine(&replay_state_machine,
 		       "replay_state_machine",
@@ -960,18 +988,37 @@ init(void)
 	VG_(memset)(head_thread, 0, sizeof(*head_thread));
 	head_thread->id = 1;
 
-	/* Run it.  It should come back here to get the first
-	   instruction of the program executed. */
-	VG_(printf)("Invoking replay state machine.\n");
-	current_thread = head_thread;
-	run_coroutine(&head_thread->coroutine, &replay_state_machine);
-	VG_(printf)("Replay state machine activated client.\n");
+	VG_(pipe)(fds);
+	if (my_fork() == 0) {
+		/* We're the searcher process, and we need to go and
+		   find the execution schedule. */
+		VG_(close)(fds[0]);
+		search_mode = True;
+		search_mode_output_fd = fds[1];
+		VG_(printf)("Running search phase.\n");
+	} else {
+		/* We're the validation process.  Grab the schedule
+		   from the child. */
+		VG_(close)(fds[1]);
+		while (VG_(read)(fds[0], &buf, sizeof(buf)))
+			;
+		VG_(close)(fds[0]);
+		VG_(printf)("Running validation phase.\n");
+	}
+	init_replay_machine();
 }
 
 static void
 fini(Int ignore)
 {
 	close_logfile(&logfile);
+	if (search_mode) {
+		/* Schedules are currently dummy structures. */
+		VG_(close)(search_mode_output_fd);
+		VG_(printf)("Finished search phase.\n");
+	} else {
+		VG_(printf)("Finished validation phase.\n");
+	}
 }
 
 static ULong
