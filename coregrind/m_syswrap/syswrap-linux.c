@@ -180,11 +180,9 @@ static void run_a_thread_NORETURN ( Word tidW )
 #elif defined(VGP_amd64_linux)
       asm volatile (
          "movl	%1, %0\n"	/* set tst->status = VgTs_Empty */
-         "movq	%2, %%rax\n"    /* set %rax = __NR_exit */
-         "movq	%3, %%rdi\n"    /* set %rdi = tst->os_state.exitcode */
          "syscall\n"		/* exit(tst->os_state.exitcode) */
          : "=m" (tst->status)
-         : "n" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode));
+         : "n" (VgTs_Empty), "rax" (__NR_exit), "rdi" (tst->os_state.exitcode));
 #elif defined(VGP_ppc32_linux) || defined(VGP_ppc64_linux)
       { UInt vgts_empty = (UInt)VgTs_Empty;
         asm volatile (
