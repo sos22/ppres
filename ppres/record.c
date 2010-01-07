@@ -395,7 +395,7 @@ instrument_func(VgCallbackClosure *closure,
 						     typeOfIRExpr(sb_in->tyenv,
 								  current_in_stmt->Ist.Store.data)));
 			out_stmt->Ist.Store.addr = IRExpr_RdTmp(addr_temp);
-			out_stmt->Ist.Store.addr = IRExpr_RdTmp(data_temp);
+			out_stmt->Ist.Store.data = IRExpr_RdTmp(data_temp);
 			break;
 		}
 		case Ist_CAS: {
