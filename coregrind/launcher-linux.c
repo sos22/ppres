@@ -345,8 +345,17 @@ int main(int argc, char** argv, char** envp)
 
    VG_(debugLog)(1, "launcher", "launching %s\n", toolfile);
 
-   execve(toolfile, argv, new_env);
-
+   if (!getenv("VG_GDB")) {
+      execve(toolfile, argv, new_env);
+   } else {
+      char **new_argv;
+      new_argv = malloc(sizeof(new_argv[0]) * (argc + 4));
+      new_argv[0] = "gdb";
+      new_argv[1] = "--args";
+      new_argv[2] = toolfile;
+      memcpy(new_argv + 3, argv + 1, argc * sizeof(char *));
+      execve("/usr/bin/gdb", new_argv, new_env);
+   }
    fprintf(stderr, "valgrind: failed to start tool '%s' for platform '%s': %s\n",
                    toolname, platform, strerror(errno));
 
