@@ -92,6 +92,8 @@
 #include "pub_core_redir.h"
 
 
+extern Bool VG_(tool_handles_synchronisation);
+
 /* ---------------------------------------------------------------------
    Types and globals for the scheduler.
    ------------------------------------------------------------------ */
@@ -1588,7 +1590,8 @@ void scheduler_sanity ( ThreadId tid )
 
 #if !defined(VGO_darwin)
    // GrP fixme
-   if (lwpid != the_BigLock.owner_lwpid) {
+   if (!VG_(tool_handles_synchronisation) &&
+       lwpid != the_BigLock.owner_lwpid) {
       VG_(message)(Vg_DebugMsg,
                    "Thread (LWPID) %d doesn't own the_BigLock\n",
                    tid);
