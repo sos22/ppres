@@ -174,6 +174,21 @@ Int VG_(write) ( Int fd, const void* buf, Int count)
    return ret;
 }
 
+Int VG_(ftruncate) ( Int fd, OffT length)
+{
+   Int ret;
+#  if defined(VGO_linux)
+   SysRes res = VG_(do_syscall2)(__NR_ftruncate, fd, length);
+#  else
+#     error "Unknown OS"
+#  endif
+   if (sr_isError(res)) {
+      ret = - (Int)sr_Err(res);
+   } else {
+      ret = sr_Res(res);
+   }
+   return ret;
+}
 
 Int VG_(pipe) ( Int fd[2] )
 {
