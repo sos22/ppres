@@ -83,7 +83,7 @@ static struct {
 	VexGuestAMD64State *state;
 	union {
 		struct {
-			void *ptr;
+			const void *ptr;
 			unsigned size;
 			unsigned char buffer[CSR_BUFFER];
 		} mem_read;
@@ -251,7 +251,7 @@ syscall_event(VexGuestAMD64State *state)
 }
 
 static void
-replay_load(void *ptr, unsigned size, void *read_contents)
+replay_load(const void *ptr, unsigned size, void *read_contents)
 {
 	reschedule();
 	VG_(memcpy)(read_contents, ptr, size);
@@ -269,6 +269,7 @@ static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
 	reschedule();
+	VG_(memcpy)(ptr, written_bytes, size);
 	client_stop_reason.cls = CLIENT_STOP_mem_write;
 	client_stop_reason.u.mem_write.ptr = ptr;
 	client_stop_reason.u.mem_write.size = size;

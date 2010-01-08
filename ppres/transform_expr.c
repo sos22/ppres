@@ -15,7 +15,7 @@
 
 #define mk_helper_load(typ, suffix)                    \
 static typ                                             \
-helper_load_ ## suffix (void *ptr)                     \
+helper_load_ ## suffix (const typ *ptr)                \
 {                                                      \
         typ val;                                       \
 	load_worker_function(ptr, sizeof(val), &val);  \
@@ -24,7 +24,7 @@ helper_load_ ## suffix (void *ptr)                     \
 
 #define mk_helper_store(typ, suffix)                   \
 static void                                            \
-helper_store_ ## suffix (void *ptr, typ val)           \
+helper_store_ ## suffix (typ *ptr, typ val)            \
 {                                                      \
 	store_worker_function(ptr, sizeof(val), &val); \
 }
@@ -44,6 +44,24 @@ typedef struct {
 } ultralong_t;
 
 mk_helpers(ultralong_t, 128)
+
+/* We're single-threaded, so these don't have to worry about locking
+   or anything like that. */
+#define mk_helper_cas(typ, suffix)                     \
+static typ                                             \
+helper_cas_ ## suffix (typ *addr,                      \
+		       typ expected,                   \
+		       typ data)                       \
+{                                                      \
+	typ seen;                                      \
+                                                       \
+	seen = helper_load_ ## suffix (addr);          \
+	if (seen == expected)                          \
+		helper_store_ ## suffix (addr, data);  \
+	return seen;                                   \
+}
+
+mk_helper_cas(unsigned, 32)
 
 static IRExpr *
 log_reads_expr(IRSB *sb, IRExpr *exp)
@@ -109,6 +127,7 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 			HLP(128);
 			break;
 		}
+#undef HLP
 
 		args = mkIRExprVec_1(log_reads_expr(sb, exp->Iex.Load.addr));
 		dest = newIRTemp(sb->tyenv, exp->Iex.Load.ty);
@@ -196,6 +215,47 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 	return IRStmt_Dirty(f);
 }
 
+static IRStmt *
+log_cas_stmt(IRSB *sb, IRCAS *details)
+{
+	void *helper;
+	char *helper_name;
+	IRExpr **args;
+	IRDirty *f;
+	IRExpr *cast_expdLo;
+	IRExpr *cast_dataLo;
+
+	if (details->dataHi)
+		VG_(tool_panic)((Char *)"don't handle DCAS");
+	cast_expdLo = details->expdLo;
+	cast_dataLo = details->dataLo;
+#define HLP(x) helper_name = "helper_cas_" #x ; helper = helper_cas_ ## x ;
+	switch (typeOfIRExpr(sb->tyenv,
+			     details->dataLo)) {
+	case Ity_I32:
+		HLP(32);
+		cast_expdLo = IRExpr_Unop(Iop_32Uto64, details->expdLo);
+		cast_dataLo = IRExpr_Unop(Iop_32Uto64, details->dataLo);
+		break;
+	default:
+		VG_(printf)("don't handle CAS type %d",
+			    typeOfIRExpr(sb->tyenv,
+					 details->dataLo));
+		VG_(tool_panic)((Char *)"Death");
+	}
+#undef HLP
+
+	args = mkIRExprVec_3(log_reads_expr(sb, details->addr),
+			     log_reads_expr(sb, cast_expdLo),
+			     log_reads_expr(sb, cast_dataLo));
+	f = unsafeIRDirty_1_N(details->oldLo,
+			      0,
+			      helper_name,
+			      VG_(fnptr_to_fnentry)(helper),
+			      args);
+	return IRStmt_Dirty(f);
+}
+
 static IRSB *
 instrument_func(VgCallbackClosure *closure,
 		IRSB *sb_in,
@@ -264,79 +324,16 @@ instrument_func(VgCallbackClosure *closure,
 		case Ist_Store: {
 			IRExpr *addr = current_in_stmt->Ist.Store.addr;
 			IRExpr *data = current_in_stmt->Ist.Store.data;
-			IRTemp addr_temp, data_temp;
 
-			addr_temp = newIRTemp(sb_out->tyenv, Ity_I64);
-			data_temp = newIRTemp(sb_out->tyenv,
-					      typeOfIRExpr(sb_in->tyenv, data));
-			addStmtToIRSB(sb_out,
-				      IRStmt_WrTmp(addr_temp, log_reads_expr(sb_out, addr)));
-			addStmtToIRSB(sb_out,
-				      IRStmt_WrTmp(data_temp, log_reads_expr(sb_out, data)));
-			addStmtToIRSB(sb_out,
-				      log_write_stmt(IRExpr_RdTmp(addr_temp),
-						     IRExpr_RdTmp(data_temp),
-						     typeOfIRExpr(sb_in->tyenv,
-								  current_in_stmt->Ist.Store.data)));
-			out_stmt->Ist.Store.addr = IRExpr_RdTmp(addr_temp);
-			out_stmt->Ist.Store.data = IRExpr_RdTmp(data_temp);
+			out_stmt = log_write_stmt(log_reads_expr(sb_out, addr),
+						  log_reads_expr(sb_out, data),
+						  typeOfIRExpr(sb_in->tyenv,
+							       current_in_stmt->Ist.Store.data));
 			break;
 		}
-		case Ist_CAS: {
-			IRExpr *addr;
-			IRExpr *dataLo;
-			IRExpr *dataHi;
-			IRCAS *details = out_stmt->Ist.CAS.details;
-			IRType typ = typeOfIRExpr(sb_in->tyenv, details->dataLo);
-			IRTemp addr_temp, dataLo_temp, dataHi_temp;
-
-			addr = details->addr;
-			dataLo = details->dataLo;
-			dataHi = details->dataHi;
-
-			addr_temp = newIRTemp(sb_out->tyenv, Ity_I64);
-			dataLo_temp = newIRTemp(sb_out->tyenv,
-						typeOfIRExpr(sb_out->tyenv,
-							     dataLo));
-			if (dataHi)
-				dataHi_temp = newIRTemp(sb_out->tyenv,
-							typeOfIRExpr(sb_out->tyenv,
-								     dataHi));
-
-			details->expdLo = log_reads_expr(sb_out, details->expdLo);
-
-			addStmtToIRSB(sb_out,
-				      IRStmt_WrTmp(addr_temp,
-						   log_reads_expr(sb_out, addr)));
-			details->addr = IRExpr_RdTmp(addr_temp);
-
-			addStmtToIRSB(sb_out,
-				      IRStmt_WrTmp(dataLo_temp,
-						   log_reads_expr(sb_out, dataLo)));
-			details->dataLo = IRExpr_RdTmp(dataLo_temp);
-
-			if (details->dataHi) {
-				addStmtToIRSB(sb_out,
-					      IRStmt_WrTmp(dataHi_temp,
-							   log_reads_expr(sb_out, dataHi)));
-				details->dataHi = IRExpr_RdTmp(dataHi_temp);
-
-				details->expdHi = log_reads_expr(sb_out, details->expdHi);
-			}
-
-			addStmtToIRSB(sb_out,
-				      log_write_stmt(addr, IRExpr_RdTmp(dataLo_temp),
-						     typ));
-			if (details->dataHi) {
-				addStmtToIRSB(sb_out,
-					      log_write_stmt(IRExpr_Binop(Iop_Add64,
-									  IRExpr_RdTmp(addr_temp),
-									  IRExpr_Const(IRConst_U64(sizeofIRType(typ)))),
-							     IRExpr_RdTmp(dataHi_temp),
-							     typ));
-			}
+		case Ist_CAS:
+			out_stmt = log_cas_stmt(sb_out, out_stmt->Ist.CAS.details);
 			break;
-		}
 		case Ist_LLSC:
 			VG_(printf)("Don't handle LLSC\n");
 			break;
