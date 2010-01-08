@@ -3823,6 +3823,23 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
          HReg dst = lookupIRTemp(env, d->tmp);
          addInstr(env, mk_iMOVsd_RR(hregAMD64_RAX(),dst) );
          return;
+      } else if (retty == Ity_I128) {
+	 HReg dstHi, dstLo;
+	 /* Low bits of return are in rax, high bits in rdx. */
+	 lookupIRTemp128( &dstHi, &dstLo, env, d->tmp);
+	 addInstr(env, mk_iMOVsd_RR(hregAMD64_RAX(), dstLo) );
+	 addInstr(env, mk_iMOVsd_RR(hregAMD64_RDX(), dstHi) );
+	 return;
+      } else if (retty == Ity_V128) {
+	 AMD64AMode *rsp = AMD64AMode_IR(0, hregAMD64_RSP());
+	 HReg dst = lookupIRTemp(env, d->tmp);
+	 /* Return in rax:rdx again.  Use the stack, because that's
+	    easier. */
+	 addInstr(env, AMD64Instr_Push(AMD64RMI_Reg(hregAMD64_RDX())));
+	 addInstr(env, AMD64Instr_Push(AMD64RMI_Reg(hregAMD64_RAX())));
+	 addInstr(env, AMD64Instr_SseLdSt(True, 16, dst, rsp));
+	 add_to_rsp(env, 16);
+	 return;
       }
       break;
    }
