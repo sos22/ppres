@@ -3,6 +3,7 @@ struct record_consumer {
 	unsigned offset_in_current_chunk;
 	unsigned avail_in_current_chunk;
 	void *current_chunk;
+	OffT offset_in_file;
 };
 
 void finish_this_record(struct record_consumer *rc);
