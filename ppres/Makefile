@@ -1,3 +1,5 @@
+CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_x86=1 -DVGO_linux=1 -DVGP_x86_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector
+
 all: ppres_record ppres_replay
 
 ppres_record: record.o
@@ -7,11 +9,8 @@ record.o: record.c
 	gcc -DHAVE_CONFIG_H -I. -I. -I..  -I.. -I../include -I../VEX/pub -DVGA_x86=1 -DVGO_linux=1 -DVGP_x86_linux=1 -I/local/scratch/sos22/stage/include -g -Wall -fno-strict-aliasing -fno-stack-protector -c -o record.o record.c
 
 
-ppres_replay: replay.o coroutines.o
+ppres_replay: replay.o coroutines.o replay_logfile.o
 	gcc  -Wall -fno-stack-protector -o ppres_replay -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds $^ ../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a -lgcc
 
-replay.o: replay.c
-	gcc -DHAVE_CONFIG_H -I. -I. -I..  -I.. -I../include -I../VEX/pub -DVGA_x86=1 -DVGO_linux=1 -DVGP_x86_linux=1 -I/local/scratch/sos22/stage/include -g -Wall -fno-strict-aliasing -fno-stack-protector -c -o replay.o replay.c
-
-coroutines.o: coroutines.c
-	gcc -fno-stack-protector -g -Wall -c coroutines.c
+%.o: %.c
+	gcc $(CFLAGS) -c $^
