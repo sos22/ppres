@@ -32,6 +32,9 @@
 #include "replay.h"
 #include "coroutines.h"
 
+/* Which records are we allowed to look at when doing searches? */
+#define SEARCH_USES_FOOTSTEPS 0
+
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
 extern Bool VG_(in_generated_code);
@@ -63,11 +66,6 @@ replay_state_machine;
 static struct replay_thread *
 head_thread, *
 current_thread;
-
-static Bool
-search_mode;
-static int
-search_mode_output_fd;
 
 #define CSR_BUFFER 16
 
@@ -155,100 +153,16 @@ run_replay_machine(void)
 	VG_(in_generated_code) = current_thread->in_generated;
 }
 
-struct pending_footstep_record {
-	struct pending_footstep_record *next;
-	struct pending_footstep_record *prev;
-	struct footstep_record fr;
-};
-
-/* We allow footstep records to deviate slightly during validation,
-   because threads don't have to match up *exactly* if they happen not
-   to be communicating. */
-struct thread_footstep_list {
-	struct thread_footstep_list *next;
-	ThreadId thread;
-	/* Footsteps which have gone past in the log but which we
-	   haven't yet seen */
-	struct pending_footstep_record *first_in_log_not_seen;
-	struct pending_footstep_record *last_in_log_not_seen;
-	/* Footsteps which we've seen in real life but haven't yet
-	   appeared in the log. */
-	struct pending_footstep_record *first_seen_not_in_log;
-	struct pending_footstep_record *last_seen_not_in_log;
-};
-
-static struct thread_footstep_list *
-tfl;
-
-static void
-capture_footstep_record(const VexGuestAMD64State *state,
-			struct footstep_record *fr)
-{
-	fr->rip = state->guest_RIP;
-	fr->rax = state->guest_RAX;
-	fr->rdx = state->guest_RDX;
-	fr->rcx = state->guest_RCX;
-}
-
-static struct thread_footstep_list *
-get_tfl(ThreadId thread)
-{
-	struct thread_footstep_list *t;
-	for (t = tfl; t && t->thread != thread; t = t->next)
-		;
-	if (!t) {
-		t = VG_(malloc)("thread_footstep_list", sizeof(*t));
-		VG_(memset)(t, 0, sizeof(*t));
-		t->next = tfl;
-		t->thread = thread;
-		tfl = t;
-	}
-	return t;
-}
-
-static void
-validate_footstep_record(const struct footstep_record *reference,
-			 struct footstep_record *seen)
-{
-	tl_assert(reference->rip == seen->rip);
-	tl_assert(reference->rax == seen->rax);
-	tl_assert(reference->rdx == seen->rdx);
-	tl_assert(reference->rcx == seen->rcx ||
-		  reference->rcx == NONDETERMINISM_POISON);
-}
-
+#if SEARCH_USES_FOOTSTEPS
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
-	struct thread_footstep_list *t;
-	struct pending_footstep_record *pfr;
-	struct footstep_record fr;
-
-	if (search_mode)
-		return;
-
+	client_stop_reason.cls = CLIENT_STOP_footstep;
+	client_stop_reason.state = state;
 	state->guest_RIP = rip;
-
-	t = get_tfl(VG_(get_running_tid)());
-	if ((pfr = t->first_in_log_not_seen)) {
-		capture_footstep_record(state, &fr);
-		validate_footstep_record(&pfr->fr, &fr);
-		t->first_in_log_not_seen = pfr->next;
-		if (t->last_in_log_not_seen == pfr)
-			t->last_in_log_not_seen = NULL;
-		VG_(free)(pfr);
-	} else {
-		pfr = VG_(malloc)("pending_footstep_record",
-				  sizeof(*pfr));
-		VG_(memset)(pfr, 0, sizeof(*pfr));
-		capture_footstep_record(state, &pfr->fr);
-		if (t->last_seen_not_in_log)
-			t->last_seen_not_in_log->next = pfr;
-		t->last_seen_not_in_log = pfr;
-		if (!t->first_seen_not_in_log)
-			t->first_seen_not_in_log = pfr;
-	}
+	run_replay_machine();
 }
+#endif
 
 static void
 syscall_event(VexGuestAMD64State *state)
@@ -513,6 +427,7 @@ instrument_func(VgCallbackClosure *closure,
 		case Ist_NoOp:
 			break;
 		case Ist_IMark:
+#if SEARCH_USES_FOOTSTEPS
 			helper = unsafeIRDirty_0_N(
 				0,
 				"footstep_event",
@@ -536,6 +451,7 @@ instrument_func(VgCallbackClosure *closure,
 
 			addStmtToIRSB(sb_out, out_stmt);
 			out_stmt = IRStmt_Dirty(helper);
+#endif
 			break;
 		case Ist_AbiHint:
 			break;
@@ -692,32 +608,15 @@ static void
 replay_footstep_record(struct footstep_record *fr,
 		       struct record_header *rh)
 {
-	struct pending_footstep_record *pfr;
-	struct thread_footstep_list *t;
-
-	if (search_mode) {
-		finish_this_record(&logfile);
-		return;
-	}
-
-	t = get_tfl(rh->tid);
-	if ((pfr = t->first_seen_not_in_log)) {
-		validate_footstep_record(fr, &pfr->fr);
-		t->first_seen_not_in_log = pfr->next;
-		if (t->last_seen_not_in_log == pfr)
-			t->last_seen_not_in_log = NULL;
-		VG_(free)(pfr);
-	} else {
-		pfr = VG_(malloc)("pending_footstep_record",
-				  sizeof(*pfr));
-		VG_(memset)(pfr, 0, sizeof(*pfr));
-		pfr->fr = *fr;
-		if (t->last_in_log_not_seen)
-			t->last_in_log_not_seen->next = pfr;
-		t->last_in_log_not_seen = pfr;
-		if (!t->first_in_log_not_seen)
-			t->first_in_log_not_seen = pfr;
-	}
+#if SEARCH_USES_FOOTSTEPS
+	run_client(get_thread(rh->tid));
+	tl_assert(client_stop_reason.cls == CLIENT_STOP_footstep);
+	tl_assert(client_stop_reason.state->guest_RIP == fr->rip);
+	tl_assert(client_stop_reason.state->guest_RAX == fr->rax);
+	tl_assert(client_stop_reason.state->guest_RDX == fr->rdx);
+	tl_assert(client_stop_reason.state->guest_RCX == fr->rcx ||
+		  client_stop_reason.state->guest_RCX == NONDETERMINISM_POISON);
+#endif
 	finish_this_record(&logfile);
 }
 
@@ -1019,8 +918,6 @@ static void
 init(void)
 {
 	static unsigned char replay_state_machine_stack[16384];
-	int fds[2];
-	unsigned char buf;
 
 	make_coroutine(&replay_state_machine,
 		       "replay_state_machine",
@@ -1033,23 +930,7 @@ init(void)
 	VG_(memset)(head_thread, 0, sizeof(*head_thread));
 	head_thread->id = 1;
 
-	VG_(pipe)(fds);
-	if (my_fork() == 0) {
-		/* We're the searcher process, and we need to go and
-		   find the execution schedule. */
-		VG_(close)(fds[0]);
-		search_mode = True;
-		search_mode_output_fd = fds[1];
-		VG_(printf)("Running search phase.\n");
-	} else {
-		/* We're the validation process.  Grab the schedule
-		   from the child. */
-		VG_(close)(fds[1]);
-		while (VG_(read)(fds[0], &buf, sizeof(buf)))
-			;
-		VG_(close)(fds[0]);
-		VG_(printf)("Running validation phase.\n");
-	}
+	VG_(printf)("Running search phase.\n");
 	init_replay_machine();
 }
 
@@ -1073,13 +954,7 @@ void
 success(void)
 {
 	close_logfile(&logfile);
-	if (search_mode) {
-		/* Schedules are currently dummy structures. */
-		VG_(close)(search_mode_output_fd);
-		VG_(printf)("Finished search phase.\n");
-	} else {
-		VG_(printf)("Finished validation phase.\n");
-	}
+	VG_(printf)("Finished search phase.\n");
 	my__exit(0);
 }
 
