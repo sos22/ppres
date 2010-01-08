@@ -15,8 +15,9 @@
 
 #define mk_helper_load(typ, suffix)                    \
 static typ                                             \
-helper_load_ ## suffix (void *ptr, typ val)            \
+helper_load_ ## suffix (void *ptr)                     \
 {                                                      \
+        typ val;                                       \
 	load_worker_function(ptr, sizeof(val), &val);  \
 	return val;                                    \
 }
@@ -45,7 +46,7 @@ typedef struct {
 mk_helpers(ultralong_t, 128)
 
 static IRExpr *
-log_reads_expr(IRExpr *exp)
+log_reads_expr(IRSB *sb, IRExpr *exp)
 {
 	switch (exp->tag) {
 	case Iex_Get:
@@ -54,97 +55,70 @@ log_reads_expr(IRExpr *exp)
 		return exp;
 	case Iex_GetI:
 		return IRExpr_GetI(exp->Iex.GetI.descr,
-				  log_reads_expr(exp->Iex.GetI.ix),
-				  exp->Iex.GetI.bias);
+				   log_reads_expr(sb, exp->Iex.GetI.ix),
+				   exp->Iex.GetI.bias);
 	case Iex_Qop:
 		return IRExpr_Qop(exp->Iex.Qop.op,
-				 log_reads_expr(exp->Iex.Qop.arg1),
-				 log_reads_expr(exp->Iex.Qop.arg2),
-				 log_reads_expr(exp->Iex.Qop.arg3),
-				 log_reads_expr(exp->Iex.Qop.arg4));
+				  log_reads_expr(sb, exp->Iex.Qop.arg1),
+				  log_reads_expr(sb, exp->Iex.Qop.arg2),
+				  log_reads_expr(sb, exp->Iex.Qop.arg3),
+				  log_reads_expr(sb, exp->Iex.Qop.arg4));
 	case Iex_Triop:
 		return IRExpr_Triop(exp->Iex.Triop.op,
-				   log_reads_expr(exp->Iex.Triop.arg1),
-				   log_reads_expr(exp->Iex.Triop.arg2),
-				   log_reads_expr(exp->Iex.Triop.arg3));
+				    log_reads_expr(sb, exp->Iex.Triop.arg1),
+				    log_reads_expr(sb, exp->Iex.Triop.arg2),
+				    log_reads_expr(sb, exp->Iex.Triop.arg3));
 	case Iex_Binop:
 		return IRExpr_Binop(exp->Iex.Binop.op,
-				   log_reads_expr(exp->Iex.Binop.arg1),
-				   log_reads_expr(exp->Iex.Binop.arg2));
+				    log_reads_expr(sb, exp->Iex.Binop.arg1),
+				    log_reads_expr(sb, exp->Iex.Binop.arg2));
 	case Iex_Unop:
 		return IRExpr_Unop(exp->Iex.Unop.op,
-				   log_reads_expr(exp->Iex.Unop.arg));
+				   log_reads_expr(sb, exp->Iex.Unop.arg));
 	case Iex_Load: {
 		IRExpr **args;
-		IRCallee *helper;
-		IRExpr *cast_exp;
-		args = NULL;
+		void *helper;
+		const char *helper_name;
+		IRTemp dest;
+		IRDirty *f;
+
+#define HLP(x) helper_name = "helper_load_" #x ; helper = helper_load_ ## x ;
 		switch (exp->Iex.Load.ty) {
 		case Ity_INVALID:
 			VG_(tool_panic)((signed char *)"Bad type 1");;
 		case Ity_I1:
 			VG_(tool_panic)((signed char *)"Bad type 2");
 		case Ity_I8:
-			helper = mkIRCallee(0, "helper_load_8",
-					    VG_(fnptr_to_fnentry)(helper_load_8));
-			cast_exp = IRExpr_Unop(Iop_8Uto64, exp);
+			HLP(8);
 			break;
 		case Ity_I16:
-			helper = mkIRCallee(0, "helper_load_16",
-					    VG_(fnptr_to_fnentry)(helper_load_16));
-			cast_exp = IRExpr_Unop(Iop_16Uto64, exp);
+			HLP(16);
 			break;
 		case Ity_I32:
 		case Ity_F32:
-			helper = mkIRCallee(0, "helper_load_32",
-					    VG_(fnptr_to_fnentry)(helper_load_32));
-			cast_exp = IRExpr_Unop(Iop_32Uto64, exp);
+			HLP(32);
 			break;
 		case Ity_I64:
 		case Ity_F64:
-			helper = mkIRCallee(0, "helper_load_64",
-					    VG_(fnptr_to_fnentry)(helper_load_64));
-			cast_exp = exp;
+			HLP(64);
 			break;
 		case Ity_I128:
-			helper = mkIRCallee(0, "helper_load_128",
-					    VG_(fnptr_to_fnentry)(helper_load_128));
-			args = mkIRExprVec_3(log_reads_expr(exp->Iex.Load.addr),
-					     IRExpr_Unop(Iop_128to64, exp),
-					     IRExpr_Unop(Iop_128HIto64, exp));
+			HLP(128);
 			break;
 		case Ity_V128:
-			helper = mkIRCallee(0, "helper_load_128",
-					    VG_(fnptr_to_fnentry)(helper_load_128));
-			args = mkIRExprVec_3(log_reads_expr(exp->Iex.Load.addr),
-					     IRExpr_Unop(Iop_V128to64, exp),
-					     IRExpr_Unop(Iop_V128HIto64, exp));
+			HLP(128);
 			break;
 		}
-		if (!args)
-			args = mkIRExprVec_2(log_reads_expr(exp->Iex.Load.addr),
-					     cast_exp);
-		switch (exp->Iex.Load.ty) {
-		case Ity_I32:
-		case Ity_I64:
-		case Ity_V128:
-			return IRExpr_CCall(helper,
-					    exp->Iex.Load.ty,
-					    args);
-		case Ity_I8:
-			return IRExpr_Unop(Iop_64to8,
-					   IRExpr_CCall(helper,
-							Ity_I64,
-							args));
-		case Ity_I16:
-			return IRExpr_Unop(Iop_64to16,
-					   IRExpr_CCall(helper,
-							Ity_I64,
-							args));
-		default:
-			VG_(tool_panic)((signed char *)"Moo");
-			return NULL;
-		}
+
+		args = mkIRExprVec_1(log_reads_expr(sb, exp->Iex.Load.addr));
+		dest = newIRTemp(sb->tyenv, exp->Iex.Load.ty);
+		f = unsafeIRDirty_1_N(dest,
+				      0,
+				      (HChar *)helper_name,
+				      VG_(fnptr_to_fnentry)(helper),
+				      args);
+		addStmtToIRSB(sb, IRStmt_Dirty(f));
+		return IRExpr_RdTmp(dest);
 	}
 	case Iex_Const:
 		return exp;
@@ -154,15 +128,15 @@ log_reads_expr(IRExpr *exp)
 
 		args = shallowCopyIRExprVec(exp->Iex.CCall.args);
 		for (x = 0; args[x]; x++)
-			args[x] = log_reads_expr(args[x]);
+			args[x] = log_reads_expr(sb, args[x]);
 		return IRExpr_CCall(exp->Iex.CCall.cee,
-				   exp->Iex.CCall.retty,
-				   args);
+				    exp->Iex.CCall.retty,
+				    args);
 	}
 	case Iex_Mux0X:
-		return IRExpr_Mux0X(log_reads_expr(exp->Iex.Mux0X.cond),
-				   log_reads_expr(exp->Iex.Mux0X.expr0),
-				   log_reads_expr(exp->Iex.Mux0X.exprX));
+		return IRExpr_Mux0X(log_reads_expr(sb, exp->Iex.Mux0X.cond),
+				    log_reads_expr(sb, exp->Iex.Mux0X.expr0),
+				    log_reads_expr(sb, exp->Iex.Mux0X.exprX));
 	}
 	VG_(tool_panic)((signed char *)"Something bad");
 }
@@ -278,14 +252,14 @@ instrument_func(VgCallbackClosure *closure,
 		case Ist_AbiHint:
 			break;
 		case Ist_Put:
-			out_stmt->Ist.Put.data = log_reads_expr(out_stmt->Ist.Put.data);
+			out_stmt->Ist.Put.data = log_reads_expr(sb_out, out_stmt->Ist.Put.data);
 			break;
 		case Ist_PutI:
-			out_stmt->Ist.PutI.ix = log_reads_expr(out_stmt->Ist.PutI.ix);
-			out_stmt->Ist.PutI.data = log_reads_expr(out_stmt->Ist.PutI.data);
+			out_stmt->Ist.PutI.ix = log_reads_expr(sb_out, out_stmt->Ist.PutI.ix);
+			out_stmt->Ist.PutI.data = log_reads_expr(sb_out, out_stmt->Ist.PutI.data);
 			break;
 		case Ist_WrTmp:
-			out_stmt->Ist.WrTmp.data = log_reads_expr(out_stmt->Ist.WrTmp.data);
+			out_stmt->Ist.WrTmp.data = log_reads_expr(sb_out, out_stmt->Ist.WrTmp.data);
 			break;
 		case Ist_Store: {
 			IRExpr *addr = current_in_stmt->Ist.Store.addr;
@@ -296,9 +270,9 @@ instrument_func(VgCallbackClosure *closure,
 			data_temp = newIRTemp(sb_out->tyenv,
 					      typeOfIRExpr(sb_in->tyenv, data));
 			addStmtToIRSB(sb_out,
-				      IRStmt_WrTmp(addr_temp, log_reads_expr(addr)));
+				      IRStmt_WrTmp(addr_temp, log_reads_expr(sb_out, addr)));
 			addStmtToIRSB(sb_out,
-				      IRStmt_WrTmp(data_temp, log_reads_expr(data)));
+				      IRStmt_WrTmp(data_temp, log_reads_expr(sb_out, data)));
 			addStmtToIRSB(sb_out,
 				      log_write_stmt(IRExpr_RdTmp(addr_temp),
 						     IRExpr_RdTmp(data_temp),
@@ -329,25 +303,25 @@ instrument_func(VgCallbackClosure *closure,
 							typeOfIRExpr(sb_out->tyenv,
 								     dataHi));
 
-			details->expdLo = log_reads_expr(details->expdLo);
+			details->expdLo = log_reads_expr(sb_out, details->expdLo);
 
 			addStmtToIRSB(sb_out,
 				      IRStmt_WrTmp(addr_temp,
-						   log_reads_expr(addr)));
+						   log_reads_expr(sb_out, addr)));
 			details->addr = IRExpr_RdTmp(addr_temp);
 
 			addStmtToIRSB(sb_out,
 				      IRStmt_WrTmp(dataLo_temp,
-						   log_reads_expr(dataLo)));
+						   log_reads_expr(sb_out, dataLo)));
 			details->dataLo = IRExpr_RdTmp(dataLo_temp);
 
 			if (details->dataHi) {
 				addStmtToIRSB(sb_out,
 					      IRStmt_WrTmp(dataHi_temp,
-							   log_reads_expr(dataHi)));
+							   log_reads_expr(sb_out, dataHi)));
 				details->dataHi = IRExpr_RdTmp(dataHi_temp);
 
-				details->expdHi = log_reads_expr(details->expdHi);
+				details->expdHi = log_reads_expr(sb_out, details->expdHi);
 			}
 
 			addStmtToIRSB(sb_out,
@@ -370,9 +344,9 @@ instrument_func(VgCallbackClosure *closure,
 			unsigned x;
 			IRDirty *details;
 			details = out_stmt->Ist.Dirty.details;
-			details->guard = log_reads_expr(details->guard);
+			details->guard = log_reads_expr(sb_out, details->guard);
 			for (x = 0; details->args[x]; x++)
-				details->args[x] = log_reads_expr(details->args[x]);
+				details->args[x] = log_reads_expr(sb_out, details->args[x]);
 			/* Not mAddr, because it's not actually read. */
 			break;
 		}
@@ -380,7 +354,7 @@ instrument_func(VgCallbackClosure *closure,
 			break;
 		case Ist_Exit:
 			out_stmt->Ist.Exit.guard =
-				log_reads_expr(out_stmt->Ist.Exit.guard);
+				log_reads_expr(sb_out, out_stmt->Ist.Exit.guard);
 			break;
 		}
 		addStmtToIRSB(sb_out, out_stmt);

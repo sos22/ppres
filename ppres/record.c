@@ -102,11 +102,12 @@ record_instr(VexGuestAMD64State *state, Word addr)
 }
 
 static void
-record_load(void *ptr, unsigned size, const void *base)
+record_load(void *ptr, unsigned size, void *base)
 {
 	struct mem_read_record *mrr;
 	mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
 	mrr->ptr = ptr;
+	VG_(memcpy)(base, ptr, size);
 	VG_(memcpy)(mrr + 1, base, size);
 }
 

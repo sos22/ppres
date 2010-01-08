@@ -251,9 +251,10 @@ syscall_event(VexGuestAMD64State *state)
 }
 
 static void
-replay_load(void *ptr, unsigned size, const void *read_contents)
+replay_load(void *ptr, unsigned size, void *read_contents)
 {
 	reschedule();
+	VG_(memcpy)(read_contents, ptr, size);
 	client_stop_reason.cls = CLIENT_STOP_mem_read;
 	client_stop_reason.u.mem_read.ptr = ptr;
 	client_stop_reason.u.mem_read.size = size;
