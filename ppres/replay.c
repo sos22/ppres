@@ -263,7 +263,6 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 		    read_contents,
 		    size);
 	run_replay_machine();
-	reschedule();
 }
 
 static void
@@ -278,7 +277,6 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 		    written_bytes,
 		    size);
 	run_replay_machine();
-	reschedule();
 }
 
 #define included_for_replay
