@@ -28,3 +28,5 @@ install-sh
 missing
 mkinstalldirs
 *~
+logfile1
+discovered_schedule
