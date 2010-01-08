@@ -37,6 +37,7 @@
 
 /* Which records are we allowed to look at when doing searches? */
 #define SEARCH_USES_FOOTSTEPS 0
+#define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 2
 
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
@@ -511,7 +512,9 @@ replay_rdtsc_record(struct rdtsc_record *rr)
 	finish_this_record(&logfile);
 }
 
-#define MAGIC_PTR (void *)0x601030
+#define MAGIC_PTR (void *)0
+
+static int mem_access_counter;
 
 static void
 replay_mem_read_record(struct record_header *rh,
@@ -523,50 +526,52 @@ replay_mem_read_record(struct record_header *rh,
 
 	run_client(current_thread);
 
-	replay_assert(current_thread->id == rh->tid,
-		      "wanted to be in thread %d, was in %d",
-		      rh->tid,
-		      current_thread->id);
-	replay_assert(client_stop_reason.cls == CLIENT_STOP_mem_read,
-		      "wanted a memory read, got class %d",
-		      client_stop_reason.cls);
-	replay_assert(client_stop_reason.u.mem_read.ptr == mrr->ptr,
-		      "Expected a read from %p, got one from %p",
-		      mrr->ptr,
-		      client_stop_reason.u.mem_read.ptr);
+	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
+		if (mrr->ptr == MAGIC_PTR)
+			VG_(printf)("Thread %d(%d) reads %x\n",
+				    current_thread->id,
+				    rh->tid,
+				    *(unsigned *)client_stop_reason.u.mem_read.buffer);
 
-	recorded_read_size = rh->size - sizeof(*rh) - sizeof(*mrr);
-	recorded_read = mrr + 1;
-	replay_assert(client_stop_reason.u.mem_read.size == recorded_read_size,
-		      "wanted read of size %d, got size %d",
-		      recorded_read_size, client_stop_reason.u.mem_read.size);
+		replay_assert(current_thread->id == rh->tid,
+			      "wanted to be in thread %d, was in %d",
+			      rh->tid,
+			      current_thread->id);
+		replay_assert(client_stop_reason.cls == CLIENT_STOP_mem_read,
+			      "wanted a memory read, got class %d",
+			      client_stop_reason.cls);
+		replay_assert(client_stop_reason.u.mem_read.ptr == mrr->ptr,
+			      "Expected a read from %p, got one from %p",
+			      mrr->ptr,
+			      client_stop_reason.u.mem_read.ptr);
 
-	if (mrr->ptr == MAGIC_PTR)
-		VG_(printf)("Thread %d(%d) reads %x\n",
-			    current_thread->id,
-			    rh->tid,
-			    *(unsigned *)client_stop_reason.u.mem_read.buffer);
+		recorded_read_size = rh->size - sizeof(*rh) - sizeof(*mrr);
+		recorded_read = mrr + 1;
+		replay_assert(client_stop_reason.u.mem_read.size == recorded_read_size,
+			      "wanted read of size %d, got size %d",
+			      recorded_read_size, client_stop_reason.u.mem_read.size);
 
-	safe = 1;
-	if (VG_(memcmp)(client_stop_reason.u.mem_read.buffer,
-			recorded_read,
-			recorded_read_size)) {
-		safe = 0;
-		switch (recorded_read_size) {
-		case 4:
-			if (*(unsigned *)client_stop_reason.u.mem_read.buffer ==
-			    NONDETERMINISM_POISON)
-				safe = 1;
-			break;
-		case 8:
-			if (*(unsigned long *)client_stop_reason.u.mem_read.buffer ==
-			    NONDETERMINISM_POISON)
-				safe = 1;
-			break;
+		safe = 1;
+		if (VG_(memcmp)(client_stop_reason.u.mem_read.buffer,
+				recorded_read,
+				recorded_read_size)) {
+			safe = 0;
+			switch (recorded_read_size) {
+			case 4:
+				if (*(unsigned *)client_stop_reason.u.mem_read.buffer ==
+				    NONDETERMINISM_POISON)
+					safe = 1;
+				break;
+			case 8:
+				if (*(unsigned long *)client_stop_reason.u.mem_read.buffer ==
+				    NONDETERMINISM_POISON)
+					safe = 1;
+				break;
+			}
 		}
+		if (!safe)
+			VG_(tool_panic)("Memory divergence!");
 	}
-	if (!safe)
-		VG_(tool_panic)("Memory divergence!");
 	finish_this_record(&logfile);
 }
 
@@ -580,47 +585,49 @@ replay_mem_write_record(struct record_header *rh,
 
 	run_client(current_thread);
 
-	replay_assert(current_thread->id == rh->tid,
-		      "wanted to be in thread %d, was in %d for write",
-		      rh->tid,
-		      current_thread->id);
-	replay_assert(client_stop_reason.cls == CLIENT_STOP_mem_write,
-		      "wanted a memory write, got class %d",
-		      client_stop_reason.cls);
-	replay_assert(client_stop_reason.u.mem_write.ptr == mwr->ptr,
-		      "Expected a write to %p, got one to %p",
-		      mwr->ptr,
-		      client_stop_reason.u.mem_read.ptr);
-	recorded_write_size = rh->size - sizeof(*rh) - sizeof(*mwr);
-	recorded_write = mwr + 1;
-	replay_assert(client_stop_reason.u.mem_write.size == recorded_write_size,
-		      "wanted write of size %d, got size %d",
-		      recorded_write_size, client_stop_reason.u.mem_write.size);
+	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
+		replay_assert(current_thread->id == rh->tid,
+			      "wanted to be in thread %d, was in %d for write",
+			      rh->tid,
+			      current_thread->id);
+		replay_assert(client_stop_reason.cls == CLIENT_STOP_mem_write,
+			      "wanted a memory write, got class %d",
+			      client_stop_reason.cls);
+		replay_assert(client_stop_reason.u.mem_write.ptr == mwr->ptr,
+			      "Expected a write to %p, got one to %p",
+			      mwr->ptr,
+			      client_stop_reason.u.mem_read.ptr);
+		recorded_write_size = rh->size - sizeof(*rh) - sizeof(*mwr);
+		recorded_write = mwr + 1;
+		replay_assert(client_stop_reason.u.mem_write.size == recorded_write_size,
+			      "wanted write of size %d, got size %d",
+			      recorded_write_size, client_stop_reason.u.mem_write.size);
 
-	if (mwr->ptr == MAGIC_PTR)
-		VG_(printf)("Thread %d(%d) writes %x\n",
-			    current_thread->id,
-			    rh->tid,
-			    *(unsigned *)client_stop_reason.u.mem_read.buffer);
+		if (mwr->ptr == MAGIC_PTR)
+			VG_(printf)("Thread %d(%d) writes %x\n",
+				    current_thread->id,
+				    rh->tid,
+				    *(unsigned *)client_stop_reason.u.mem_read.buffer);
 
-	safe = 1;
-	if (VG_(memcmp)(client_stop_reason.u.mem_write.buffer,
-			recorded_write,
-			recorded_write_size)) {
-		safe = 0;
-		switch (recorded_write_size) {
-		case 4:
-			if (*(unsigned *)client_stop_reason.u.mem_write.buffer == NONDETERMINISM_POISON)
-				safe = 1;
-			break;
-		case 8:
-			if (*(unsigned long *)client_stop_reason.u.mem_write.buffer == NONDETERMINISM_POISON)
-				safe = 1;
-			break;
+		safe = 1;
+		if (VG_(memcmp)(client_stop_reason.u.mem_write.buffer,
+				recorded_write,
+				recorded_write_size)) {
+			safe = 0;
+			switch (recorded_write_size) {
+			case 4:
+				if (*(unsigned *)client_stop_reason.u.mem_write.buffer == NONDETERMINISM_POISON)
+					safe = 1;
+				break;
+			case 8:
+				if (*(unsigned long *)client_stop_reason.u.mem_write.buffer == NONDETERMINISM_POISON)
+					safe = 1;
+				break;
+			}
 		}
+		if (!safe)
+			VG_(tool_panic)("Memory divergence!");
 	}
-	if (!safe)
-		VG_(tool_panic)("Memory divergence!");
 	finish_this_record(&logfile);
 }
 
