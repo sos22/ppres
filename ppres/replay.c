@@ -11,6 +11,7 @@
 #include <asm/unistd.h>
 #include <sys/mman.h>
 #include <sys/fcntl.h>
+#include <sys/wait.h>
 #include <linux/utsname.h>
 #include <setjmp.h>
 #include "pub_tool_basics.h"
@@ -23,6 +24,7 @@
 #include "pub_tool_tooliface.h"
 #include "pub_tool_vki.h"
 #include "pub_tool_libcfile.h"
+#include "pub_tool_libcproc.h"
 #include "pub_tool_threadstate.h"
 
 #include "libvex_guest_amd64.h"
@@ -31,6 +33,7 @@
 #include "ppres.h"
 #include "replay.h"
 #include "coroutines.h"
+#include "schedule.h"
 
 /* Which records are we allowed to look at when doing searches? */
 #define SEARCH_USES_FOOTSTEPS 0
@@ -131,7 +134,7 @@ coroutine_bad_return_c(const char *name)
 {
 	VG_(printf)("Coroutine returned unexpectedly!\n");
 	VG_(printf)("(%s)\n", name);
-	VG_(tool_panic)("Coroutine error");
+	VG_(tool_panic)((Char *)"Coroutine error");
 }
 
 static void
@@ -890,20 +893,6 @@ replay_state_machine_fn(void)
 static struct replay_thread *
 spawning_thread;
 
-static void
-init_replay_machine(void)
-{
-	open_logfile(&logfile, (signed char *)"logfile1");
-
-	/* Run the state machine.  It should come back here to get the
-	   first instruction of the program executed. */
-	VG_(printf)("Invoking replay state machine.\n");
-	current_thread = head_thread;
-	run_coroutine(&head_thread->coroutine, &replay_state_machine);
-	VG_(printf)("Replay state machine activated client.\n");
-	VG_(running_tid) = VG_INVALID_THREADID;
-}
-
 static long
 my_fork(void)
 {
@@ -914,10 +903,45 @@ my_fork(void)
 	return res;
 }
 
+static long
+my__exit(int code)
+{
+	long res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_exit), "rdi" (code));
+	return res;
+}
+
 static void
 init(void)
 {
 	static unsigned char replay_state_machine_stack[16384];
+	const Char *schedule = (const Char *)"discovered_schedule";
+	long child;
+	int status;
+
+	/* Search for a valid execution schedule. */
+	create_empty_execution_schedule(schedule);
+
+	while (1) {
+		child = my_fork();
+		if (child == 0) {
+			/* We're the child process, and so we need to
+			   go and do the exploration. */
+			break;
+		}
+		/* We're the parent.  See how far that child gets. */
+		VG_(waitpid)(child, &status, 0);
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+			/* Child said that everything's okay.
+			 * Woohoo. */
+			VG_(printf)("Found a valid schedule.\n");
+			my__exit(0);
+		}
+		/* That schedule didn't work.  Try another one. */
+		advance_schedule_to_next_choice(schedule);
+	}
 
 	make_coroutine(&replay_state_machine,
 		       "replay_state_machine",
@@ -931,23 +955,21 @@ init(void)
 	head_thread->id = 1;
 
 	VG_(printf)("Running search phase.\n");
-	init_replay_machine();
+	open_logfile(&logfile, (signed char *)"logfile1");
+
+	/* Run the state machine.  It should come back here to get the
+	   first instruction of the program executed. */
+	VG_(printf)("Invoking replay state machine.\n");
+	current_thread = head_thread;
+	run_coroutine(&head_thread->coroutine, &replay_state_machine);
+	VG_(printf)("Replay state machine activated client.\n");
+	VG_(running_tid) = VG_INVALID_THREADID;
 }
 
 static void
 fini(Int ignore)
 {
 	VG_(printf)("Huh? Didn't expect fini() to get called.\n");
-}
-
-static long
-my__exit(int code)
-{
-	long res;
-	asm ("syscall"
-	     : "=a" (res)
-	     : "0" (__NR_exit), "rdi" (code));
-	return res;
 }
 
 void
