@@ -109,9 +109,10 @@ static void
 race_address(Addr addr)
 {
 	struct memhash_node *mn;
-	VG_(printf)("Race on %lx\n", addr);
 	mn = memhash_lookup_populate(addr);
+	tl_assert(!mn->racy);
 	mn->racy = 1;
+	new_race_address(addr);
 }
 
 static void
@@ -274,6 +275,19 @@ racetrack_write_region(Addr start, unsigned size, ThreadId this_thread)
 	bump_epoch(tc);
 	for (x = 0; x < size; x++)
 		write_byte(start + x, &tc->local_clock);
+}
+
+/* This is run in the driver process when the child tells it to flag
+   an address as racy.  We mark it as such in the *driver*'s memhash,
+   which will then be picked up by every subsequently forked worker
+   without us having to do anything. */
+void
+mark_address_as_racy(Addr addr)
+{
+	struct memhash_node *mn;
+	mn = memhash_lookup_populate(addr);
+	tl_assert(!mn->racy);
+	mn->racy = 1;
 }
 
 void

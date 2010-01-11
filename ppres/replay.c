@@ -88,6 +88,7 @@ worker_process_output_fd;
 
 #define SEARCH_CODE_REPLAY_SUCCESS 0xa2b3c4d5
 #define SEARCH_CODE_REPLAY_FAILURE 0xa2b3c4d6
+#define SEARCH_CODE_NEW_RACE_ADDR 0xa2b3c4d7
 
 #define CSR_BUFFER 16
 
@@ -336,6 +337,14 @@ my__exit(int code)
 	     : "=a" (res)
 	     : "0" (__NR_exit), "rdi" (code));
 	return res;
+}
+
+void
+new_race_address(Addr addr)
+{
+	unsigned code = SEARCH_CODE_NEW_RACE_ADDR;
+	VG_(write)(worker_process_output_fd, &code, sizeof(code));
+	VG_(write)(worker_process_output_fd, &addr, sizeof(addr));
 }
 
 static void
@@ -792,11 +801,18 @@ init(void)
 	long child;
 	int fds[2];
 	unsigned code;
+	Bool need_schedule_reset;
 
 	/* Search for a valid execution schedule. */
-	create_empty_execution_schedule(schedule);
 
+	need_schedule_reset = True;
 	while (1) {
+		if (need_schedule_reset) {
+			VG_(printf)("Resetting execution schedule.\n");
+			create_empty_execution_schedule(schedule);
+			need_schedule_reset = False;
+		}
+
 		VG_(pipe)(fds);
 		child = my_fork();
 		if (child == 0) {
@@ -809,26 +825,48 @@ init(void)
 		VG_(close)(fds[1]);
 
 		/* We're the parent.  See how far that child gets. */
-		if (VG_(read)(fds[0], &code, sizeof(code)) !=
-		    sizeof(code)) {
-			VG_(printf)("Child exitted unexpectedly.\n");
-			my__exit(1);
-		}
-		VG_(close)(fds[0]);
+		do {
+			if (VG_(read)(fds[0], &code, sizeof(code)) !=
+			    sizeof(code)) {
+				VG_(printf)("Child exitted unexpectedly.\n");
+				my__exit(1);
+			}
 
-		if (code == SEARCH_CODE_REPLAY_SUCCESS) {
-			/* Child said that everything's okay.
-			 * Woohoo. */
-			VG_(printf)("Found a valid schedule.\n");
-			my__exit(0);
-		}
-		if (code != SEARCH_CODE_REPLAY_FAILURE) {
-			VG_(printf)("Search worker process gave back unexpected code %x\n",
-				    code);
-			my__exit(1);
-		}
+			switch (code) {
+			case  SEARCH_CODE_REPLAY_SUCCESS:
+				/* Child said that everything's okay.
+				 * Woohoo. */
+				VG_(printf)("Found a valid schedule.\n");
+				my__exit(0);
+
+			case SEARCH_CODE_NEW_RACE_ADDR: {
+				/* The worker found a new racing
+				   address.  Add it to the race table.
+				   Need to reset the schedule when
+				   this happens, because we don't know
+				   what accesses there were to the
+				   racing address before we discovered
+				   it to be racy. */
+				Addr addr;
+				need_schedule_reset = True;
+				VG_(read)(fds[0], &addr, sizeof(addr));
+				mark_address_as_racy(addr);
+				break;
+			}
+
+			case SEARCH_CODE_REPLAY_FAILURE:
+				/* Nothing to do */
+				break;
+
+			default:
+				VG_(printf)("Search worker process gave back unexpected code %x\n",
+					    code);
+				my__exit(1);
+			}
+		} while (code != SEARCH_CODE_REPLAY_FAILURE);
 
 		/* That schedule didn't work.  Try another one. */
+			VG_(close)(fds[0]);
 		advance_schedule_to_next_choice(schedule);
 	}
 
