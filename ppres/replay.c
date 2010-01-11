@@ -38,15 +38,17 @@
 #include "schedule.h"
 #include "races.h"
 
-/* Which records are we allowed to look at when doing searches? */
-
-/* Check whether the current replay is valid using footsteps */
+/* Can the replay system see footstep records at all? */
 #define SEARCH_USES_FOOTSTEPS 1
-/* Use footsteps to explicitly choose which way to go */
-#define FOOTSTEPS_DIRECT_SEARCH 0
+/* Use footsteps to explicitly choose which way to go (as opposed to
+   just validating our decisions).  This forces a total ordering
+   on all instructions. */
+#define FOOTSTEPS_DIRECTS_SEARCH 1
+
 /* Restrict the search process to only see every nth memory access. */
 #define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
-/* Use memory records to decide which thread to run */
+/* Use memory records to decide which thread to run.  This forces
+   a total ordering on all memory accesses. */
 #define MEMORY_DIRECTS_SEARCH 0
 
 #define NONDETERMINISM_POISON 0xf001dead
@@ -405,7 +407,7 @@ replay_footstep_record(struct footstep_record *fr,
 		       struct record_header *rh)
 {
 #if SEARCH_USES_FOOTSTEPS
-#if FOOTSTEPS_DIRECT_SEARCH
+#if FOOTSTEPS_DIRECTS_SEARCH
 	run_client(get_thread(rh->tid));
 #else
 	run_client(current_thread);
