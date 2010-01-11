@@ -82,6 +82,11 @@ head_thread, *
 current_thread;
 static struct execution_schedule
 execution_schedule;
+static int
+worker_process_output_fd;
+
+#define SEARCH_CODE_REPLAY_SUCCESS 0xa2b3c4d5
+#define SEARCH_CODE_REPLAY_FAILURE 0xa2b3c4d6
 
 #define CSR_BUFFER 16
 
@@ -334,10 +339,14 @@ static void
 failure(const char *fmt, ...)
 {
 	va_list args;
+	unsigned code;
+
 	VG_(printf)("Replay failed after %ld bytes\n",
 		    logfile.offset_in_file);
 	va_start(args, fmt);
 	VG_(vprintf)(fmt, args);
+	code = SEARCH_CODE_REPLAY_FAILURE;
+	VG_(write)(worker_process_output_fd, &code, sizeof(code));
 	my__exit(1);
 }
 
@@ -778,26 +787,44 @@ init(void)
 	static unsigned char replay_state_machine_stack[16384];
 	const Char *schedule = (const Char *)"discovered_schedule";
 	long child;
-	int status;
+	int fds[2];
+	unsigned code;
 
 	/* Search for a valid execution schedule. */
 	create_empty_execution_schedule(schedule);
 
 	while (1) {
+		VG_(pipe)(fds);
 		child = my_fork();
 		if (child == 0) {
 			/* We're the child process, and so we need to
 			   go and do the exploration. */
+			VG_(close)(fds[0]);
+			worker_process_output_fd = fds[1];
 			break;
 		}
+		VG_(close)(fds[1]);
+
 		/* We're the parent.  See how far that child gets. */
-		VG_(waitpid)(child, &status, 0);
-		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+		if (VG_(read)(fds[0], &code, sizeof(code)) !=
+		    sizeof(code)) {
+			VG_(printf)("Child exitted unexpectedly.\n");
+			my__exit(1);
+		}
+		VG_(close)(fds[0]);
+
+		if (code == SEARCH_CODE_REPLAY_SUCCESS) {
 			/* Child said that everything's okay.
 			 * Woohoo. */
 			VG_(printf)("Found a valid schedule.\n");
 			my__exit(0);
 		}
+		if (code != SEARCH_CODE_REPLAY_FAILURE) {
+			VG_(printf)("Search worker process gave back unexpected code %x\n",
+				    code);
+			my__exit(1);
+		}
+
 		/* That schedule didn't work.  Try another one. */
 		advance_schedule_to_next_choice(schedule);
 	}
@@ -836,8 +863,12 @@ fini(Int ignore)
 void
 success(void)
 {
+	unsigned code;
+
 	close_logfile(&logfile);
 	VG_(printf)("Finished search phase.\n");
+	code = SEARCH_CODE_REPLAY_SUCCESS;
+	VG_(write)(worker_process_output_fd, &code, sizeof(code));
 	my__exit(0);
 }
 
