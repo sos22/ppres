@@ -266,13 +266,32 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_exit_group:
 	case __NR_set_tid_address:
 	case __NR_set_robust_list:
-	case __NR_futex:
 	case __NR_rt_sigaction:
 	case __NR_rt_sigprocmask:
 	case __NR_lseek:
-	case __NR_clone:
 	case __NR_exit:
+	case __NR_futex:
 		break;
+
+	case __NR_clone: {
+		UWord flags = syscall_args[0];
+		VG_(printf)("Record clone flags %lx\n", flags);
+
+		if (sr_isError(res))
+			break;
+		if (flags & CLONE_CHILD_SETTID) {
+			VG_(printf)("Child ptr %lx\n",
+				    syscall_args[3]);
+			capture_memory((void *)syscall_args[2], 4);
+		}
+		if (flags & CLONE_PARENT_SETTID) {
+			VG_(printf)("Parent ptr %lx (%x)\n",
+				    syscall_args[4],
+				    *(unsigned *)(syscall_args[3]));
+			capture_memory((void *)syscall_args[3], 4);
+		}
+		break;
+	}
 
 	case __NR_mmap: {
 		UWord addr;
