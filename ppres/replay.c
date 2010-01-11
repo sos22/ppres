@@ -39,13 +39,13 @@
 /* Which records are we allowed to look at when doing searches? */
 
 /* Check whether the current replay is valid using footsteps */
-#define SEARCH_USES_FOOTSTEPS 1
+#define SEARCH_USES_FOOTSTEPS 0
 /* Use footsteps to explicitly choose which way to go */
-#define FOOTSTEPS_DIRECT_SEARCH 1
+#define FOOTSTEPS_DIRECT_SEARCH 0
 /* Restrict the search process to only see every nth memory access. */
 #define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
 /* Use memory records to decide which thread to run */
-#define MEMORY_DIRECTS_SEARCH 1
+#define MEMORY_DIRECTS_SEARCH 0
 
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
