@@ -36,6 +36,7 @@
 #include "replay.h"
 #include "coroutines.h"
 #include "schedule.h"
+#include "races.h"
 
 /* Which records are we allowed to look at when doing searches? */
 
@@ -287,6 +288,7 @@ static void
 replay_load(const void *ptr, unsigned size, void *read_contents)
 {
 	reschedule();
+	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
 	client_stop_reason.cls = CLIENT_STOP_mem_read;
 	client_stop_reason.u.mem_read.ptr = ptr;
@@ -301,6 +303,7 @@ static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
 	reschedule();
+	racetrack_write_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(ptr, written_bytes, size);
 	client_stop_reason.cls = CLIENT_STOP_mem_write;
 	client_stop_reason.u.mem_write.ptr = ptr;

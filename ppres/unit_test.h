@@ -15,6 +15,9 @@ typedef bool Bool;
 typedef off_t OffT;
 typedef signed char Char;
 typedef int Int;
+typedef unsigned long Addr;
+typedef unsigned ThreadId;
+
 #define True true
 #define False false
 
@@ -35,6 +38,7 @@ typedef long SysRes;
 #define VKI_SEEK_CUR SEEK_CUR
 
 #define malloc(_, x) malloc(x)
+#define realloc(_, x, y) realloc((x), (y))
 #define open(a, b, c) open((const char *)(a), (b), (c))
 
 #define tl_assert assert
