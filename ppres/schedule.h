@@ -3,6 +3,8 @@ struct execution_schedule {
 	void *window;
 	Bool replay_mode; /* False -> replay mode, True -> explore
 			   * mode */
+	Bool failed; /* True -> we're in post-failure mode, so
+			shouldn't modify the log. */
 	unsigned offset_in_window;
 	unsigned avail_in_window;
 	OffT window_offset_in_file;

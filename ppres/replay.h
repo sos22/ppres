@@ -11,4 +11,4 @@ struct record_header *get_current_record(struct record_consumer *rc);
 void open_logfile(struct record_consumer *res,
 		  const signed char *fname);
 void close_logfile(struct record_consumer *rc);
-void success(void);
+void hit_end_of_log(void);

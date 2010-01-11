@@ -74,6 +74,7 @@ struct replay_thread {
 	ThreadId id;
 	Bool in_generated;
 	Bool blocked;
+	Bool failed;
 };
 
 static struct coroutine
@@ -161,6 +162,16 @@ my_mprotect(void *base, size_t len, int prot)
 	     "rsi" (len), "rdx" (prot));
 }
 
+static long
+my__exit(int code)
+{
+	long res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_exit), "rdi" (code));
+	return res;
+}
+
 void
 coroutine_bad_return_c(const char *name)
 {
@@ -208,6 +219,7 @@ reschedule_core(struct coroutine *my_coroutine)
 	unsigned other_threads;
 	unsigned thread_to_run;
 	unsigned x;
+	unsigned code;
 
 	me = current_thread;
 	other_threads = 0;
@@ -218,10 +230,23 @@ reschedule_core(struct coroutine *my_coroutine)
 		rt = rt->next_thread;
 	}
 
+	if (other_threads == 0) {
+		if (current_thread->failed || current_thread->blocked) {
+			/* Every thread is either failed or blocked,
+			   so we can't continue.  Tell the monitor
+			   that we're dead. */
+			VG_(printf)("Ran out of threads to run.\n");
+			code = SEARCH_CODE_REPLAY_FAILURE;
+			VG_(write)(worker_process_output_fd, &code, sizeof(code));
+			my__exit(1);
+		}
+		tl_assert(!current_thread->failed);
+		return;
+	}
 	thread_to_run = make_nd_choice(&execution_schedule,
 				       other_threads);
 	tl_assert(thread_to_run <= other_threads);
-	if (thread_to_run == 0) {
+	if (thread_to_run == 0 && !current_thread->blocked) {
 		/* Keep running this thread. */
 		return;
 	}
@@ -240,13 +265,17 @@ reschedule_core(struct coroutine *my_coroutine)
 	tl_assert(rt != NULL);
 	tl_assert(rt != me);
 	tl_assert(!rt->blocked);
+	tl_assert(!rt->failed);
 
 	VG_(printf)("Switch to thread %d\n", rt->id);
 	me->in_generated = VG_(in_generated_code);
 	current_thread = rt;
 	run_coroutine(my_coroutine, &rt->coroutine);
-	VG_(printf)("Switch back again to %d\n", me->id);
-	current_thread = me;
+	if (!me->blocked)
+		current_thread = me;
+	else
+		VG_(printf)("Switch back again to %d\n", me->id);
+
 	VG_(running_tid) = current_thread->id;
 	VG_(in_generated_code) = current_thread->in_generated;
 }
@@ -255,12 +284,14 @@ static void
 reschedule_replay_monitor(void)
 {
 	reschedule_core(&replay_state_machine);
+	tl_assert(!current_thread->failed);
 }
 
 static void
 reschedule(void)
 {
 	reschedule_core(&current_thread->coroutine);
+	tl_assert(!current_thread->blocked);
 }
 
 #if SEARCH_USES_FOOTSTEPS
@@ -329,16 +360,6 @@ get_thread(ThreadId id)
 	return rt;
 }
 
-static long
-my__exit(int code)
-{
-	long res;
-	asm ("syscall"
-	     : "=a" (res)
-	     : "0" (__NR_exit), "rdi" (code));
-	return res;
-}
-
 void
 new_race_address(Addr addr)
 {
@@ -351,22 +372,32 @@ static void
 failure(const char *fmt, ...)
 {
 	va_list args;
-	unsigned code;
 
 	VG_(printf)("Replay failed after %ld bytes\n",
 		    logfile.offset_in_file);
 	va_start(args, fmt);
 	VG_(vprintf)(fmt, args);
-	code = SEARCH_CODE_REPLAY_FAILURE;
-	VG_(write)(worker_process_output_fd, &code, sizeof(code));
-	my__exit(1);
+	va_end(args);
+
+	execution_schedule.failed = True;
+
+	/* Mark this thread as failed, but let every other thread
+	   carry on, so that we have a better chance of finding
+	   interesting races. */
+	current_thread->failed = True;
+	current_thread->blocked = True;
+	reschedule_replay_monitor();
 }
 
-#define replay_assert(cond, msg, ...)                     \
+/* This does not behave like you would expect, so gets an XXX. */
+#define replay_assert_XXX(cond, msg, ...)                 \
 do {                                                      \
-	if (!(cond))                                      \
+	if (!(cond)) {					  \
 		failure("Assertion %s failed: " msg "\n", \
                         #cond , ## __VA_ARGS__);          \
+                finish_this_record(&logfile);             \
+                return;                                   \
+        }                                                 \
 } while (0)
 
 static void
@@ -378,23 +409,23 @@ replay_footstep_record(struct footstep_record *fr,
 	run_client(get_thread(rh->tid));
 #else
 	run_client(current_thread);
-	replay_assert(rh->tid == current_thread->id,
-		      "was in thread %d, wanted thread %d",
-		      current_thread->id, rh->tid);
+	replay_assert_XXX(rh->tid == current_thread->id,
+			  "was in thread %d, wanted thread %d",
+			  current_thread->id, rh->tid);
 #endif
-	replay_assert(client_stop_reason.cls == CLIENT_STOP_footstep,
-		      "wanted a footstep, got class %d",
-		      client_stop_reason.cls);
-	replay_assert(client_stop_reason.state->guest_RIP == fr->rip,
-		      "wanted a footstep at %lx, got one at %lx",
-		      fr->rip, client_stop_reason.state->guest_RIP);
-	replay_assert(client_stop_reason.state->guest_RAX == fr->rax,
-		      "RAX mismatch");
-	replay_assert(client_stop_reason.state->guest_RDX == fr->rdx,
-		      "RDX mismatch");
-	replay_assert(client_stop_reason.state->guest_RCX == fr->rcx ||
-		      client_stop_reason.state->guest_RCX == NONDETERMINISM_POISON,
-		      "RCX mismatch");
+	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_footstep,
+			  "wanted a footstep, got class %d",
+			  client_stop_reason.cls);
+	replay_assert_XXX(client_stop_reason.state->guest_RIP == fr->rip,
+			  "wanted a footstep at %lx, got one at %lx",
+			  fr->rip, client_stop_reason.state->guest_RIP);
+	replay_assert_XXX(client_stop_reason.state->guest_RAX == fr->rax,
+			  "RAX mismatch");
+	replay_assert_XXX(client_stop_reason.state->guest_RDX == fr->rdx,
+			  "RDX mismatch");
+	replay_assert_XXX(client_stop_reason.state->guest_RCX == fr->rcx ||
+			  client_stop_reason.state->guest_RCX == NONDETERMINISM_POISON,
+			  "RCX mismatch");
 #endif
 	finish_this_record(&logfile);
 }
@@ -427,15 +458,15 @@ replay_syscall_record(struct record_header *rh,
 {
 	run_client(current_thread);
 
-	replay_assert(client_stop_reason.cls == CLIENT_STOP_syscall,
-		      "wanted a syscall in thread %d, got class %d in thread %d",
-		      rh->tid,
-		      client_stop_reason.cls,
-		      current_thread->id);
-	replay_assert(client_stop_reason.state->guest_RAX == sr->syscall_nr,
-		      "wanted syscall %d, got syscall %ld",
-		      sr->syscall_nr,
-		      client_stop_reason.state->guest_RAX);
+	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_syscall,
+			  "wanted a syscall in thread %d, got class %d in thread %d",
+			  rh->tid,
+			  client_stop_reason.cls,
+			  current_thread->id);
+	replay_assert_XXX(client_stop_reason.state->guest_RAX == sr->syscall_nr,
+			  "wanted syscall %d, got syscall %ld",
+			  sr->syscall_nr,
+			  client_stop_reason.state->guest_RAX);
 
 	switch (sr->syscall_nr) {
 		/* Very easy syscalls: don't bother running them, and
@@ -481,17 +512,17 @@ replay_syscall_record(struct record_header *rh,
 		VG_(client_syscall)(VG_(get_running_tid)(),
 				    VEX_TRC_JMP_SYS_SYSCALL);
 		if (sr_isError(sr->syscall_res))
-			replay_assert(-client_stop_reason.state->guest_RAX ==
-				      sr_Err(sr->syscall_res),
-				      "Expected syscall to fail %d, actually got %d",
-				      sr_Err(sr->syscall_res),
-				      -client_stop_reason.state->guest_RAX);
+			replay_assert_XXX(-client_stop_reason.state->guest_RAX ==
+					  sr_Err(sr->syscall_res),
+					  "Expected syscall to fail %d, actually got %d",
+					  sr_Err(sr->syscall_res),
+					  -client_stop_reason.state->guest_RAX);
 		else
-			replay_assert(client_stop_reason.state->guest_RAX ==
-				      sr_Res(sr->syscall_res),
-				      "expected syscall to succeed %d, actually got %d",
-				      sr_Res(sr->syscall_res),
-				      client_stop_reason.state->guest_RAX);
+			replay_assert_XXX(client_stop_reason.state->guest_RAX ==
+					  sr_Res(sr->syscall_res),
+					  "expected syscall to succeed %d, actually got %d",
+					  sr_Res(sr->syscall_res),
+					  client_stop_reason.state->guest_RAX);
 		finish_this_record(&logfile);
 		break;
 
@@ -566,9 +597,9 @@ replay_rdtsc_record(struct rdtsc_record *rr)
 {
 	run_client(current_thread);
 
-	replay_assert(client_stop_reason.cls == CLIENT_STOP_rdtsc,
-		      "wanted a rdtsc, got class %d",
-		      client_stop_reason.cls);
+	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_rdtsc,
+			  "wanted a rdtsc, got class %d",
+			  client_stop_reason.cls);
 	client_resume.rdtsc = rr->stashed_tsc;
 
 	finish_this_record(&logfile);
@@ -599,23 +630,23 @@ replay_mem_read_record(struct record_header *rh,
 				    rh->tid,
 				    *(unsigned *)client_stop_reason.u.mem_read.buffer);
 
-		replay_assert(current_thread->id == rh->tid,
-			      "wanted to be in thread %d, was in %d",
-			      rh->tid,
-			      current_thread->id);
-		replay_assert(client_stop_reason.cls == CLIENT_STOP_mem_read,
-			      "wanted a memory read, got class %d",
-			      client_stop_reason.cls);
-		replay_assert(client_stop_reason.u.mem_read.ptr == mrr->ptr,
-			      "Expected a read from %p, got one from %p",
-			      mrr->ptr,
-			      client_stop_reason.u.mem_read.ptr);
+		replay_assert_XXX(current_thread->id == rh->tid,
+				  "wanted to be in thread %d, was in %d",
+				  rh->tid,
+				  current_thread->id);
+		replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_mem_read,
+				  "wanted a memory read, got class %d",
+				  client_stop_reason.cls);
+		replay_assert_XXX(client_stop_reason.u.mem_read.ptr == mrr->ptr,
+				  "Expected a read from %p, got one from %p",
+				  mrr->ptr,
+				  client_stop_reason.u.mem_read.ptr);
 
 		recorded_read_size = rh->size - sizeof(*rh) - sizeof(*mrr);
 		recorded_read = mrr + 1;
-		replay_assert(client_stop_reason.u.mem_read.size == recorded_read_size,
-			      "wanted read of size %d, got size %d",
-			      recorded_read_size, client_stop_reason.u.mem_read.size);
+		replay_assert_XXX(client_stop_reason.u.mem_read.size == recorded_read_size,
+				  "wanted read of size %d, got size %d",
+				  recorded_read_size, client_stop_reason.u.mem_read.size);
 
 		safe = 1;
 		if (VG_(memcmp)(client_stop_reason.u.mem_read.buffer,
@@ -660,22 +691,22 @@ replay_mem_write_record(struct record_header *rh,
 #endif
 
 	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
-		replay_assert(current_thread->id == rh->tid,
-			      "wanted to be in thread %d, was in %d for write",
-			      rh->tid,
-			      current_thread->id);
-		replay_assert(client_stop_reason.cls == CLIENT_STOP_mem_write,
-			      "wanted a memory write, got class %d",
-			      client_stop_reason.cls);
-		replay_assert(client_stop_reason.u.mem_write.ptr == mwr->ptr,
-			      "Expected a write to %p, got one to %p",
-			      mwr->ptr,
-			      client_stop_reason.u.mem_read.ptr);
+		replay_assert_XXX(current_thread->id == rh->tid,
+				  "wanted to be in thread %d, was in %d for write",
+				  rh->tid,
+				  current_thread->id);
+		replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_mem_write,
+				  "wanted a memory write, got class %d",
+				  client_stop_reason.cls);
+		replay_assert_XXX(client_stop_reason.u.mem_write.ptr == mwr->ptr,
+				  "Expected a write to %p, got one to %p",
+				  mwr->ptr,
+				  client_stop_reason.u.mem_read.ptr);
 		recorded_write_size = rh->size - sizeof(*rh) - sizeof(*mwr);
 		recorded_write = mwr + 1;
-		replay_assert(client_stop_reason.u.mem_write.size == recorded_write_size,
-			      "wanted write of size %d, got size %d",
-			      recorded_write_size, client_stop_reason.u.mem_write.size);
+		replay_assert_XXX(client_stop_reason.u.mem_write.size == recorded_write_size,
+				  "wanted write of size %d, got size %d",
+				  recorded_write_size, client_stop_reason.u.mem_write.size);
 
 		if (mwr->ptr == MAGIC_PTR)
 			VG_(printf)("Thread %d(%d) writes %x\n",
@@ -741,6 +772,13 @@ replay_state_machine_fn(void)
 		VG_(running_tid) = 1;
 	while (1) {
 		rh = get_current_record(&logfile);
+		if (get_thread(rh->tid)->failed) {
+			/* This record relates to a thread which has
+			   already failed, so just throw it away. */
+			finish_this_record(&logfile);
+			continue;
+		}
+
 		payload = rh + 1;
 		switch (rh->cls) {
 		case RECORD_footstep:
@@ -902,15 +940,31 @@ fini(Int ignore)
 }
 
 void
-success(void)
+hit_end_of_log(void)
 {
 	unsigned code;
+	struct replay_thread *rt;
+	Bool anything_failed;
+	int rv;
 
 	close_logfile(&logfile);
-	VG_(printf)("Finished search phase.\n");
-	code = SEARCH_CODE_REPLAY_SUCCESS;
+
+	VG_(printf)("Hit end of log.\n");
+	anything_failed = False;
+	for (rt = head_thread; rt && !anything_failed; rt = rt->next_thread)
+		anything_failed |= rt->failed;
+
+	if (anything_failed) {
+		VG_(printf)("But some threads had failed, so the entire replay fails\n");
+		code = SEARCH_CODE_REPLAY_FAILURE;
+		rv = 1;
+	} else {
+		VG_(printf)("Finished search phase.\n");
+		code = SEARCH_CODE_REPLAY_SUCCESS;
+		rv = 0;
+	}
 	VG_(write)(worker_process_output_fd, &code, sizeof(code));
-	my__exit(0);
+	my__exit(rv);
 }
 
 static ULong

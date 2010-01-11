@@ -214,6 +214,8 @@ make_nd_choice(struct execution_schedule *es,
 	if (es->replay_mode) {
 		tl_assert(se->max_option == max_allowed);
 		return se->current_option;
+	} else if (es->failed) {
+		return 0;
 	} else {
 		se->max_option = max_allowed;
 		se->current_option = 0;

@@ -50,9 +50,7 @@ advance_chunk(struct record_consumer *rc)
 			  to_read);
 	rc->avail_in_current_chunk += actually_read;
 	if (actually_read == 0) {
-		/* We've hit the end of the logfile.  That counts as
-		 * success. */
-		success();
+		hit_end_of_log();
 		/* Don't get here */
 	}
 }
