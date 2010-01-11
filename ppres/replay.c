@@ -13,6 +13,7 @@
 #include <sys/fcntl.h>
 #include <sys/wait.h>
 #include <linux/utsname.h>
+#include <linux/sched.h>
 #include <setjmp.h>
 #include "pub_tool_basics.h"
 #include "pub_tool_libcbase.h"
@@ -36,8 +37,15 @@
 #include "schedule.h"
 
 /* Which records are we allowed to look at when doing searches? */
-#define SEARCH_USES_FOOTSTEPS 0
-#define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 2
+
+/* Check whether the current replay is valid using footsteps */
+#define SEARCH_USES_FOOTSTEPS 1
+/* Use footsteps to explicitly choose which way to go */
+#define FOOTSTEPS_DIRECT_SEARCH 1
+/* Restrict the search process to only see every nth memory access. */
+#define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
+/* Use memory records to decide which thread to run */
+#define MEMORY_DIRECTS_SEARCH 1
 
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
@@ -112,6 +120,18 @@ static inline Word
 syscall_arg_2(void)
 {
 	return client_stop_reason.state->guest_RSI;
+}
+
+static inline Word
+syscall_arg_3(void)
+{
+	return client_stop_reason.state->guest_RDX;
+}
+
+static inline Word
+syscall_arg_4(void)
+{
+	return client_stop_reason.state->guest_RCX;
 }
 
 
@@ -234,12 +254,10 @@ reschedule(void)
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
-	reschedule();
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
 	state->guest_RIP = rip;
 	run_replay_machine();
-	reschedule();
 }
 #endif
 
@@ -326,7 +344,7 @@ replay_footstep_record(struct footstep_record *fr,
 		       struct record_header *rh)
 {
 #if SEARCH_USES_FOOTSTEPS
-#if 0
+#if FOOTSTEPS_DIRECT_SEARCH
 	run_client(get_thread(rh->tid));
 #else
 	run_client(current_thread);
@@ -522,7 +540,11 @@ replay_mem_read_record(struct record_header *rh,
 	void *recorded_read;
 	int safe;
 
+#if MEMORY_DIRECTS_SEARCH
+	run_client(get_thread(rh->tid));
+#else
 	run_client(current_thread);
+#endif
 
 	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
 		if (mrr->ptr == MAGIC_PTR)
@@ -568,7 +590,11 @@ replay_mem_read_record(struct record_header *rh,
 			}
 		}
 		if (!safe)
-			VG_(tool_panic)("Memory divergence!");
+			failure("Memory divergence (read) at address %p; wanted %lx but got %lx (size %d)!\n",
+				mrr->ptr,
+				*(unsigned long *)recorded_read,
+				*(unsigned long *)mrr->ptr,
+				recorded_read_size);
 	}
 	finish_this_record(&logfile);
 }
@@ -581,7 +607,11 @@ replay_mem_write_record(struct record_header *rh,
 	void *recorded_write;
 	int safe;
 
+#if MEMORY_DIRECTS_SEARCH
+	run_client(get_thread(rh->tid));
+#else
 	run_client(current_thread);
+#endif
 
 	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
 		replay_assert(current_thread->id == rh->tid,
@@ -624,7 +654,11 @@ replay_mem_write_record(struct record_header *rh,
 			}
 		}
 		if (!safe)
-			VG_(tool_panic)("Memory divergence!");
+			failure ("Memory divergence (write) at address %p; wanted %lx but got %lx (size %d)!\n",
+				 mwr->ptr,
+				 *(unsigned long *)recorded_write,
+				 *(unsigned long *)mwr->ptr,
+				 recorded_write_size);
 	}
 	finish_this_record(&logfile);
 }
