@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <linux/utsname.h>
 #include <linux/sched.h>
+#include <linux/futex.h>
 #include <setjmp.h>
 #include "pub_tool_basics.h"
 #include "pub_tool_libcbase.h"
@@ -39,7 +40,7 @@
 /* Which records are we allowed to look at when doing searches? */
 
 /* Check whether the current replay is valid using footsteps */
-#define SEARCH_USES_FOOTSTEPS 0
+#define SEARCH_USES_FOOTSTEPS 1
 /* Use footsteps to explicitly choose which way to go */
 #define FOOTSTEPS_DIRECT_SEARCH 0
 /* Restrict the search process to only see every nth memory access. */
@@ -71,6 +72,7 @@ struct replay_thread {
 	struct coroutine coroutine;
 	ThreadId id;
 	Bool in_generated;
+	Bool blocked;
 };
 
 static struct coroutine
@@ -204,7 +206,7 @@ reschedule_core(struct coroutine *my_coroutine)
 	other_threads = 0;
 	rt = head_thread;
 	while (rt != NULL) {
-		if (rt != me)
+		if (rt != me && !rt->blocked)
 			other_threads++;
 		rt = rt->next_thread;
 	}
@@ -223,10 +225,14 @@ reschedule_core(struct coroutine *my_coroutine)
 	x = 1;
 	while (x < thread_to_run) {
 		rt = rt->next_thread;
-		if (rt == me)
+		tl_assert(rt != NULL);
+		while (rt == me || rt->blocked)
 			rt = rt->next_thread;
 		x++;
 	}
+	tl_assert(rt != NULL);
+	tl_assert(rt != me);
+	tl_assert(!rt->blocked);
 
 	VG_(printf)("Switch to thread %d\n", rt->id);
 	me->in_generated = VG_(in_generated_code);
@@ -254,16 +260,19 @@ reschedule(void)
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
+	reschedule();
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
 	state->guest_RIP = rip;
 	run_replay_machine();
+	//reschedule();
 }
 #endif
 
 static void
 syscall_event(VexGuestAMD64State *state)
 {
+	reschedule();
 	client_stop_reason.cls = CLIENT_STOP_syscall;
 	client_stop_reason.state = state;
 	run_replay_machine();
@@ -392,13 +401,16 @@ process_memory_records(void)
 }
 
 static void
-replay_syscall_record(struct syscall_record *sr)
+replay_syscall_record(struct record_header *rh,
+		      struct syscall_record *sr)
 {
 	run_client(current_thread);
 
 	replay_assert(client_stop_reason.cls == CLIENT_STOP_syscall,
-		      "wanted a syscall, got class %d",
-		      client_stop_reason.cls);
+		      "wanted a syscall in thread %d, got class %d in thread %d",
+		      rh->tid,
+		      client_stop_reason.cls,
+		      current_thread->id);
 	replay_assert(client_stop_reason.state->guest_RAX == sr->syscall_nr,
 		      "wanted syscall %d, got syscall %ld",
 		      sr->syscall_nr,
@@ -421,6 +433,11 @@ replay_syscall_record(struct syscall_record *sr)
 	case __NR_exit_group:
 	case __NR_exit:
 
+	case __NR_nanosleep: /* XXX: We should arguably tweak the
+				scheduler to prefer not to select this
+				thread when we see one of these.
+				Maybe later. */
+
 	case __NR_write: /* Should maybe do something special with
 			    these so that we see stuff on stdout? */
 
@@ -440,9 +457,6 @@ replay_syscall_record(struct syscall_record *sr)
 	case __NR_set_robust_list:
 	case __NR_rt_sigaction:
 	case __NR_rt_sigprocmask:
-	case __NR_futex: /* XXX not quite right, but good enough for
-			  * now. */
-
 		VG_(client_syscall)(VG_(get_running_tid)(),
 				    VEX_TRC_JMP_SYS_SYSCALL);
 		if (sr_isError(sr->syscall_res))
@@ -507,6 +521,17 @@ replay_syscall_record(struct syscall_record *sr)
 		client_stop_reason.state->guest_RAX = addr;
 		break;
 	}
+
+	case __NR_futex:
+		/* Don't need to do anything here: we have explicit
+		   block/unblock records which tell us exactly what to
+		   do. */
+		if (sr_isError(sr->syscall_res))
+			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
+		else
+			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
+		finish_this_record(&logfile);
+		break;
 
 	default:
 		VG_(printf)("don't know how to replay syscall %lld yet\n",
@@ -664,6 +689,27 @@ replay_mem_write_record(struct record_header *rh,
 }
 
 static void
+block_thread(ThreadId id)
+{
+	struct replay_thread *rt = get_thread(id);
+	rt->blocked = True;
+	finish_this_record(&logfile);
+	if (rt == current_thread)
+		reschedule_replay_monitor();
+	return;
+}
+
+static void
+unblock_thread(ThreadId id)
+{
+	struct replay_thread *rt = get_thread(id);
+	rt->blocked = False;
+	finish_this_record(&logfile);
+	reschedule_replay_monitor();
+	return;
+}
+
+static void
 replay_state_machine_fn(void)
 {
 	struct record_header *rh;
@@ -680,7 +726,7 @@ replay_state_machine_fn(void)
 			replay_footstep_record(payload, rh);
 			break;
 		case RECORD_syscall:
-			replay_syscall_record(payload);
+			replay_syscall_record(rh, payload);
 			process_memory_records();
 			break;
 		case RECORD_memory:
@@ -700,6 +746,12 @@ replay_state_machine_fn(void)
 			   we'll get a clone syscall record in a
 			   second, and that's more useful. */
 			finish_this_record(&logfile);
+			break;
+		case RECORD_thread_blocking:
+			block_thread(rh->tid);
+			break;
+		case RECORD_thread_unblocked:
+			unblock_thread(rh->tid);
 			break;
 		default:
 			VG_(tool_panic)((signed char *)"Unknown replay record type!");

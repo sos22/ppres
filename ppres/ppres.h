@@ -48,3 +48,9 @@ struct mem_write_record {
 
 /* No payload data */
 #define RECORD_new_thread 7
+
+/* No payload */
+#define RECORD_thread_blocking 8
+
+/* No payload */
+#define RECORD_thread_unblocked 9

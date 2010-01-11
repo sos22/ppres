@@ -5,6 +5,8 @@
 #include <sys/resource.h>
 #include <linux/sched.h>
 #include <linux/utsname.h>
+#include <linux/futex.h>
+#include <errno.h>
 #include <setjmp.h>
 #include <time.h>
 #include "pub_tool_basics.h"
@@ -235,6 +237,20 @@ pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 		emit_record(&logfile, RECORD_new_thread, 0);
 		break;
 	}
+	case __NR_futex: {
+		switch (syscall_args[1]) {
+		case FUTEX_WAIT_PRIVATE: {
+			int expected;
+			int observed;
+			expected = syscall_args[2];
+			observed = *(int *)syscall_args[0];
+			if (expected != observed)
+				emit_record(&logfile, RECORD_thread_blocking, 0);
+			break;
+		}
+		}
+		break;
+	}
 	}
 }
 
@@ -270,8 +286,19 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_rt_sigprocmask:
 	case __NR_lseek:
 	case __NR_exit:
-	case __NR_futex:
 		break;
+
+	case __NR_nanosleep: {
+		if (!sr_isError(res))
+			break;
+		if (sr_Err(res) != EINTR)
+			break;
+		if (syscall_args[1] == 0)
+			break;
+		capture_memory((void *)syscall_args[1],
+			       sizeof(struct timespec));
+		break;
+	}
 
 	case __NR_clone: {
 		UWord flags = syscall_args[0];
@@ -351,6 +378,24 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 			capture_memory((void *)syscall_args[1],
 				       sizeof(struct timespec));
 		break;
+
+	case __NR_futex: {
+		switch (syscall_args[1]) {
+		case FUTEX_WAKE_PRIVATE:
+			/* No special handling needed */
+			break;
+		case FUTEX_WAIT_PRIVATE:
+			if (!sr_isError(res) ||
+			    sr_Err(res) != EWOULDBLOCK)
+				emit_record(&logfile, RECORD_thread_unblocked, 0);
+			break;
+		default:
+			VG_(printf)("Don't understand futex operation %ld\n",
+				    syscall_args[1]);
+			VG_(tool_panic)("Not implemented yet");
+		}
+		break;
+	}
 
 	default:
 		VG_(printf)("don't know what to do with syscall %d\n", syscall_nr);
