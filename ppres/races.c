@@ -12,6 +12,14 @@
 #include "unit_test.h"
 #include "races.h"
 
+/* We approximate, and say that if any address in a block of 256 is
+   racy then all of them are. */
+#ifdef UNIT_TEST
+#define RACETRACK_GRANULARITY 1
+#else
+#define RACETRACK_GRANULARITY 16
+#endif
+
 typedef unsigned long epoch_t;
 
 struct vector_clock {
@@ -95,20 +103,11 @@ find_vc(Addr addr, struct vector_clock **read_vc, struct vector_clock **write_vc
 	return !mn->racy;
 }
 
-Bool
-is_racy(Addr addr)
-{
-	struct memhash_node *mn;
-	mn = memhash_lookup(addr, False);
-	if (!mn)
-		return False;
-	return mn->racy;
-}
-
 static void
 race_address(Addr addr)
 {
 	struct memhash_node *mn;
+	VG_(printf)("Child marks %lx racy.\n", addr);
 	mn = memhash_lookup_populate(addr);
 	tl_assert(!mn->racy);
 	mn->racy = 1;
@@ -261,20 +260,26 @@ void
 racetrack_read_region(Addr start, unsigned size,  ThreadId this_thread)
 {
 	struct thread_clock *tc = find_tc(this_thread);
-	unsigned x;
+	Addr reduced_start, reduced_end;
+	Addr x;
 	bump_epoch(tc);
-	for (x = 0; x < size; x++)
-		read_byte(start + x, &tc->local_clock, this_thread);
+	reduced_start = start / RACETRACK_GRANULARITY;
+	reduced_end = (start + size + RACETRACK_GRANULARITY - 1) / RACETRACK_GRANULARITY;
+	for (x = reduced_start; x < reduced_end; x++)
+		read_byte(x, &tc->local_clock, this_thread);
 }
 
 void
 racetrack_write_region(Addr start, unsigned size, ThreadId this_thread)
 {
 	struct thread_clock *tc = find_tc(this_thread);
-	unsigned x;
+	Addr reduced_start, reduced_end;
+	Addr x;
 	bump_epoch(tc);
-	for (x = 0; x < size; x++)
-		write_byte(start + x, &tc->local_clock);
+	reduced_start = start / RACETRACK_GRANULARITY;
+	reduced_end = (start + size + RACETRACK_GRANULARITY - 1) / RACETRACK_GRANULARITY;
+	for (x = reduced_start; x < reduced_end; x++)
+		write_byte(x, &tc->local_clock);
 }
 
 /* This is run in the driver process when the child tells it to flag
@@ -286,7 +291,6 @@ mark_address_as_racy(Addr addr)
 {
 	struct memhash_node *mn;
 	mn = memhash_lookup_populate(addr);
-	tl_assert(!mn->racy);
 	mn->racy = 1;
 }
 
@@ -324,6 +328,16 @@ dump_racetrack_state(void)
 
 
 #ifdef UNIT_TEST
+static Bool
+is_racy(Addr addr)
+{
+	struct memhash_node *mn;
+	mn = memhash_lookup(addr / RACETRACK_GRANULARITY, False);
+	if (!mn)
+		return False;
+	return mn->racy;
+}
+
 int
 main()
 {
