@@ -186,11 +186,17 @@ coroutine_bad_return_c(const char *name)
    be the current thread).  The client might do a thread switch
    itself, so we can be anywhere when we come back. */
 static void
-run_client(struct replay_thread *who)
+run_client(struct replay_thread *who, const char *msg, ...)
 {
-	if (who != current_thread)
-		VG_(printf)("Monitor goes to thread %d\n",
+	va_list args;
+	if (who != current_thread) {
+		va_start(args, msg);
+		VG_(printf)("Monitor goes to thread %d for ",
 			    who->id);
+		VG_(vprintf)(msg, args);
+		VG_(printf)("\n");
+		va_end(args);
+	}
 
 	current_thread->in_generated = VG_(in_generated_code);
 	current_thread = who;
@@ -215,7 +221,7 @@ run_replay_machine(void)
 }
 
 static void
-reschedule_core(struct coroutine *my_coroutine)
+reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
 {
 	struct replay_thread *rt, *me;
 	unsigned other_threads;
@@ -269,7 +275,10 @@ reschedule_core(struct coroutine *my_coroutine)
 	tl_assert(!rt->blocked);
 	tl_assert(!rt->failed);
 
-	VG_(printf)("Switch to thread %d\n", rt->id);
+	VG_(printf)("Switch to thread %d for\n", rt->id);
+	VG_(vprintf)(msg, args);
+	VG_(printf)("\n");
+
 	me->in_generated = VG_(in_generated_code);
 	current_thread = rt;
 	run_coroutine(my_coroutine, &rt->coroutine);
@@ -283,16 +292,24 @@ reschedule_core(struct coroutine *my_coroutine)
 }
 
 static void
-reschedule_replay_monitor(void)
+reschedule_replay_monitor(const char *msg, ...)
 {
-	reschedule_core(&replay_state_machine);
-	tl_assert(!current_thread->failed);
+	va_list args;
+	va_start(args, msg);
+	reschedule_core(&replay_state_machine, msg, args);
+	va_end(args);
+
+	tl_assert(!current_thread->blocked);
 }
 
 static void
-reschedule(void)
+reschedule(const char *msg, ...)
 {
-	reschedule_core(&current_thread->coroutine);
+	va_list args;
+	va_start(args, msg);
+	reschedule_core(&current_thread->coroutine, msg, args);
+	va_end(args);
+
 	tl_assert(!current_thread->blocked);
 }
 
@@ -300,7 +317,7 @@ reschedule(void)
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
-	reschedule();
+	reschedule("footstep at %lx\n", rip);
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
 	state->guest_RIP = rip;
@@ -312,7 +329,7 @@ footstep_event(VexGuestAMD64State *state, Addr rip)
 static void
 syscall_event(VexGuestAMD64State *state)
 {
-	reschedule();
+	reschedule("syscall %d", state->guest_RAX);
 	client_stop_reason.cls = CLIENT_STOP_syscall;
 	client_stop_reason.state = state;
 	run_replay_machine();
@@ -321,7 +338,8 @@ syscall_event(VexGuestAMD64State *state)
 static void
 replay_load(const void *ptr, unsigned size, void *read_contents)
 {
-	reschedule();
+	reschedule("load %d from %p", size, ptr);
+
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
 	client_stop_reason.cls = CLIENT_STOP_mem_read;
@@ -336,7 +354,8 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
-	reschedule();
+	reschedule("store %d to %p", size, ptr);
+
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(ptr, written_bytes, size);
 	client_stop_reason.cls = CLIENT_STOP_mem_write;
@@ -388,7 +407,7 @@ failure(const char *fmt, ...)
 	   interesting races. */
 	current_thread->failed = True;
 	current_thread->blocked = True;
-	reschedule_replay_monitor();
+	reschedule_replay_monitor("thread failed");
 }
 
 /* This does not behave like you would expect, so gets an XXX. */
@@ -408,9 +427,9 @@ replay_footstep_record(struct footstep_record *fr,
 {
 #if SEARCH_USES_FOOTSTEPS
 #if FOOTSTEPS_DIRECTS_SEARCH
-	run_client(get_thread(rh->tid));
+	run_client(get_thread(rh->tid), "forced by footstep record");
 #else
-	run_client(current_thread);
+	run_client(current_thread, "footstep record");
 	replay_assert_XXX(rh->tid == current_thread->id,
 			  "was in thread %d, wanted thread %d",
 			  current_thread->id, rh->tid);
@@ -458,7 +477,7 @@ static void
 replay_syscall_record(struct record_header *rh,
 		      struct syscall_record *sr)
 {
-	run_client(current_thread);
+	run_client(current_thread, "syscall record");
 
 	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_syscall,
 			  "wanted a syscall in thread %d, got class %d in thread %d",
@@ -597,7 +616,7 @@ replay_syscall_record(struct record_header *rh,
 static void
 replay_rdtsc_record(struct rdtsc_record *rr)
 {
-	run_client(current_thread);
+	run_client(current_thread, "rdtsc record");
 
 	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_rdtsc,
 			  "wanted a rdtsc, got class %d",
@@ -620,9 +639,9 @@ replay_mem_read_record(struct record_header *rh,
 	int safe;
 
 #if MEMORY_DIRECTS_SEARCH
-	run_client(get_thread(rh->tid));
+	run_client(get_thread(rh->tid), "forced by memory read");
 #else
-	run_client(current_thread);
+	run_client(current_thread, "memory read");
 #endif
 
 	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
@@ -687,9 +706,9 @@ replay_mem_write_record(struct record_header *rh,
 	int safe;
 
 #if MEMORY_DIRECTS_SEARCH
-	run_client(get_thread(rh->tid));
+	run_client(get_thread(rh->tid), "forced by write record");
 #else
-	run_client(current_thread);
+	run_client(current_thread, "write record");
 #endif
 
 	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS == 0) {
@@ -749,7 +768,7 @@ block_thread(ThreadId id)
 	rt->blocked = True;
 	finish_this_record(&logfile);
 	if (rt == current_thread)
-		reschedule_replay_monitor();
+		reschedule_replay_monitor("thread blocking");
 	return;
 }
 
@@ -759,7 +778,7 @@ unblock_thread(ThreadId id)
 	struct replay_thread *rt = get_thread(id);
 	rt->blocked = False;
 	finish_this_record(&logfile);
-	reschedule_replay_monitor();
+	reschedule_replay_monitor("thread unblocking");
 	return;
 }
 
@@ -1016,7 +1035,7 @@ replay_clone_syscall(Word (*fn)(void *),
 	VG_(running_tid) = VG_INVALID_THREADID;
 	local_thread = current_thread;
 	VG_(in_generated_code) = False;
-	run_client(spawning_thread);
+	run_client(spawning_thread, "newly spawning thread");
 	current_thread = local_thread;
 	VG_(running_tid) = current_thread->id;
 	VG_(in_generated_code) = True;
@@ -1024,7 +1043,7 @@ replay_clone_syscall(Word (*fn)(void *),
 	rt->next_thread = head_thread;
 	head_thread = rt;
 
-	reschedule_replay_monitor();
+	reschedule_replay_monitor("clone syscall");
 
 	return 52;
 }
