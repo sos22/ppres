@@ -88,6 +88,8 @@ static struct execution_schedule
 execution_schedule;
 static int
 worker_process_output_fd;
+static int
+in_monitor;
 
 #define SEARCH_CODE_REPLAY_SUCCESS 0xa2b3c4d5
 #define SEARCH_CODE_REPLAY_FAILURE 0xa2b3c4d6
@@ -201,7 +203,9 @@ run_client(struct replay_thread *who, const char *msg, ...)
 	current_thread->in_generated = VG_(in_generated_code);
 	current_thread = who;
 
+	in_monitor = False;
 	run_coroutine(&replay_state_machine, &who->coroutine);
+	in_monitor = True;
 }
 
 /* Switch from the client back to the monitor, remaining in the same
@@ -214,7 +218,9 @@ run_replay_machine(void)
 
 	whom = current_thread;
 	current_thread->in_generated = VG_(in_generated_code);
+	in_monitor = True;
 	run_coroutine(&whom->coroutine, &replay_state_machine);
+	in_monitor = False;
 	tl_assert(current_thread == whom);
 	VG_(running_tid) = current_thread->id;
 	VG_(in_generated_code) = current_thread->in_generated;
@@ -281,7 +287,10 @@ reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
 
 	me->in_generated = VG_(in_generated_code);
 	current_thread = rt;
+	in_monitor = False;
 	run_coroutine(my_coroutine, &rt->coroutine);
+	if (my_coroutine == &replay_state_machine)
+		in_monitor = True;
 	if (!me->blocked)
 		current_thread = me;
 	else
@@ -292,22 +301,14 @@ reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
 }
 
 static void
-reschedule_replay_monitor(const char *msg, ...)
-{
-	va_list args;
-	va_start(args, msg);
-	reschedule_core(&replay_state_machine, msg, args);
-	va_end(args);
-
-	tl_assert(!current_thread->blocked);
-}
-
-static void
 reschedule(const char *msg, ...)
 {
 	va_list args;
 	va_start(args, msg);
-	reschedule_core(&current_thread->coroutine, msg, args);
+	if (in_monitor)
+		reschedule_core(&replay_state_machine, msg, args);
+	else
+		reschedule_core(&current_thread->coroutine, msg, args);
 	va_end(args);
 
 	tl_assert(!current_thread->blocked);
@@ -407,7 +408,7 @@ failure(const char *fmt, ...)
 	   interesting races. */
 	current_thread->failed = True;
 	current_thread->blocked = True;
-	reschedule_replay_monitor("thread failed");
+	reschedule("thread failed");
 }
 
 /* This does not behave like you would expect, so gets an XXX. */
@@ -768,7 +769,7 @@ block_thread(ThreadId id)
 	rt->blocked = True;
 	finish_this_record(&logfile);
 	if (rt == current_thread)
-		reschedule_replay_monitor("thread blocking");
+		reschedule("thread blocking");
 	return;
 }
 
@@ -778,7 +779,7 @@ unblock_thread(ThreadId id)
 	struct replay_thread *rt = get_thread(id);
 	rt->blocked = False;
 	finish_this_record(&logfile);
-	reschedule_replay_monitor("thread unblocking");
+	reschedule("thread unblocking");
 	return;
 }
 
@@ -1043,7 +1044,7 @@ replay_clone_syscall(Word (*fn)(void *),
 	rt->next_thread = head_thread;
 	head_thread = rt;
 
-	reschedule_replay_monitor("clone syscall");
+	reschedule("clone syscall");
 
 	return 52;
 }
