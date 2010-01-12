@@ -31,7 +31,7 @@ slist_push_ ## tag (struct slist_head_ ## tag *q,           \
 	q->tail = v;                                        \
 }                                                           \
                                                             \
-static type                                                 \
+static inline type                                          \
 slist_pop_ ## tag (struct slist_head_ ## tag *q)            \
 {                                                           \
 	type res;                                           \
@@ -44,4 +44,45 @@ slist_pop_ ## tag (struct slist_head_ ## tag *q)            \
 	res = v->val;                                       \
 	VG_(free)(v);                                       \
 	return res;                                         \
+}
+
+/* A zipper list.  You have two processes, both of which are producing
+   records at some rate.  You don't particularly care which one is
+   faster, or if one gets ahead of the other, but you do care that the
+   sequences they produce are consistent.  This is a datastructure for
+   matching them up. */
+#define MK_ZIPPER_LIST(type, tag, validate)                 \
+struct zipper_list_ ## tag {                                \
+	Bool pending_are_from_A;                            \
+	struct slist_head_ ## tag pending;                  \
+};                                                          \
+                                                            \
+static inline void                                          \
+zipper_add_A_ ## tag(struct zipper_list_ ## tag *list,      \
+		     type val)                              \
+{                                                           \
+	if (slist_empty_ ## tag(&list->pending) ||          \
+	    list->pending_are_from_A) {                     \
+		list->pending_are_from_A = True;            \
+		slist_push_ ## tag (&list->pending, val);   \
+	} else {                                            \
+		type tmp;                                   \
+		tmp = slist_pop_ ## tag (&list->pending);   \
+		validate(&val, &tmp);                       \
+	}                                                   \
+}                                                           \
+                                                            \
+static inline void                                          \
+zipper_add_B_ ## tag(struct zipper_list_ ## tag *list,      \
+		     type val)                              \
+{                                                           \
+	if (slist_empty_ ## tag(&list->pending) ||          \
+	    !list->pending_are_from_A) {                    \
+		list->pending_are_from_A = False;           \
+		slist_push_ ## tag (&list->pending, val);   \
+	} else {                                            \
+		type tmp;                                   \
+		tmp = slist_pop_ ## tag (&list->pending);   \
+		validate(&val, &tmp);                       \
+	}                                                   \
 }

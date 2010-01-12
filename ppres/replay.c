@@ -40,7 +40,7 @@
 #include "list.h"
 
 /* Can the replay system see footstep records at all? */
-#define SEARCH_USES_FOOTSTEPS 0
+#define SEARCH_USES_FOOTSTEPS 1
 /* Use footsteps to explicitly choose which way to go (as opposed to
    just validating our decisions).  This forces a total ordering
    on all instructions. */
@@ -77,15 +77,9 @@ extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt pro
    therefore need to do a bit of buffering, to allow for the replay
    getting ahead of the log and vice versa. */
 MK_SLIST_FUNCS(struct footstep_record, pfq)
-
-struct pending_footstep_thread {
-	/* pending_footsteps is either footsteps which have been seen
-	   in the log (log_is_ahead_of_world is true) or which have
-	   been seen in the replay (log_is_ahead_of_world is
-	   false). */
-	Bool log_is_ahead_of_world;
-	struct slist_head_pfq pending_footsteps;
-};
+static void validate_fr(const struct footstep_record *reference,
+			const struct footstep_record *observed);
+MK_ZIPPER_LIST(struct footstep_record, pfq, validate_fr)
 #endif
 
 struct replay_thread {
@@ -96,7 +90,7 @@ struct replay_thread {
 	Bool blocked;
 	Bool failed;
 #if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
-	struct pending_footstep_thread pending_footsteps;
+	struct zipper_list_pfq pending_footsteps;
 #endif
 };
 
@@ -438,20 +432,10 @@ footstep_event(VexGuestAMD64State *state, Addr rip)
 	run_replay_machine();
 #else
 	struct footstep_record current_fr;
-	struct pending_footstep_thread *pft;
-	struct footstep_record expected_fr;
 	state->guest_RIP = rip;
 	capture_footstep_record(&current_fr, state);
-	pft = &current_thread->pending_footsteps;
-	if (slist_empty_pfq(&pft->pending_footsteps) ||
-	    !pft->log_is_ahead_of_world) {
-		pft->log_is_ahead_of_world = False;
-		slist_push_pfq(&pft->pending_footsteps,
-			       current_fr);
-	} else {
-		expected_fr = slist_pop_pfq(&pft->pending_footsteps);
-		validate_fr(&current_fr, &expected_fr);
-	}
+	zipper_add_B_pfq(&current_thread->pending_footsteps,
+			 current_fr);
 #endif
 }
 #endif
@@ -531,17 +515,8 @@ replay_footstep_record(struct footstep_record *fr,
 			  client_stop_reason.cls);
 	validate_fr(fr, &expected_fr);
 #else
-	struct pending_footstep_thread *pft = &get_thread(rh->tid)->pending_footsteps;
-	struct footstep_record expected_fr;
-
-	if (slist_empty_pfq(&pft->pending_footsteps) ||
-	    pft->log_is_ahead_of_world) {
-		pft->log_is_ahead_of_world = True;
-		slist_push_pfq(&pft->pending_footsteps, *fr);
-	} else {
-		expected_fr = slist_pop_pfq(&pft->pending_footsteps);
-		validate_fr(fr, &expected_fr);
-	}
+ 	zipper_add_A_pfq(&get_thread(rh->tid)->pending_footsteps,
+ 			 *fr);
 #endif
 #endif
 	finish_this_record(&logfile);
