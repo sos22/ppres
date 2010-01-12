@@ -944,6 +944,7 @@ init(void)
 				Addr addr;
 				need_schedule_reset = True;
 				VG_(read)(fds[0], &addr, sizeof(addr));
+				VG_(printf)("Discovered race address %lx\n", addr);
 				mark_address_as_racy(addr);
 				break;
 			}
