@@ -37,6 +37,7 @@
 #include "coroutines.h"
 #include "schedule.h"
 #include "races.h"
+#include "list.h"
 
 /* Can the replay system see footstep records at all? */
 #define SEARCH_USES_FOOTSTEPS 0
@@ -75,18 +76,9 @@ extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt pro
    we do require that they replay in order in each thread.  We
    therefore need to do a bit of buffering, to allow for the replay
    getting ahead of the log and vice versa. */
-struct pending_footstep {
-	struct pending_footstep *next;
-	struct footstep_record fr;
-};
-
-struct pending_footstep_queue {
-	struct pending_footstep *head;
-	struct pending_footstep *tail;
-};
+MK_SLIST_FUNCS(struct footstep_record, pfq)
 
 struct pending_footstep_thread {
-	struct pending_footstep_thread *next;
 	ThreadId tid;
 
 	/* pending_footsteps is either footsteps which have been seen
@@ -94,7 +86,7 @@ struct pending_footstep_thread {
 	   been seen in the replay (log_is_ahead_of_world is
 	   false). */
 	Bool log_is_ahead_of_world;
-	struct pending_footstep_queue pending_footsteps;
+	struct slist_head_pfq pending_footsteps;
 };
 #endif
 
@@ -429,47 +421,6 @@ capture_footstep_record(struct footstep_record *fr,
 	fr->rcx = state->guest_RCX;
 }
 
-#if !FOOTSTEP_DIRECTS_SEARCH
-static Bool
-pfq_empty(struct pending_footstep_queue *pfq)
-{
-	return pfq->head == NULL;
-}
-
-static void
-push_pending_footstep(struct pending_footstep_queue *pfq,
-		      struct footstep_record fr)
-{
-	struct pending_footstep *pf;
-
-	pf = VG_(malloc)("pending footstep", sizeof(*pf));
-	VG_(memset)(pf, 0, sizeof(*pf));
-	pf->next = NULL;
-	pf->fr = fr;
-	if (pfq->tail)
-		pfq->tail->next = pf;
-	else
-		pfq->head = pf;
-	pfq->tail = pf;
-}
-
-static struct footstep_record
-pop_pending_footstep(struct pending_footstep_queue *pfq)
-{
-	struct footstep_record res;
-	struct pending_footstep *pf;
-
-	pf = pfq->head;
-	pfq->head = pf->next;
-	if (pfq->tail == pf)
-		pfq->tail = NULL;
-	tl_assert(pf);
-	res = pf->fr;
-	VG_(free)(pf);
-	return res;
-}
-#endif
-
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
@@ -487,13 +438,13 @@ footstep_event(VexGuestAMD64State *state, Addr rip)
 	state->guest_RIP = rip;
 	capture_footstep_record(&current_fr, state);
 	pft = &current_thread->pending_footsteps;
-	if (pfq_empty(&pft->pending_footsteps) ||
+	if (slist_empty_pfq(&pft->pending_footsteps) ||
 	    !pft->log_is_ahead_of_world) {
 		pft->log_is_ahead_of_world = False;
-		push_pending_footstep(&pft->pending_footsteps,
-				      current_fr);
+		slist_push_pfq(&pft->pending_footsteps,
+			       current_fr);
 	} else {
-		expected_fr = pop_pending_footstep(&pft->pending_footsteps);
+		expected_fr = slist_pop_pfq(&pft->pending_footsteps);
 		validate_fr(&current_fr, &expected_fr);
 	}
 #endif
@@ -578,13 +529,13 @@ replay_footstep_record(struct footstep_record *fr,
 	struct pending_footstep_thread *pft = &get_thread(rh->tid)->pending_footsteps;
 	struct footstep_record expected_fr;
 
-	if (pfq_empty(&pft->pending_footsteps) ||
+	if (slist_empty_pfq(&pft->pending_footsteps) ||
 	    pft->log_is_ahead_of_world) {
 		pft->log_is_ahead_of_world = True;
-		push_pending_footstep(&pft->pending_footsteps, *fr);
+		slist_push_pfq(&pft->pending_footsteps, *fr);
 		finish_this_record(&logfile);
 	} else {
-		expected_fr = pop_pending_footstep(&pft->pending_footsteps);
+		expected_fr = slist_pop_pfq(&pft->pending_footsteps);
 		validate_fr(fr, &expected_fr);
 	}
 #endif
