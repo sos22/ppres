@@ -177,12 +177,28 @@ my__exit(int code)
 }
 
 void
-coroutine_bad_return_c(const char *name)
+coroutine_bad_return_c(struct coroutine *cr)
 {
 	VG_(printf)("Coroutine returned unexpectedly!\n");
-	VG_(printf)("(%s)\n", name);
+	VG_(printf)("(%s)\n", cr->name);
 	VG_(tool_panic)((Char *)"Coroutine error");
 }
+
+void activate_bad_coroutine(struct coroutine *src, struct coroutine *dest)
+{
+	VG_(printf)("Activated bad coroutine!\n");
+	VG_(printf)("(%s from %s)\n", dest->name, src->name);
+	VG_(tool_panic)((Char *)"Coroutine error");
+}
+
+void deactivate_bad_coroutine(struct coroutine *src, struct coroutine *dest)
+{
+	VG_(printf)("Deactivated bad coroutine!\n");
+	VG_(printf)("(%s for %s, src in use %ld)\n", src->name, dest->name,
+		    src->in_use);
+	VG_(tool_panic)((Char *)"Coroutine error");
+}
+
 
 /* Switch from the monitor to client code in thread @who (which might
    be the current thread).  The client might do a thread switch
@@ -950,6 +966,7 @@ init(void)
 	   first instruction of the program executed. */
 	VG_(printf)("Invoking replay state machine.\n");
 	current_thread = head_thread;
+	initialise_coroutine(&head_thread->coroutine, "head thread");
 	run_coroutine(&head_thread->coroutine, &replay_state_machine);
 	VG_(printf)("Replay state machine activated client.\n");
 	VG_(running_tid) = VG_INVALID_THREADID;

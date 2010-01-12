@@ -18,6 +18,22 @@ asm ( ".text\n"
       "run_coroutine:\n"
 		/* %rdi points at the current routine save area, %rsi
 		   points at the target routine. */
+
+                /* Sanity check the supplied coroutines. */
+
+                /* Old must currently be in use */
+                "cmpq $0, 104(%rdi)\n"
+                "je deactivate_bad_coroutine\n"
+
+                /* New must not be in use */
+                "cmpq $0, 104(%rsi)\n"
+                "jne activate_bad_coroutine\n"
+
+                /* Update the in_use flags */
+                "movq $0, 104(%rdi)\n"
+                "movq $1, 104(%rsi)\n"
+
+                /* Do the switch */
 		DO_REG("rbx", 0)
 		DO_REG("rsp", 8)
 		DO_REG("rbp", 16)
@@ -36,9 +52,13 @@ asm ( ".text\n"
 );
 
 /* Unusual calling convention: we pop arguments from the stack until
-   we see the magic, and then use the next argument as a char *.  This
-   is necessary because there are varargs on the stack in the way, and
-   we don't know how many. */
+   we see the magic, and then use the next argument as a struct
+   coroutine *.  This is necessary because there are varargs on the
+   stack in the way, and we don't know how many.  Of course, it won't
+   work if one of the arguments happens to be COROUTINE_NAME_MAGIC
+   just by coincidence, but there's nothing we can do about that, and,
+   since these are only used for debug messages when we're about to
+   crash anyway, we just have to put up with it. */
 #define COROUTINE_NAME_MAGIC 0xdeadbeef
 extern unsigned coroutine_bad_return;
 
@@ -72,7 +92,7 @@ make_coroutine(struct coroutine *out,
 
 	memset(out, 0, sizeof(*out));
 	out->rsp = (unsigned long)(stack + stack_size);
-	push(out, name);
+	out->name = name;
 	push(out, (void *)COROUTINE_NAME_MAGIC);
 
 	/* Set up arguments */
@@ -103,4 +123,14 @@ make_coroutine(struct coroutine *out,
 
 	push(out, &coroutine_bad_return);
 	push(out, f);
+}
+
+/* Do the minimal initialisation so that the coroutine can be used as
+   a source for run_coroutine. */
+void
+initialise_coroutine(struct coroutine *cr, const char *name)
+{
+	memset(cr, 0, sizeof(*cr));
+	cr->in_use = 1;
+	cr->name = name;
 }

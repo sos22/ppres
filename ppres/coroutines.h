@@ -17,6 +17,9 @@ struct coroutine {
 	unsigned long rcx; /* 80 */
 	unsigned long r8; /* 88 */
 	unsigned long r9; /* 96 */
+
+	unsigned long in_use; /* 104 */
+	const char *name;
 };
 
 void run_coroutine(struct coroutine *me, const struct coroutine *target);
@@ -27,6 +30,8 @@ void make_coroutine(struct coroutine *out,
 		    void *f,
 		    unsigned nr_args,
 		    ...);
+void initialise_coroutine(struct coroutine *cr, const char *name);
 
-void coroutine_bad_return_c(const char *name);
-
+void coroutine_bad_return_c(struct coroutine *cr);
+void activate_bad_coroutine(struct coroutine *src, struct coroutine *dest);
+void deactivate_bad_coroutine(struct coroutine *src, struct coroutine *dest);
