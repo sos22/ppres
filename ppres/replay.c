@@ -483,6 +483,8 @@ replay_footstep_record(struct footstep_record *fr,
 			  current_thread->id, rh->tid);
 #endif
 	validate_fr(&client_stop_reason.u.footstep, fr);
+#else
+	finish_this_record(&logfile);
 #endif
 }
 
