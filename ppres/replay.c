@@ -390,23 +390,30 @@ do {                                                      \
         }                                                 \
 } while (0)
 
+#define replay_assert_XXX_no_finish(cond, msg, ...)       \
+do {                                                      \
+	if (!(cond)) {					  \
+		failure("Assertion %s failed at %d: " msg "\n", \
+                        #cond , __LINE__, ## __VA_ARGS__);\
+                return;                                   \
+        }                                                 \
+} while (0)
+
 #if SEARCH_USES_FOOTSTEPS
 static void
 validate_fr(const struct footstep_record *reference,
 	    const struct footstep_record *observed)
 {
-	replay_assert_XXX(reference->rip == observed->rip,
-			  "wanted a footstep at %lx, got one at %lx",
-			  reference->rip,
-			  observed->rip);
-	replay_assert_XXX(reference->rax == observed->rax, "RAX mismatch: %lx != %lx",
-			  reference->rax, observed->rax);
-	replay_assert_XXX(reference->rdx == observed->rdx, "RDX mismatch");
-	replay_assert_XXX(reference->rcx == observed->rcx ||
-			  observed->rcx == NONDETERMINISM_POISON,
-			  "RCX mismatch");
-	if (in_monitor)
-		finish_this_record(&logfile);
+	replay_assert_XXX_no_finish(reference->rip == observed->rip,
+				    "wanted a footstep at %lx, got one at %lx",
+				    reference->rip,
+				    observed->rip);
+	replay_assert_XXX_no_finish(reference->rax == observed->rax, "RAX mismatch: %lx != %lx",
+				    reference->rax, observed->rax);
+	replay_assert_XXX_no_finish(reference->rdx == observed->rdx, "RDX mismatch");
+	replay_assert_XXX_no_finish(reference->rcx == observed->rcx ||
+				    observed->rcx == NONDETERMINISM_POISON,
+				    "RCX mismatch");
 }
 
 static void
@@ -522,7 +529,7 @@ replay_footstep_record(struct footstep_record *fr,
 	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_footstep,
 			  "expected a footstep, got class %d",
 			  client_stop_reason.cls);
-	validate_fr(&client_stop_reason.u.footstep, fr);
+	validate_fr(fr, &expected_fr);
 #else
 	struct pending_footstep_thread *pft = &get_thread(rh->tid)->pending_footsteps;
 	struct footstep_record expected_fr;
@@ -531,15 +538,13 @@ replay_footstep_record(struct footstep_record *fr,
 	    pft->log_is_ahead_of_world) {
 		pft->log_is_ahead_of_world = True;
 		slist_push_pfq(&pft->pending_footsteps, *fr);
-		finish_this_record(&logfile);
 	} else {
 		expected_fr = slist_pop_pfq(&pft->pending_footsteps);
 		validate_fr(fr, &expected_fr);
 	}
 #endif
-#else
-	finish_this_record(&logfile);
 #endif
+	finish_this_record(&logfile);
 }
 
 static void
