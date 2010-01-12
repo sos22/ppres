@@ -40,7 +40,7 @@
 #include "list.h"
 
 /* Can the replay system see footstep records at all? */
-#define SEARCH_USES_FOOTSTEPS 1
+#define SEARCH_USES_FOOTSTEPS 0
 /* Use footsteps to explicitly choose which way to go (as opposed to
    just validating our decisions).  This forces a total ordering
    on all instructions. */
