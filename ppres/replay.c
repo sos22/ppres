@@ -70,7 +70,7 @@ extern Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
 extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
-#if SEARCH_USES_FOOTSTEPS
+#if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 /* Footsteps don't necessarily replay completely in global order, but
    we do require that they replay in order in each thread.  We
    therefore need to do a bit of buffering, to allow for the replay
@@ -105,7 +105,9 @@ struct replay_thread {
 	Bool in_generated;
 	Bool blocked;
 	Bool failed;
+#if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 	struct pending_footstep_thread pending_footsteps;
+#endif
 };
 
 static struct coroutine
@@ -427,6 +429,7 @@ capture_footstep_record(struct footstep_record *fr,
 	fr->rcx = state->guest_RCX;
 }
 
+#if !FOOTSTEP_DIRECTS_SEARCH
 static Bool
 pfq_empty(struct pending_footstep_queue *pfq)
 {
@@ -465,6 +468,7 @@ pop_pending_footstep(struct pending_footstep_queue *pfq)
 	VG_(free)(pf);
 	return res;
 }
+#endif
 
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
