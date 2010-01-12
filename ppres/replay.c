@@ -699,54 +699,30 @@ replay_rdtsc_record(struct rdtsc_record *rr)
 static int mem_access_counter;
 
 static void
-replay_mem_record(struct record_header *rh,
-		  const struct mem_access_event *recorded)
+validate_mem_access(const struct mem_access_event *recorded,
+		    const struct mem_access_event *observed)
 {
 	int safe;
 
-#if MEMORY_DIRECTS_SEARCH
-	run_client(get_thread(rh->tid), "forced by memory read");
-#else
-	run_client(current_thread, "memory read");
-#endif
-
-	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS != 0) {
-		finish_this_record(&logfile);
-		return;
-	}
-
-	replay_assert_XXX(current_thread->id == rh->tid,
-			  "wanted to be in thread %d, was in %d",
-			  rh->tid,
-			  current_thread->id);
-	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_mem_access,
-			  "wanted a memory read, got class %d",
-			  client_stop_reason.cls);
-	replay_assert_XXX(client_stop_reason.u.mem.is_read == recorded->is_read,
-			  "wrong memory type (%d, expected %d)",
-			  client_stop_reason.u.mem.is_read,
-			  recorded->is_read);
-	replay_assert_XXX(client_stop_reason.u.mem.ptr == recorded->ptr,
-			  "Expected an access from %p, got one from %p",
-			  recorded->ptr,
-			  client_stop_reason.u.mem.ptr);
-	replay_assert_XXX(client_stop_reason.u.mem.size == recorded->size,
-			  "wanted access of size %d, got size %d",
-			  recorded->size, client_stop_reason.u.mem.size);
+	replay_assert_XXX_no_finish(observed->is_read == recorded->is_read,
+				    "wrong memory type (%d, expected %d)",
+				    observed->is_read, recorded->is_read);
+	replay_assert_XXX_no_finish(observed->ptr == recorded->ptr,
+				    "Expected an access from %p, got one from %p",
+				    recorded->ptr, observed->ptr);
+	replay_assert_XXX_no_finish(observed->size == recorded->size,
+				    "wanted access of size %d, got size %d",
+				    recorded->size, observed->size);
 	safe = 1;
-	if (VG_(memcmp)(client_stop_reason.u.mem.buffer,
-			recorded->buffer,
-			recorded->size)) {
+	if (VG_(memcmp)(observed->buffer, recorded->buffer, recorded->size)) {
 		safe = 0;
 		switch (recorded->size) {
 		case 4:
-			if (*(unsigned *)client_stop_reason.u.mem.buffer ==
-			    NONDETERMINISM_POISON)
+			if (*(unsigned *)observed->buffer == NONDETERMINISM_POISON)
 				safe = 1;
 			break;
 		case 8:
-			if (*(unsigned long *)client_stop_reason.u.mem.buffer ==
-			    NONDETERMINISM_POISON)
+			if (*(unsigned long *)observed->buffer == NONDETERMINISM_POISON)
 				safe = 1;
 			break;
 		}
@@ -755,8 +731,33 @@ replay_mem_record(struct record_header *rh,
 		failure("Memory divergence (read) at address %p; wanted %lx but got %lx (size %d)!\n",
 			recorded->ptr,
 			*(unsigned long *)recorded->buffer,
-			*(unsigned long *)client_stop_reason.u.mem.buffer,
+			*(unsigned long *)observed->buffer,
 			recorded->size);
+}
+
+static void
+replay_mem_record(struct record_header *rh,
+		  const struct mem_access_event *recorded)
+{
+	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS != 0) {
+		finish_this_record(&logfile);
+		return;
+	}
+
+#if MEMORY_DIRECTS_SEARCH
+	run_client(get_thread(rh->tid), "forced by memory read");
+#else
+	run_client(current_thread, "memory read");
+#endif
+
+	replay_assert_XXX(current_thread->id == rh->tid,
+			  "wanted to be in thread %d, was in %d",
+			  rh->tid,
+			  current_thread->id);
+	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_mem_access,
+			  "wanted a memory read, got class %d",
+			  client_stop_reason.cls);
+	validate_mem_access(recorded, &client_stop_reason.u.mem);
 	finish_this_record(&logfile);
 }
 
