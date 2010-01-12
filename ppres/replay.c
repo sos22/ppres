@@ -48,9 +48,15 @@
 
 /* Restrict the search process to only see every nth memory access. */
 #define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
+
 /* Use memory records to decide which thread to run.  This forces
    a total ordering on all memory accesses. */
 #define MEMORY_DIRECTS_SEARCH 0
+
+/* We only use the global order for every nth access.  This is done by
+   preventing threads from running if they have more than N memory
+   accesses outstanding. */
+#define ORDER_EVERY_NTH_MEMORY_ACCESS 50
 
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
@@ -71,6 +77,15 @@ extern Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
 extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
+#define CSR_BUFFER 16
+
+struct mem_access_event {
+	Bool is_read; /* or write */
+	void *ptr;
+	unsigned size;
+	unsigned char buffer[CSR_BUFFER];
+};
+
 #if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 /* Footsteps don't necessarily replay completely in global order, but
    we do require that they replay in order in each thread.  We
@@ -78,8 +93,21 @@ extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt pro
    getting ahead of the log and vice versa. */
 MK_SLIST_FUNCS(struct footstep_record, pfq)
 static void validate_fr(const struct footstep_record *reference,
-			const struct footstep_record *observed);
+			const struct footstep_record *observed,
+			ThreadId tid);
 MK_ZIPPER_LIST(struct footstep_record, pfq, validate_fr)
+#endif
+
+#if !MEMORY_DIRECTS_SEARCH
+/* Similar argument to footsteps: if we're not forcing memory accesses
+   to have the same global order as they had in the record phase, we
+   need some way of buffering them up per-thread so that we can
+   validate them.  These lists provide that way. */
+MK_SLIST_FUNCS(struct mem_access_event, mae)
+static void validate_mem_access(const struct mem_access_event *recorded,
+				const struct mem_access_event *observed,
+				ThreadId tid);
+MK_ZIPPER_LIST(struct mem_access_event, mae, validate_mem_access)
 #endif
 
 struct replay_thread {
@@ -91,6 +119,9 @@ struct replay_thread {
 	Bool failed;
 #if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 	struct zipper_list_pfq pending_footsteps;
+#endif
+#if !MEMORY_DIRECTS_SEARCH
+	struct zipper_list_mae pending_memory;
 #endif
 };
 
@@ -109,15 +140,6 @@ in_monitor;
 #define SEARCH_CODE_REPLAY_SUCCESS 0xa2b3c4d5
 #define SEARCH_CODE_REPLAY_FAILURE 0xa2b3c4d6
 #define SEARCH_CODE_NEW_RACE_ADDR 0xa2b3c4d7
-
-#define CSR_BUFFER 16
-
-struct mem_access_event {
-	Bool is_read; /* or write */
-	void *ptr;
-	unsigned size;
-	unsigned char buffer[CSR_BUFFER];
-};
 
 static struct {
 	enum {CLIENT_STOP_footstep = 12345,
@@ -255,6 +277,39 @@ run_replay_machine(void)
 	VG_(in_generated_code) = current_thread->in_generated;
 }
 
+static Bool
+thread_runnable(const struct replay_thread *tr)
+{
+	const struct replay_thread *other_thread;
+
+	if (tr->blocked)
+		return False;
+	tl_assert(!tr->failed); /* failed threads are always blocked */
+#if !MEMORY_DIRECTS_SEARCH
+	/* Try not to let threads get too far ahead of the log */
+	if (!tr->pending_memory.pending_are_from_A &&
+	    tr->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS) {
+		/* But if there's nothing else to run, we don't have
+		 * any choice. */
+		for (other_thread = head_thread;
+		     other_thread;
+		     other_thread = other_thread->next_thread) {
+			if (other_thread->blocked)
+				continue;
+			if (!other_thread->pending_memory.pending_are_from_A &&
+			    other_thread->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS)
+				continue;
+			/* We could run other_thread instead, so
+			   shouldn't choose tr */
+			return False;
+		}
+		/* No choice: we have to run this thread, even though
+		 * it's getting ahead. */
+	}
+#endif
+	return True;
+}
+
 static void
 reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_list args)
 {
@@ -268,7 +323,7 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	other_threads = 0;
 	rt = head_thread;
 	while (rt != NULL) {
-		if (rt != me && !rt->blocked)
+		if (rt != me && thread_runnable(rt))
 			other_threads++;
 		rt = rt->next_thread;
 	}
@@ -283,12 +338,12 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 			VG_(write)(worker_process_output_fd, &code, sizeof(code));
 			my__exit(1);
 		}
-		tl_assert(!current_thread->blocked);
+		tl_assert(thread_runnable(current_thread));
 	}
 	thread_to_run = make_nd_choice(&execution_schedule,
 				       other_threads);
 	tl_assert(thread_to_run <= other_threads);
-	if (thread_to_run == 0 && !current_thread->blocked) {
+	if (thread_to_run == 0 && thread_runnable(current_thread)) {
 		/* Keep running this thread. */
 		if (loud) {
 			VG_(printf)("Keep in thread %d for ",
@@ -306,7 +361,7 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	while (x < thread_to_run) {
 		rt = rt->next_thread;
 		tl_assert(rt != NULL);
-		while (rt == me || rt->blocked)
+		while (rt == me || !thread_runnable(rt))
 			rt = rt->next_thread;
 		x++;
 	}
@@ -314,6 +369,7 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	tl_assert(rt != me);
 	tl_assert(!rt->blocked);
 	tl_assert(!rt->failed);
+	tl_assert(thread_runnable(rt));
 
 	VG_(printf)("Switch to thread %d for ", rt->id);
 	VG_(vprintf)(msg, args);
@@ -393,7 +449,8 @@ do {                                                      \
 #if SEARCH_USES_FOOTSTEPS
 static void
 validate_fr(const struct footstep_record *reference,
-	    const struct footstep_record *observed)
+	    const struct footstep_record *observed,
+	    ThreadId tid)
 {
 	replay_assert_XXX_no_finish(reference->rip == observed->rip,
 				    "wanted a footstep at %lx, got one at %lx",
@@ -432,7 +489,7 @@ footstep_event(VexGuestAMD64State *state, Addr rip)
 	state->guest_RIP = rip;
 	capture_footstep_record(&current_fr, state);
 	zipper_add_B_pfq(&current_thread->pending_footsteps,
-			 current_fr);
+			 current_fr, current_thread->id);
 #endif
 }
 #endif
@@ -449,35 +506,51 @@ syscall_event(VexGuestAMD64State *state)
 static void
 replay_load(const void *ptr, unsigned size, void *read_contents)
 {
-	reschedule(False, "load %d from %p", size, ptr);
+	struct mem_access_event mae;
 
+	reschedule(False, "load %d from %p", size, ptr);
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
+
+	mae.is_read = True;
+	mae.ptr = (void *)ptr;
+	mae.size = size;
+	VG_(memcpy)(mae.buffer, read_contents, size);
+
+#if MEMORY_DIRECTS_SEARCH
 	client_stop_reason.cls = CLIENT_STOP_mem_access;
-	client_stop_reason.u.mem.is_read = True;
-	client_stop_reason.u.mem.ptr = (void *)ptr;
-	client_stop_reason.u.mem.size = size;
-	VG_(memcpy)(client_stop_reason.u.mem.buffer,
-		    read_contents,
-		    size);
+	client_stop_reason.u.mem = mae;
 	run_replay_machine();
+#else
+	zipper_add_B_mae(&current_thread->pending_memory, mae,
+			 current_thread->id);
+#endif
 }
 
 static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
-	reschedule(False, "store %d to %p", size, ptr);
+	struct mem_access_event mae;
 
+	reschedule(False, "store %d to %p (%lx -> %lx)", size, ptr,
+		   *(unsigned long *)ptr,
+		   *(unsigned long *)written_bytes);
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(ptr, written_bytes, size);
+
+	mae.is_read = False;
+	mae.ptr = (void *)ptr;
+	mae.size = size;
+	VG_(memcpy)(mae.buffer, written_bytes, size);
+
+#if MEMORY_DIRECTS_SEARCH
 	client_stop_reason.cls = CLIENT_STOP_mem_access;
-	client_stop_reason.u.mem.is_read = False;
-	client_stop_reason.u.mem.ptr = ptr;
-	client_stop_reason.u.mem.size = size;
-	VG_(memcpy)(client_stop_reason.u.mem.buffer,
-		    written_bytes,
-		    size);
+	client_stop_reason.u.mem = mae;
 	run_replay_machine();
+#else
+	zipper_add_B_mae(&current_thread->pending_memory, mae,
+			 current_thread->id);
+#endif
 }
 
 #define included_for_replay
@@ -512,10 +585,10 @@ replay_footstep_record(struct footstep_record *fr,
 	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_footstep,
 			  "expected a footstep, got class %d",
 			  client_stop_reason.cls);
-	validate_fr(fr, &expected_fr);
+	validate_fr(fr, &client_stop_reason.u.footstep);
 #else
  	zipper_add_A_pfq(&get_thread(rh->tid)->pending_footsteps,
- 			 *fr);
+ 			 *fr, rh->tid);
 #endif
 #endif
 	finish_this_record(&logfile);
@@ -700,7 +773,8 @@ static int mem_access_counter;
 
 static void
 validate_mem_access(const struct mem_access_event *recorded,
-		    const struct mem_access_event *observed)
+		    const struct mem_access_event *observed,
+		    ThreadId tid)
 {
 	int safe;
 
@@ -728,7 +802,9 @@ validate_mem_access(const struct mem_access_event *recorded,
 		}
 	}
 	if (!safe)
-		failure("Memory divergence (read) at address %p; wanted %lx but got %lx (size %d)!\n",
+		failure("Memory divergence (read = %d) in thread %d at address %p; wanted %lx but got %lx (size %d)!\n",
+			recorded->is_read,
+			tid,
 			recorded->ptr,
 			*(unsigned long *)recorded->buffer,
 			*(unsigned long *)observed->buffer,
@@ -746,10 +822,6 @@ replay_mem_record(struct record_header *rh,
 
 #if MEMORY_DIRECTS_SEARCH
 	run_client(get_thread(rh->tid), "forced by memory read");
-#else
-	run_client(current_thread, "memory read");
-#endif
-
 	replay_assert_XXX(current_thread->id == rh->tid,
 			  "wanted to be in thread %d, was in %d",
 			  rh->tid,
@@ -758,6 +830,10 @@ replay_mem_record(struct record_header *rh,
 			  "wanted a memory read, got class %d",
 			  client_stop_reason.cls);
 	validate_mem_access(recorded, &client_stop_reason.u.mem);
+#else
+	zipper_add_A_mae(&get_thread(rh->tid)->pending_memory,
+			 *recorded, rh->tid);
+#endif
 	finish_this_record(&logfile);
 }
 
@@ -1033,6 +1109,7 @@ hit_end_of_log(void)
 static ULong
 replay_rdtsc(void)
 {
+	reschedule(False, "rdtsc");
 	client_stop_reason.cls = CLIENT_STOP_rdtsc;
 	run_replay_machine();
 	return client_resume.rdtsc;

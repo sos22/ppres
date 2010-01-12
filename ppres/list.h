@@ -6,6 +6,7 @@ struct slist_entry_ ## tag {                                \
                                                             \
 struct slist_head_ ## tag {                                 \
 	struct slist_entry_ ## tag *head, *tail;            \
+        unsigned length;                                    \
 };                                                          \
                                                             \
                                                             \
@@ -29,6 +30,7 @@ slist_push_ ## tag (struct slist_head_ ## tag *q,           \
 	else                                                \
 		q->head = v;                                \
 	q->tail = v;                                        \
+        q->length++;                                        \
 }                                                           \
                                                             \
 static inline type                                          \
@@ -43,6 +45,7 @@ slist_pop_ ## tag (struct slist_head_ ## tag *q)            \
 		q->tail = NULL;                             \
 	res = v->val;                                       \
 	VG_(free)(v);                                       \
+	q->length--;                                        \
 	return res;                                         \
 }
 
@@ -59,7 +62,7 @@ struct zipper_list_ ## tag {                                \
                                                             \
 static inline void                                          \
 zipper_add_A_ ## tag(struct zipper_list_ ## tag *list,      \
-		     type val)                              \
+		     type val, ThreadId tid)                \
 {                                                           \
 	if (slist_empty_ ## tag(&list->pending) ||          \
 	    list->pending_are_from_A) {                     \
@@ -68,13 +71,13 @@ zipper_add_A_ ## tag(struct zipper_list_ ## tag *list,      \
 	} else {                                            \
 		type tmp;                                   \
 		tmp = slist_pop_ ## tag (&list->pending);   \
-		validate(&val, &tmp);                       \
+		validate(&val, &tmp, tid);		    \
 	}                                                   \
 }                                                           \
                                                             \
 static inline void                                          \
 zipper_add_B_ ## tag(struct zipper_list_ ## tag *list,      \
-		     type val)                              \
+		     type val, ThreadId tid)		    \
 {                                                           \
 	if (slist_empty_ ## tag(&list->pending) ||          \
 	    !list->pending_are_from_A) {                    \
@@ -83,6 +86,6 @@ zipper_add_B_ ## tag(struct zipper_list_ ## tag *list,      \
 	} else {                                            \
 		type tmp;                                   \
 		tmp = slist_pop_ ## tag (&list->pending);   \
-		validate(&val, &tmp);                       \
+		validate(&tmp, &val, tid);		    \
 	}                                                   \
 }
