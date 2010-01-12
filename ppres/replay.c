@@ -98,7 +98,7 @@ in_monitor;
 #define CSR_BUFFER 16
 
 static struct {
-	enum {CLIENT_STOP_footstep,
+	enum {CLIENT_STOP_footstep = 12345,
 	      CLIENT_STOP_syscall,
 	      CLIENT_STOP_rdtsc,
 	      CLIENT_STOP_mem_read,
@@ -115,6 +115,7 @@ static struct {
 			unsigned size;
 			unsigned char buffer[CSR_BUFFER];
 		} mem_write;
+		struct footstep_record footstep;
 	} u;
 } client_stop_reason;
 
@@ -330,16 +331,78 @@ reschedule(const char *msg, ...)
 	tl_assert(!current_thread->blocked);
 }
 
+static void
+failure(const char *fmt, ...)
+{
+	va_list args;
+
+	VG_(printf)("Replay failed after %ld bytes\n",
+		    logfile.offset_in_file);
+	va_start(args, fmt);
+	VG_(vprintf)(fmt, args);
+	va_end(args);
+
+	execution_schedule.failed = True;
+
+	/* Mark this thread as failed, but let every other thread
+	   carry on, so that we have a better chance of finding
+	   interesting races. */
+	current_thread->failed = True;
+	current_thread->blocked = True;
+	reschedule("thread failed");
+}
+
+/* This does not behave like you would expect, so gets an XXX. */
+#define replay_assert_XXX(cond, msg, ...)                 \
+do {                                                      \
+	if (!(cond)) {					  \
+		failure("Assertion %s failed: " msg "\n", \
+                        #cond , ## __VA_ARGS__);          \
+                if (in_monitor)                           \
+			finish_this_record(&logfile);	  \
+                return;                                   \
+        }                                                 \
+} while (0)
+
 #if SEARCH_USES_FOOTSTEPS
+static void
+validate_fr(const struct footstep_record *reference,
+	    const struct footstep_record *observed)
+{
+	replay_assert_XXX(reference->rip == observed->rip,
+			  "wanted a footstep at %lx, got one at %lx",
+			  reference->rip,
+			  observed->rip);
+	replay_assert_XXX(reference->rax == observed->rax, "RAX mismatch");
+	replay_assert_XXX(reference->rdx == observed->rdx, "RDX mismatch");
+	replay_assert_XXX(reference->rcx == observed->rcx ||
+			  observed->rcx == NONDETERMINISM_POISON,
+			  "RCX mismatch");
+	if (in_monitor)
+		finish_this_record(&logfile);
+	else
+		VG_(printf)("Validate fr not in monitor?\n");
+}
+
+static void
+capture_footstep_record(struct footstep_record *fr,
+			VexGuestAMD64State *state)
+{
+	fr->rip = state->guest_RIP;
+	fr->rax = state->guest_RAX;
+	fr->rdx = state->guest_RDX;
+	fr->rcx = state->guest_RCX;
+}
+
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
 	reschedule("footstep at %lx\n", rip);
+	state->guest_RIP = rip;
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
-	state->guest_RIP = rip;
+	capture_footstep_record(&client_stop_reason.u.footstep, state);
 	run_replay_machine();
-	//reschedule();
 }
 #endif
 
@@ -407,38 +470,6 @@ new_race_address(Addr addr)
 }
 
 static void
-failure(const char *fmt, ...)
-{
-	va_list args;
-
-	VG_(printf)("Replay failed after %ld bytes\n",
-		    logfile.offset_in_file);
-	va_start(args, fmt);
-	VG_(vprintf)(fmt, args);
-	va_end(args);
-
-	execution_schedule.failed = True;
-
-	/* Mark this thread as failed, but let every other thread
-	   carry on, so that we have a better chance of finding
-	   interesting races. */
-	current_thread->failed = True;
-	current_thread->blocked = True;
-	reschedule("thread failed");
-}
-
-/* This does not behave like you would expect, so gets an XXX. */
-#define replay_assert_XXX(cond, msg, ...)                 \
-do {                                                      \
-	if (!(cond)) {					  \
-		failure("Assertion %s failed: " msg "\n", \
-                        #cond , ## __VA_ARGS__);          \
-                finish_this_record(&logfile);             \
-                return;                                   \
-        }                                                 \
-} while (0)
-
-static void
 replay_footstep_record(struct footstep_record *fr,
 		       struct record_header *rh)
 {
@@ -451,21 +482,8 @@ replay_footstep_record(struct footstep_record *fr,
 			  "was in thread %d, wanted thread %d",
 			  current_thread->id, rh->tid);
 #endif
-	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_footstep,
-			  "wanted a footstep, got class %d",
-			  client_stop_reason.cls);
-	replay_assert_XXX(client_stop_reason.state->guest_RIP == fr->rip,
-			  "wanted a footstep at %lx, got one at %lx",
-			  fr->rip, client_stop_reason.state->guest_RIP);
-	replay_assert_XXX(client_stop_reason.state->guest_RAX == fr->rax,
-			  "RAX mismatch");
-	replay_assert_XXX(client_stop_reason.state->guest_RDX == fr->rdx,
-			  "RDX mismatch");
-	replay_assert_XXX(client_stop_reason.state->guest_RCX == fr->rcx ||
-			  client_stop_reason.state->guest_RCX == NONDETERMINISM_POISON,
-			  "RCX mismatch");
+	validate_fr(&client_stop_reason.u.footstep, fr);
 #endif
-	finish_this_record(&logfile);
 }
 
 static void
