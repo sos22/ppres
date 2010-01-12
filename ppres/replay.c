@@ -39,7 +39,7 @@
 #include "races.h"
 
 /* Can the replay system see footstep records at all? */
-#define SEARCH_USES_FOOTSTEPS 1
+#define SEARCH_USES_FOOTSTEPS 0
 /* Use footsteps to explicitly choose which way to go (as opposed to
    just validating our decisions).  This forces a total ordering
    on all instructions. */
@@ -588,6 +588,8 @@ replay_footstep_record(struct footstep_record *fr,
 		validate_fr(fr, &expected_fr);
 	}
 #endif
+#else
+	finish_this_record(&logfile);
 #endif
 }
 
