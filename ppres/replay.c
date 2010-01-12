@@ -43,7 +43,7 @@
 /* Use footsteps to explicitly choose which way to go (as opposed to
    just validating our decisions).  This forces a total ordering
    on all instructions. */
-#define FOOTSTEPS_DIRECTS_SEARCH 1
+#define FOOTSTEP_DIRECTS_SEARCH 0
 
 /* Restrict the search process to only see every nth memory access. */
 #define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
@@ -70,6 +70,34 @@ extern Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
 extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
+#if SEARCH_USES_FOOTSTEPS
+/* Footsteps don't necessarily replay completely in global order, but
+   we do require that they replay in order in each thread.  We
+   therefore need to do a bit of buffering, to allow for the replay
+   getting ahead of the log and vice versa. */
+struct pending_footstep {
+	struct pending_footstep *next;
+	struct footstep_record fr;
+};
+
+struct pending_footstep_queue {
+	struct pending_footstep *head;
+	struct pending_footstep *tail;
+};
+
+struct pending_footstep_thread {
+	struct pending_footstep_thread *next;
+	ThreadId tid;
+
+	/* pending_footsteps is either footsteps which have been seen
+	   in the log (log_is_ahead_of_world is true) or which have
+	   been seen in the replay (log_is_ahead_of_world is
+	   false). */
+	Bool log_is_ahead_of_world;
+	struct pending_footstep_queue pending_footsteps;
+};
+#endif
+
 struct replay_thread {
 	struct replay_thread *next_thread;
 	struct coroutine coroutine;
@@ -77,6 +105,7 @@ struct replay_thread {
 	Bool in_generated;
 	Bool blocked;
 	Bool failed;
+	struct pending_footstep_thread pending_footsteps;
 };
 
 static struct coroutine
@@ -244,7 +273,7 @@ run_replay_machine(void)
 }
 
 static void
-reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
+reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_list args)
 {
 	struct replay_thread *rt, *me;
 	unsigned other_threads;
@@ -271,14 +300,19 @@ reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
 			VG_(write)(worker_process_output_fd, &code, sizeof(code));
 			my__exit(1);
 		}
-		tl_assert(!current_thread->failed);
-		return;
+		tl_assert(!current_thread->blocked);
 	}
 	thread_to_run = make_nd_choice(&execution_schedule,
 				       other_threads);
 	tl_assert(thread_to_run <= other_threads);
 	if (thread_to_run == 0 && !current_thread->blocked) {
 		/* Keep running this thread. */
+		if (loud) {
+			VG_(printf)("Keep in thread %d for ",
+				    current_thread->id);
+			VG_(vprintf)(msg, args);
+			VG_(printf)("\n");
+		}
 		return;
 	}
 
@@ -298,7 +332,7 @@ reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
 	tl_assert(!rt->blocked);
 	tl_assert(!rt->failed);
 
-	VG_(printf)("Switch to thread %d for\n", rt->id);
+	VG_(printf)("Switch to thread %d for ", rt->id);
 	VG_(vprintf)(msg, args);
 	VG_(printf)("\n");
 
@@ -318,14 +352,14 @@ reschedule_core(struct coroutine *my_coroutine, const char *msg, va_list args)
 }
 
 static void
-reschedule(const char *msg, ...)
+reschedule(Bool loud, const char *msg, ...)
 {
 	va_list args;
 	va_start(args, msg);
 	if (in_monitor)
-		reschedule_core(&replay_state_machine, msg, args);
+		reschedule_core(loud, &replay_state_machine, msg, args);
 	else
-		reschedule_core(&current_thread->coroutine, msg, args);
+		reschedule_core(loud, &current_thread->coroutine, msg, args);
 	va_end(args);
 
 	tl_assert(!current_thread->blocked);
@@ -349,15 +383,15 @@ failure(const char *fmt, ...)
 	   interesting races. */
 	current_thread->failed = True;
 	current_thread->blocked = True;
-	reschedule("thread failed");
+	reschedule(True, "thread failed");
 }
 
 /* This does not behave like you would expect, so gets an XXX. */
 #define replay_assert_XXX(cond, msg, ...)                 \
 do {                                                      \
 	if (!(cond)) {					  \
-		failure("Assertion %s failed: " msg "\n", \
-                        #cond , ## __VA_ARGS__);          \
+		failure("Assertion %s failed at %d: " msg "\n", \
+                        #cond , __LINE__, ## __VA_ARGS__);		\
                 if (in_monitor)                           \
 			finish_this_record(&logfile);	  \
                 return;                                   \
@@ -373,15 +407,14 @@ validate_fr(const struct footstep_record *reference,
 			  "wanted a footstep at %lx, got one at %lx",
 			  reference->rip,
 			  observed->rip);
-	replay_assert_XXX(reference->rax == observed->rax, "RAX mismatch");
+	replay_assert_XXX(reference->rax == observed->rax, "RAX mismatch: %lx != %lx",
+			  reference->rax, observed->rax);
 	replay_assert_XXX(reference->rdx == observed->rdx, "RDX mismatch");
 	replay_assert_XXX(reference->rcx == observed->rcx ||
 			  observed->rcx == NONDETERMINISM_POISON,
 			  "RCX mismatch");
 	if (in_monitor)
 		finish_this_record(&logfile);
-	else
-		VG_(printf)("Validate fr not in monitor?\n");
 }
 
 static void
@@ -394,22 +427,79 @@ capture_footstep_record(struct footstep_record *fr,
 	fr->rcx = state->guest_RCX;
 }
 
+static Bool
+pfq_empty(struct pending_footstep_queue *pfq)
+{
+	return pfq->head == NULL;
+}
+
+static void
+push_pending_footstep(struct pending_footstep_queue *pfq,
+		      struct footstep_record fr)
+{
+	struct pending_footstep *pf;
+
+	pf = VG_(malloc)("pending footstep", sizeof(*pf));
+	VG_(memset)(pf, 0, sizeof(*pf));
+	pf->next = NULL;
+	pf->fr = fr;
+	if (pfq->tail)
+		pfq->tail->next = pf;
+	else
+		pfq->head = pf;
+	pfq->tail = pf;
+}
+
+static struct footstep_record
+pop_pending_footstep(struct pending_footstep_queue *pfq)
+{
+	struct footstep_record res;
+	struct pending_footstep *pf;
+
+	pf = pfq->head;
+	pfq->head = pf->next;
+	if (pfq->tail == pf)
+		pfq->tail = NULL;
+	tl_assert(pf);
+	res = pf->fr;
+	VG_(free)(pf);
+	return res;
+}
+
 static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
-	reschedule("footstep at %lx\n", rip);
+#if FOOTSTEP_DIRECTS_SEARCH
+	reschedule(False, "footstep at %lx\n", rip);
 	state->guest_RIP = rip;
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
 	capture_footstep_record(&client_stop_reason.u.footstep, state);
 	run_replay_machine();
+#else
+	struct footstep_record current_fr;
+	struct pending_footstep_thread *pft;
+	struct footstep_record expected_fr;
+	state->guest_RIP = rip;
+	capture_footstep_record(&current_fr, state);
+	pft = &current_thread->pending_footsteps;
+	if (pfq_empty(&pft->pending_footsteps) ||
+	    !pft->log_is_ahead_of_world) {
+		pft->log_is_ahead_of_world = False;
+		push_pending_footstep(&pft->pending_footsteps,
+				      current_fr);
+	} else {
+		expected_fr = pop_pending_footstep(&pft->pending_footsteps);
+		validate_fr(&current_fr, &expected_fr);
+	}
+#endif
 }
 #endif
 
 static void
 syscall_event(VexGuestAMD64State *state)
 {
-	reschedule("syscall %d", state->guest_RAX);
+	reschedule(False, "syscall %d", state->guest_RAX);
 	client_stop_reason.cls = CLIENT_STOP_syscall;
 	client_stop_reason.state = state;
 	run_replay_machine();
@@ -418,7 +508,7 @@ syscall_event(VexGuestAMD64State *state)
 static void
 replay_load(const void *ptr, unsigned size, void *read_contents)
 {
-	reschedule("load %d from %p", size, ptr);
+	reschedule(False, "load %d from %p", size, ptr);
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
@@ -434,7 +524,7 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
-	reschedule("store %d to %p", size, ptr);
+	reschedule(False, "store %d to %p", size, ptr);
 
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(ptr, written_bytes, size);
@@ -474,15 +564,26 @@ replay_footstep_record(struct footstep_record *fr,
 		       struct record_header *rh)
 {
 #if SEARCH_USES_FOOTSTEPS
-#if FOOTSTEPS_DIRECTS_SEARCH
+#if FOOTSTEP_DIRECTS_SEARCH
 	run_client(get_thread(rh->tid), "forced by footstep record");
-#else
-	run_client(current_thread, "footstep record");
-	replay_assert_XXX(rh->tid == current_thread->id,
-			  "was in thread %d, wanted thread %d",
-			  current_thread->id, rh->tid);
-#endif
+	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_footstep,
+			  "expected a footstep, got class %d",
+			  client_stop_reason.cls);
 	validate_fr(&client_stop_reason.u.footstep, fr);
+#else
+	struct pending_footstep_thread *pft = &get_thread(rh->tid)->pending_footsteps;
+	struct footstep_record expected_fr;
+
+	if (pfq_empty(&pft->pending_footsteps) ||
+	    pft->log_is_ahead_of_world) {
+		pft->log_is_ahead_of_world = True;
+		push_pending_footstep(&pft->pending_footsteps, *fr);
+		finish_this_record(&logfile);
+	} else {
+		expected_fr = pop_pending_footstep(&pft->pending_footsteps);
+		validate_fr(fr, &expected_fr);
+	}
+#endif
 #endif
 }
 
@@ -803,7 +904,7 @@ block_thread(ThreadId id)
 	rt->blocked = True;
 	finish_this_record(&logfile);
 	if (rt == current_thread)
-		reschedule("thread blocking");
+		reschedule(True, "thread blocking");
 	return;
 }
 
@@ -813,7 +914,7 @@ unblock_thread(ThreadId id)
 	struct replay_thread *rt = get_thread(id);
 	rt->blocked = False;
 	finish_this_record(&logfile);
-	reschedule("thread unblocking");
+	reschedule(True, "thread unblocking");
 	return;
 }
 
@@ -1074,13 +1175,13 @@ replay_clone_syscall(Word (*fn)(void *),
 	VG_(in_generated_code) = False;
 	run_client(spawning_thread, "newly spawning thread");
 	current_thread = local_thread;
-	VG_(running_tid) = current_thread->id;
+	VG_(running_tid) = local_thread->id;
 	VG_(in_generated_code) = True;
 
 	rt->next_thread = head_thread;
 	head_thread = rt;
 
-	reschedule("clone syscall");
+	reschedule(True, "clone syscall");
 
 	return 52;
 }
