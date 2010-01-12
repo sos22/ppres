@@ -79,8 +79,6 @@ extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt pro
 MK_SLIST_FUNCS(struct footstep_record, pfq)
 
 struct pending_footstep_thread {
-	ThreadId tid;
-
 	/* pending_footsteps is either footsteps which have been seen
 	   in the log (log_is_ahead_of_world is true) or which have
 	   been seen in the replay (log_is_ahead_of_world is
