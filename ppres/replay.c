@@ -759,8 +759,8 @@ replay_syscall_record(struct record_header *rh,
 			  sr->syscall_nr,
 			  rh->tid,
 			  client_stop_reason.cls,
-			  current_thread->id,
-			  client_stop_reason.state->guest_RAX);
+			  client_stop_reason.state->guest_RAX,
+			  current_thread->id);
 	replay_assert_XXX(client_stop_reason.state->guest_RAX == sr->syscall_nr,
 			  "wanted syscall %d, got syscall %ld",
 			  sr->syscall_nr,
