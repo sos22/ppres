@@ -63,8 +63,15 @@
 #define ORDER_EVERY_NTH_MEMORY_ACCESS 50
 
 
-/* Debug aid: log every memory access to this virtual address. */
-#define MAGIC_ADDRESS ((void *)0x59b1250)
+/* Debug aid: we log every access to ``magic'' memory. */
+static inline Bool
+access_is_magic(const void *base, unsigned size)
+{
+#define MAGIC_ADDRESS ((void *)0x601060)
+	return base + size >= MAGIC_ADDRESS &&
+		base < MAGIC_ADDRESS + 16;
+#undef MAGIC_ADDRESS
+}
 
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
@@ -605,7 +612,7 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 {
 	struct mem_access_event mae;
 
-	if (ptr == MAGIC_ADDRESS)
+	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d load %d from %p\n",
 			    current_thread->id,
 			    size,
@@ -618,7 +625,7 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
 
-	if (ptr == MAGIC_ADDRESS)
+	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d did load %d from %p -> %lx\n",
 			    current_thread->id,
 			    size,
@@ -645,7 +652,7 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
 	struct mem_access_event mae;
 
-	if (ptr == MAGIC_ADDRESS)
+	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d storing %d (%lx) to %p (%lx)\n",
 			    current_thread->id,
 			    size,
@@ -659,7 +666,7 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 				  *(unsigned long *)ptr,
 				  *(unsigned long *)written_bytes);
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
-	if (ptr == MAGIC_ADDRESS)
+	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d doing store %d (%lx) to %p (%lx)\n",
 			    current_thread->id,
 			    size,
