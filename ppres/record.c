@@ -23,6 +23,7 @@
 #include "pub_tool_libcfile.h"
 #include "pub_tool_libcsignal.h"
 #include "libvex_guest_amd64.h"
+#include "libvex_guest_offsets.h"
 
 #include "ppres.h"
 
@@ -91,16 +92,15 @@ close_logfile(struct record_emitter *re)
 
 
 
-static Addr64
-record_instr(VexGuestAMD64State *state, Word addr)
+static void
+record_instr(Word addr, Word rdx, Word rcx, Word rax)
 {
 	struct footstep_record *fr;
 	fr = emit_record(&logfile, RECORD_footstep, sizeof(*fr));
 	fr->rip = addr;
-	fr->rdx = state->guest_RDX;
-	fr->rcx = state->guest_RCX;
-	fr->rax = state->guest_RAX;
-	return addr;
+	fr->rdx = rdx;
+	fr->rcx = rcx;
+	fr->rax = rax;
 }
 
 static void

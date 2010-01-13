@@ -288,22 +288,10 @@ instrument_func(VgCallbackClosure *closure,
 				"record_instr",
 				VG_(fnptr_to_fnentry)(record_instr),
 #endif
-				mkIRExprVec_1(
-					IRExpr_Const(IRConst_U64(current_in_stmt->Ist.IMark.addr))));
-
-			/* For now, we ask Valgrind to give us the
-			   entire world state, and to allow us to
-			   modify it. */
-			helper->needsBBP = True;
-
-			helper->mFx = Ifx_Modify;
-			helper->mAddr = IRExpr_Const(IRConst_U64(0));
-			helper->mSize = -1;
-
-			helper->nFxState = 1;
-			helper->fxState[0].fx = Ifx_Modify;
-			helper->fxState[0].offset = 0;
-			helper->fxState[0].size = sizeof(VexGuestAMD64State);
+				mkIRExprVec_4(IRExpr_Const(IRConst_U64(current_in_stmt->Ist.IMark.addr)),
+					      IRExpr_Get(OFFSET_amd64_RDX, Ity_I64),
+					      IRExpr_Get(OFFSET_amd64_RCX, Ity_I64),
+					      IRExpr_Get(OFFSET_amd64_RAX, Ity_I64)));
 
 			addStmtToIRSB(sb_out, out_stmt);
 			out_stmt = IRStmt_Dirty(helper);

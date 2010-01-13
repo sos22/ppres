@@ -30,6 +30,7 @@
 #include "pub_tool_threadstate.h"
 
 #include "libvex_guest_amd64.h"
+#include "libvex_guest_offsets.h"
 #include "libvex_trc_values.h"
 
 #include "ppres.h"
@@ -582,21 +583,22 @@ capture_footstep_record(struct footstep_record *fr,
 }
 
 static void
-footstep_event(VexGuestAMD64State *state, Addr rip)
+footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 {
+	struct footstep_record fr;
+	fr.rip = rip;
+	fr.rdx = rdx;
+	fr.rcx = rcx;
+	fr.rax = rax;
+
 #if FOOTSTEP_DIRECTS_SEARCH
 	reschedule_client(False, "footstep at %lx\n", rip);
-	state->guest_RIP = rip;
 	client_stop_reason.cls = CLIENT_STOP_footstep;
-	client_stop_reason.state = state;
-	capture_footstep_record(&client_stop_reason.u.footstep, state);
+	client_stop_reason.u.footstep = fr;
 	run_replay_machine();
 #else
-	struct footstep_record current_fr;
-	state->guest_RIP = rip;
-	capture_footstep_record(&current_fr, state);
 	zipper_add_B_pfq(&current_thread->pending_footsteps,
-			 current_fr, current_thread->id);
+			 fr, current_thread->id);
 #endif
 }
 #endif
