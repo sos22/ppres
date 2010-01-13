@@ -62,6 +62,10 @@
    accesses outstanding. */
 #define ORDER_EVERY_NTH_MEMORY_ACCESS 50
 
+
+/* Debug aid: log every memory access to this virtual address. */
+#define MAGIC_ADDRESS ((void *)0x4220508)
+
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
 extern Bool VG_(in_generated_code);
@@ -248,8 +252,8 @@ run_client(struct replay_thread *who, const char *msg, ...)
 	va_list args;
 	if (who != current_thread) {
 		va_start(args, msg);
-		VG_(printf)("Monitor goes to thread %d for ",
-			    who->id);
+		VG_(printf)("Monitor goes to thread %d (%p) for ",
+			    who->id, who);
 		VG_(vprintf)(msg, args);
 		VG_(printf)("\n");
 		va_end(args);
@@ -375,7 +379,7 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	tl_assert(!rt->failed);
 	tl_assert(thread_runnable(rt));
 
-	VG_(printf)("Switch to thread %d for ", rt->id);
+	VG_(printf)("Switch to thread %d %p for ", rt->id, rt);
 	VG_(vprintf)(msg, args);
 	VG_(printf)("\n");
 
@@ -385,9 +389,10 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	run_coroutine(my_coroutine, &rt->coroutine);
 	if (my_coroutine == &replay_state_machine)
 		in_monitor = True;
-	if (!me->blocked)
+	if (!me->blocked) {
+		VG_(printf)("Back in thread %d %p.\n", me->id, me);
 		current_thread = me;
-	else
+	} else
 		VG_(printf)("Switch back again to %d\n", me->id);
 
 	VG_(running_tid) = current_thread->id;
@@ -512,12 +517,25 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 {
 	struct mem_access_event mae;
 
+	if (ptr == MAGIC_ADDRESS)
+		VG_(printf)("Thread %d load %d from %p\n",
+			    current_thread->id,
+			    size,
+			    ptr);
+
 	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
 	    racetrack_address_races((Addr)ptr, size))
 		reschedule(False, "load %d from %p", size, ptr);
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
+
+	if (ptr == MAGIC_ADDRESS)
+		VG_(printf)("Thread %d did load %d from %p -> %lx\n",
+			    current_thread->id,
+			    size,
+			    ptr,
+			    *(unsigned long *)ptr);
 
 	mae.is_read = True;
 	mae.ptr = (void *)ptr;
@@ -539,12 +557,28 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
 	struct mem_access_event mae;
 
+	if (ptr == MAGIC_ADDRESS)
+		VG_(printf)("Thread %d storing %d (%lx) to %p (%lx)\n",
+			    current_thread->id,
+			    size,
+			    *(unsigned long *)written_bytes,
+			    ptr,
+			    *(unsigned long *)ptr);
+
 	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
 	    racetrack_address_races((Addr)ptr, size))
 		reschedule(False, "store %d to %p (%lx -> %lx)", size, ptr,
 			   *(unsigned long *)ptr,
 			   *(unsigned long *)written_bytes);
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
+	if (ptr == MAGIC_ADDRESS)
+		VG_(printf)("Thread %d doing store %d (%lx) to %p (%lx)\n",
+			    current_thread->id,
+			    size,
+			    *(unsigned long *)written_bytes,
+			    ptr,
+			    *(unsigned long *)ptr);
+
 	VG_(memcpy)(ptr, written_bytes, size);
 
 	mae.is_read = False;
@@ -1163,6 +1197,8 @@ replay_clone_syscall(Word (*fn)(void *),
 	VG_(in_generated_code) = False;
 	run_client(spawning_thread, "newly spawning thread");
 	current_thread = local_thread;
+	VG_(printf)("current_thread -> %d (%p) for replay_clone_syscall\n",
+		    current_thread->id, current_thread);
 	VG_(running_tid) = local_thread->id;
 	VG_(in_generated_code) = True;
 
