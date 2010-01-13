@@ -44,6 +44,7 @@ open_execution_schedule(struct execution_schedule *es,
 		es->avail_in_window = 0;
 		es->replay_mode = True;
 	}
+	es->name = filename;
 }
 
 void
@@ -56,8 +57,10 @@ create_empty_execution_schedule(const Char *filename)
 	VG_(close)(sr_Res(open_res));
 }
 
-void
-advance_schedule_to_next_choice(const Char *filename)
+/* True on success, False on failure. */
+Bool
+advance_schedule_to_next_choice(const Char *filename,
+				OffT min_size)
 {
 	int fd;
 	SysRes open_res;
@@ -69,22 +72,25 @@ advance_schedule_to_next_choice(const Char *filename)
 			     0);
 	fd = sr_Res(open_res);
 	ptr = VG_(lseek)(fd, 0, VKI_SEEK_END);
-	while (ptr != 0) {
+	while (ptr != min_size) {
 		ptr -= sizeof(buffer);
 		VG_(lseek)(fd, ptr, VKI_SEEK_SET);
 		VG_(read)(fd, &buffer, sizeof(buffer));
 		tl_assert(buffer.max_option > 0);
 		tl_assert(buffer.current_option <= buffer.max_option);
 		if (buffer.current_option < buffer.max_option) {
+			VG_(printf)("Advance choice at offset %lx, %d -> %d\n",
+				    ptr, buffer.current_option,
+				    buffer.current_option + 1);
 			buffer.current_option++;
 			VG_(lseek)(fd, ptr, VKI_SEEK_SET);
 			VG_(write)(fd, &buffer, sizeof(buffer));
 			VG_(ftruncate)(fd, ptr + sizeof(buffer));
 			VG_(close)(fd);
-			return;
+			return True;
 		}
 	}
-	VG_(tool_panic)((Char *)"Ran out of non-deterministic choices!");
+	return False;
 }
 
 static void
@@ -206,6 +212,7 @@ make_nd_choice(struct execution_schedule *es,
 	       unsigned max_allowed)
 {
 	struct schedule_entry *se;
+	Bool snapshot;
 
 	if (max_allowed == 0)
 		return 0;
@@ -213,15 +220,42 @@ make_nd_choice(struct execution_schedule *es,
 	se = get_schedule_entry(es);
 	if (es->replay_mode) {
 		tl_assert(se->max_option == max_allowed);
+		if (snapshot)
+			VG_(printf)("Snapshot returns %d\n", se->current_option);
 		return se->current_option;
 	} else if (es->failed) {
 		return 0;
-	} else {
-		se->max_option = max_allowed;
-		se->current_option = 0;
-		flush_pending_writes(es);
-		return 0;
 	}
+	se->max_option = max_allowed;
+	se->current_option = 0;
+	flush_pending_writes(es);
+
+	es->nr_choices++;
+	snapshot = (es->nr_choices % 100000 == 0);
+	if (snapshot) {
+		VG_(printf)("Taking a snapshot at choice %d\n",
+			    es->nr_choices);
+
+		/* Hack: rewind one slot and go back into replay mode
+		   so that we advance properly when we come back to
+		   this snapshot. */
+		es->avail_in_window = 0;
+		es->window_offset_in_file -= sizeof(*se);
+		es->replay_mode = True;
+
+		exploration_take_snapshot(es->name);
+
+		/* Need to pick up any changes in the schedule's size
+		   on disk. */
+		es->file_size = VG_(lseek)(es->fd, 0, VKI_SEEK_END);
+
+		se = get_schedule_entry(es);
+		VG_(printf)("Snapshot going down branch %d at %lx\n",
+			    se->current_option,
+			    es->window_offset_in_file);
+	}
+
+	return se->current_option;
 }
 
 #ifdef UNIT_TEST

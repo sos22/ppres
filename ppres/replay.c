@@ -71,7 +71,7 @@
 static inline Bool
 access_is_magic(const void *base, unsigned size)
 {
-#define MAGIC_ADDRESS ((void *)0x601060)
+#define MAGIC_ADDRESS ((void *)0)
 	return base + size >= MAGIC_ADDRESS &&
 		base < MAGIC_ADDRESS + 16;
 #undef MAGIC_ADDRESS
@@ -626,8 +626,9 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 			    size,
 			    ptr);
 
-	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
-	    racetrack_address_races((Addr)ptr, size))
+	if ((RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
+	     racetrack_address_races((Addr)ptr, size)) &&
+	    !MEMORY_DIRECTS_SEARCH)
 		reschedule_client(False, "load %d from %p", size, ptr);
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
@@ -672,8 +673,9 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 			    ptr,
 			    *(unsigned long *)ptr);
 
-	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
-	    racetrack_address_races((Addr)ptr, size))
+	if ((RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
+	     racetrack_address_races((Addr)ptr, size)) &&
+	    !MEMORY_DIRECTS_SEARCH)
 		reschedule_client(False, "store %d to %p (%lx -> %lx)", size, ptr,
 				  *(unsigned long *)ptr,
 				  *(unsigned long *)written_bytes);
@@ -715,7 +717,12 @@ get_thread(ThreadId id)
 
 	for (rt = head_thread; rt && rt->id != id; rt = rt->next_thread)
 		;
-	tl_assert(rt != NULL);
+	if (rt == NULL) {
+		VG_(printf)("Lost thread %d?\n", id);
+		for (rt = head_thread; rt; rt = rt->next_thread)
+			VG_(printf)("Found %d\n", rt->id);
+		tl_assert(rt != NULL);
+	}
 	return rt;
 }
 
@@ -1035,7 +1042,7 @@ replay_mem_record(struct record_header *rh,
 	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_mem_access,
 			  "wanted a memory read, got class %d",
 			  client_stop_reason.cls);
-	validate_mem_access(recorded, &client_stop_reason.u.mem);
+	validate_mem_access(recorded, &client_stop_reason.u.mem, rh->tid);
 #else
 	zipper_add_A_mae(&get_thread(rh->tid)->pending_memory,
 			 *recorded, rh->tid);
@@ -1183,17 +1190,102 @@ my_fork(void)
 	return res;
 }
 
-static void
-init(void)
+/* Take a snapshot of the current state, so that when we fail we only
+   need to revert to here and not all the way back to the beginning of
+   the run. */
+/* The implementaion is moderately skanky.  This function never
+   returns in the calling process, but instead sits and loops
+   constantly forking off new worker processes which return and then
+   go and do the actual exploration. */
+void
+exploration_take_snapshot(const Char *schedule)
 {
-	static unsigned char replay_state_machine_stack[16384];
-	const Char *schedule = (const Char *)"discovered_schedule";
 	long child;
+	unsigned code;
+	Bool need_reset;
 	int fds[2];
+
+	need_reset = False;
+	while (1) {
+		VG_(pipe)(fds);
+		child = my_fork();
+		if (child == 0) {
+			/* Go and do some work. */
+			VG_(close)(fds[0]);
+			worker_process_output_fd = fds[1];
+			VG_(lseek)(logfile.fd,
+				   logfile.offset_in_file,
+				   VKI_SEEK_SET);
+			return;
+		}
+		VG_(close)(fds[1]);
+
+		/* We're the parent.  See how far that child gets. */
+		do {
+			if (VG_(read)(fds[0], &code, sizeof(code)) !=
+			    sizeof(code)) {
+				VG_(printf)("Child exitted unexpectedly.\n");
+				my__exit(1);
+			}
+
+			switch (code) {
+			case  SEARCH_CODE_REPLAY_SUCCESS:
+				replay_run_finished(SEARCH_CODE_REPLAY_SUCCESS);
+
+			case SEARCH_CODE_NEW_RACE_ADDR: {
+				/* Proxy the results up the parent,
+				   and then get out. */
+				Addr addr;
+				need_reset = True;
+				VG_(read)(fds[0], &addr, sizeof(addr));
+				VG_(write)(worker_process_output_fd,
+					   &code,
+					   sizeof(code));
+				VG_(write)(worker_process_output_fd,
+					   &addr,
+					   sizeof(addr));
+				break;
+			}
+
+			case SEARCH_CODE_REPLAY_FAILURE:
+				if (need_reset) {
+					/* Only the root driver can
+					   handle a schedule reset.
+					   Get out and let it deal
+					   with it. */
+					replay_run_finished(SEARCH_CODE_REPLAY_FAILURE);
+				}
+				break;
+
+			default:
+				VG_(printf)("Search worker process gave back unexpected code %x\n",
+					    code);
+				my__exit(1);
+			}
+		} while (code != SEARCH_CODE_REPLAY_FAILURE);
+
+		/* That schedule didn't work.  Try another one. */
+		VG_(close)(fds[0]);
+		if (!advance_schedule_to_next_choice(schedule,
+						     execution_schedule.file_size)) {
+			/* Okay, we've failed.  The bad choice must
+			   have happened before we were forked.  Let
+			   the parent deal with it. */
+			replay_run_finished(SEARCH_CODE_REPLAY_FAILURE);
+		}
+	}
+}
+
+/* The main driver loop.  This forks a series of worker processes.
+   Each worker process will return, but in the driver itself this
+   function loops forever. */
+static void
+driver_loop(const Char *schedule)
+{
+	long child;
 	unsigned code;
 	Bool need_schedule_reset;
-
-	/* Search for a valid execution schedule. */
+	int fds[2];
 
 	need_schedule_reset = True;
 	while (1) {
@@ -1210,7 +1302,7 @@ init(void)
 			   go and do the exploration. */
 			VG_(close)(fds[0]);
 			worker_process_output_fd = fds[1];
-			break;
+			return;
 		}
 		VG_(close)(fds[1]);
 
@@ -1257,9 +1349,19 @@ init(void)
 		} while (code != SEARCH_CODE_REPLAY_FAILURE);
 
 		/* That schedule didn't work.  Try another one. */
-			VG_(close)(fds[0]);
-		advance_schedule_to_next_choice(schedule);
+		VG_(close)(fds[0]);
+		if (!advance_schedule_to_next_choice(schedule, 0))
+			VG_(tool_panic)((Char *)"Ran out of non-deterministic choices!");
 	}
+}
+
+static void
+init(void)
+{
+	static unsigned char replay_state_machine_stack[16384];
+	const Char *schedule = (const Char *)"discovered_schedule";
+
+	driver_loop(schedule);
 
 	make_coroutine(&replay_state_machine,
 		       "replay_state_machine",

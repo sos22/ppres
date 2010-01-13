@@ -49,6 +49,7 @@ advance_chunk(struct record_consumer *rc)
 			  rc->current_chunk + rc->avail_in_current_chunk,
 			  to_read);
 	rc->avail_in_current_chunk += actually_read;
+	rc->offset_in_file += to_read;
 	if (actually_read == 0) {
 		hit_end_of_log();
 		/* Don't get here */
@@ -82,7 +83,6 @@ void
 finish_this_record(struct record_consumer *rc)
 {
 	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
-	rc->offset_in_file += get_current_record(rc)->size;
 	rc->offset_in_current_chunk += get_current_record(rc)->size;
 	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
 }

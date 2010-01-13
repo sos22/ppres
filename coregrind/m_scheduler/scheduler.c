@@ -1032,7 +1032,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 
 	 /* paranoia ... */
 	 vg_assert(tst->tid == tid);
-	 vg_assert(tst->os_state.lwpid == VG_(gettid)());
+	 //vg_assert(tst->os_state.lwpid == VG_(gettid)());
       }
 
       /* For stats purposes only. */
@@ -1581,12 +1581,14 @@ void scheduler_sanity ( ThreadId tid )
       bad = True;
    }
 
+#if 0
    if (lwpid != VG_(threads)[tid].os_state.lwpid) {
       VG_(message)(Vg_DebugMsg,
                    "Thread %d supposed to be in LWP %d, but we're actually %d\n",
                    tid, VG_(threads)[tid].os_state.lwpid, VG_(gettid)());
       bad = True;
    }
+#endif
 
 #if !defined(VGO_darwin)
    // GrP fixme
