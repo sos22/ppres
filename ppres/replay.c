@@ -136,6 +136,7 @@ struct replay_thread {
 	Bool in_generated;
 	Bool blocked;
 	Bool failed;
+	Bool dead;
 #if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 	struct zipper_list_pfq pending_footsteps;
 #endif
@@ -815,21 +816,32 @@ replay_syscall_record(struct record_header *rh,
 	case __NR_getrlimit:
 	case __NR_clock_gettime:
 	case __NR_lseek:
-	case __NR_exit_group:
-	case __NR_exit:
+
+	case __NR_write: /* Should maybe do something special with
+			    these so that we see stuff on stdout? */
 
 	case __NR_nanosleep: /* XXX: We should arguably tweak the
 				scheduler to prefer not to select this
 				thread when we see one of these.
 				Maybe later. */
 
-	case __NR_write: /* Should maybe do something special with
-			    these so that we see stuff on stdout? */
-
 		if (sr_isError(sr->syscall_res))
 			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
 		else
 			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
+		finish_this_record(&logfile);
+		break;
+
+	case __NR_exit_group:
+		VG_(printf)("exit_group syscall came up in log, arg1 %lx.\n",
+			    syscall_arg_1());
+		finish_this_record(&logfile);
+		break;
+
+	case __NR_exit:
+		current_thread->dead = True;
+		current_thread->blocked = True;
+		reschedule_monitor(True, "thread exiting");
 		finish_this_record(&logfile);
 		break;
 
