@@ -153,11 +153,13 @@ static struct {
 	enum {CLIENT_STOP_footstep = 12345,
 	      CLIENT_STOP_syscall,
 	      CLIENT_STOP_rdtsc,
-	      CLIENT_STOP_mem_access } cls;
+	      CLIENT_STOP_mem_access,
+	      CLIENT_STOP_ctxt_switch } cls;
 	VexGuestAMD64State *state;
 	union {
 		struct mem_access_event mem;
 		struct footstep_record footstep;
+		struct replay_thread *ctxt_switch;
 	} u;
 } client_stop_reason;
 
@@ -243,48 +245,105 @@ void deactivate_bad_coroutine(struct coroutine *src, struct coroutine *dest)
 }
 
 
-/* Switch from the monitor to client code in thread @who (which might
-   be the current thread).  The client might do a thread switch
-   itself, so we can be anywhere when we come back. */
-static void
-run_client(struct replay_thread *who, const char *msg, ...)
-{
-	va_list args;
-	if (who != current_thread) {
-		va_start(args, msg);
-		VG_(printf)("Monitor goes to thread %d (%p) for ",
-			    who->id, who);
-		VG_(vprintf)(msg, args);
-		VG_(printf)("\n");
-		va_end(args);
-	}
-
-	current_thread->in_generated = VG_(in_generated_code);
-	current_thread = who;
-
-	in_monitor = False;
-	run_coroutine(&replay_state_machine, &who->coroutine,
-		      "run_client");
-	in_monitor = True;
-}
-
 /* Switch from the client back to the monitor, remaining in the same
-   thread.  The monitor might switch threads itself, but when this
-   returns we'll be back where we started. */
+   thread. */
 static void
 run_replay_machine(void)
 {
 	struct replay_thread *whom;
 
+	tl_assert(!in_monitor);
 	whom = current_thread;
-	current_thread->in_generated = VG_(in_generated_code);
-	in_monitor = True;
 	run_coroutine(&whom->coroutine, &replay_state_machine,
 		      "run_replay_machine");
-	in_monitor = False;
+	tl_assert(!in_monitor);
 	tl_assert(current_thread == whom);
-	VG_(running_tid) = current_thread->id;
+}
+
+/* Switch to a different thread when we're in the monitor. */
+static void
+_switch_thread_monitor(struct replay_thread *target, const char *msg,
+		       va_list args)
+{
+	tl_assert(in_monitor);
+	tl_assert(current_thread != target);
+
+	VG_(printf)("Monitor ctxt switch %d -> %d for ",
+		    current_thread->id, target->id);
+	VG_(vprintf)(msg, args);
+	VG_(printf)("\n");
+
+	current_thread->in_generated = VG_(in_generated_code);
+	current_thread = target;
 	VG_(in_generated_code) = current_thread->in_generated;
+	VG_(running_tid) = current_thread->id;
+}
+
+static void
+switch_thread_monitor(struct replay_thread *target, const char *msg,
+		      ...)
+{
+	va_list args;
+	va_start(args, msg);
+	_switch_thread_monitor(target, msg, args);
+	va_end(args);
+}
+
+/* Switch to a different thread when we're in client code.  This is
+   more tricky, because we need to get the monitor to do the switch
+   for us.  When the function returns, we're in the same thread as we
+   started in, but the target will have run for a bit. */
+static void
+_switch_thread_client(struct replay_thread *target, const char *msg,
+		      va_list args)
+{
+	struct replay_thread *me = current_thread;
+
+	tl_assert(!in_monitor);
+	tl_assert(target != current_thread);
+	client_stop_reason.cls = CLIENT_STOP_ctxt_switch;
+	client_stop_reason.u.ctxt_switch = target;
+
+	VG_(printf)("Client ctxt switch %d -> %d for ",
+		    current_thread->id, target->id);
+	VG_(vprintf)(msg, args);
+	VG_(printf)("\n");
+
+	run_replay_machine();
+	tl_assert(current_thread == me);
+}
+
+/* Run code from client @who for a bit, performing a context switch if
+   necessary. */
+static void
+run_client(struct replay_thread *who, const char *msg, ...)
+{
+	va_list args;
+
+	tl_assert(in_monitor);
+
+	if (who != current_thread) {
+		va_start(args, msg);
+		_switch_thread_monitor(who, msg, args);
+		va_end(args);
+	}
+
+	in_monitor = False;
+	run_coroutine(&replay_state_machine, &who->coroutine,
+		      "run_client");
+	tl_assert(!in_monitor);
+	in_monitor = True;
+
+	while (client_stop_reason.cls == CLIENT_STOP_ctxt_switch) {
+		switch_thread_monitor(client_stop_reason.u.ctxt_switch,
+				      "requested by client %d",
+				      current_thread->id);
+		in_monitor = False;
+		run_coroutine(&replay_state_machine,
+			      &current_thread->coroutine,
+			      "run_client after cswitch");
+		in_monitor = True;
+	}
 }
 
 static Bool
@@ -321,20 +380,24 @@ thread_runnable(const struct replay_thread *tr)
 }
 
 static void
-reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_list args)
+replay_run_finished(unsigned code)
 {
-	struct replay_thread *rt, *me;
+	VG_(write)(worker_process_output_fd, &code, sizeof(code));
+	my__exit(1);
+}
+
+static struct replay_thread *
+select_new_thread(void)
+{
+	struct replay_thread *rt;
 	unsigned other_threads;
 	unsigned thread_to_run;
 	unsigned x;
-	unsigned code;
-	const char *who_scheduled_us;
 
-	me = current_thread;
 	other_threads = 0;
 	rt = head_thread;
 	while (rt != NULL) {
-		if (rt != me && thread_runnable(rt))
+		if (rt != current_thread && thread_runnable(rt))
 			other_threads++;
 		rt = rt->next_thread;
 	}
@@ -345,78 +408,92 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 			   so we can't continue.  Tell the monitor
 			   that we're dead. */
 			VG_(printf)("Ran out of threads to run.\n");
-			code = SEARCH_CODE_REPLAY_FAILURE;
-			VG_(write)(worker_process_output_fd, &code, sizeof(code));
-			my__exit(1);
+			replay_run_finished(SEARCH_CODE_REPLAY_FAILURE);
 		}
 		tl_assert(thread_runnable(current_thread));
 	}
 	thread_to_run = make_nd_choice(&execution_schedule,
 				       other_threads);
 	tl_assert(thread_to_run <= other_threads);
-	if (thread_to_run == 0 && thread_runnable(current_thread)) {
-		/* Keep running this thread. */
+	if (thread_to_run == 0 && thread_runnable(current_thread))
+		return current_thread;
+
+	rt = head_thread;
+	if (rt == current_thread)
+		rt = rt->next_thread;
+	x = 1;
+	while (x < thread_to_run) {
+		rt = rt->next_thread;
+		tl_assert(rt != NULL);
+		while (rt == current_thread || !thread_runnable(rt))
+			rt = rt->next_thread;
+		x++;
+	}
+
+	tl_assert(rt != NULL);
+	tl_assert(rt != current_thread);
+	tl_assert(!rt->blocked);
+	tl_assert(!rt->failed);
+	tl_assert(thread_runnable(rt));
+
+	return rt;
+}
+
+/* Run another thread for a bit.  This doesn't return until we switch
+   back to the original thread. */
+static void
+reschedule_client(Bool loud, const char *msg, ...)
+{
+	struct replay_thread *rt;
+	va_list args;
+
+	tl_assert(!in_monitor);
+
+	rt = select_new_thread();
+	va_start(args, msg);
+	if (rt == current_thread) {
 		if (loud) {
 			VG_(printf)("Keep in thread %d for ",
 				    current_thread->id);
 			VG_(vprintf)(msg, args);
 			VG_(printf)("\n");
 		}
-		return;
+	} else {
+		_switch_thread_client(rt, msg, args);
 	}
-
-	rt = head_thread;
-	if (rt == me)
-		rt = rt->next_thread;
-	x = 1;
-	while (x < thread_to_run) {
-		rt = rt->next_thread;
-		tl_assert(rt != NULL);
-		while (rt == me || !thread_runnable(rt))
-			rt = rt->next_thread;
-		x++;
-	}
-	tl_assert(rt != NULL);
-	tl_assert(rt != me);
-	tl_assert(!rt->blocked);
-	tl_assert(!rt->failed);
-	tl_assert(thread_runnable(rt));
-
-	VG_(printf)("Switch to thread %d %p for ", rt->id, rt);
-	VG_(vprintf)(msg, args);
-	VG_(printf)("\n");
-
-	me->in_generated = VG_(in_generated_code);
-	current_thread = rt;
-	in_monitor = False;
-	who_scheduled_us = run_coroutine(my_coroutine, &rt->coroutine, "reschedule_core");
-	if (my_coroutine == &replay_state_machine)
-		in_monitor = True;
-	if (!me->blocked) {
-		VG_(printf)("Back in thread %d %p from %s.\n", me->id, me,
-			    who_scheduled_us);
-		current_thread = me;
-	} else
-		VG_(printf)("Switch back again to %d\n", me->id);
-
-	VG_(running_tid) = current_thread->id;
-	VG_(in_generated_code) = current_thread->in_generated;
-}
-
-static void
-reschedule(Bool loud, const char *msg, ...)
-{
-	va_list args;
-	va_start(args, msg);
-	if (in_monitor)
-		reschedule_core(loud, &replay_state_machine, msg, args);
-	else
-		reschedule_core(loud, &current_thread->coroutine, msg, args);
 	va_end(args);
-
-	tl_assert(!current_thread->blocked);
 }
 
+/* Pick another thread to run.  This returns immediately with
+   current_thread == the new thread (which might be the old one). */
+static void
+reschedule_monitor(Bool loud, const char *msg, ...)
+{
+	struct replay_thread *rt;
+	va_list args;
+
+	tl_assert(in_monitor);
+
+	rt = select_new_thread();
+	va_start(args, msg);
+	if (rt == current_thread) {
+		if (loud) {
+			VG_(printf)("Monitor: keep in thread %d for ",
+				    current_thread->id);
+			VG_(vprintf)(msg, args);
+			VG_(printf)("\n");
+		}
+	} else {
+		_switch_thread_monitor(rt, msg, args);
+	}
+	va_end(args);
+}
+
+/* This thread has failed a validation, and so shouldn't be run any
+   further. */
+/* The semantics depend on whether you're in the monitor.  In the
+   monitor, we pick another thread and return.  In client code, this
+   function immediately schedules out and never returns. */
 static void
 failure(const char *fmt, ...)
 {
@@ -435,7 +512,12 @@ failure(const char *fmt, ...)
 	   interesting races. */
 	current_thread->failed = True;
 	current_thread->blocked = True;
-	reschedule(True, "thread failed");
+	if (in_monitor) {
+		reschedule_monitor(True, "thread failed");
+	} else {
+		reschedule_client(True, "thread failed");
+		VG_(tool_panic)((Char *)"Running a failed thread!");
+	}
 }
 
 /* This does not behave like you would expect, so gets an XXX. */
@@ -491,7 +573,7 @@ static void
 footstep_event(VexGuestAMD64State *state, Addr rip)
 {
 #if FOOTSTEP_DIRECTS_SEARCH
-	reschedule(False, "footstep at %lx\n", rip);
+	reschedule_client(False, "footstep at %lx\n", rip);
 	state->guest_RIP = rip;
 	client_stop_reason.cls = CLIENT_STOP_footstep;
 	client_stop_reason.state = state;
@@ -510,7 +592,7 @@ footstep_event(VexGuestAMD64State *state, Addr rip)
 static void
 syscall_event(VexGuestAMD64State *state)
 {
-	reschedule(False, "syscall %d", state->guest_RAX);
+	reschedule_client(False, "syscall %d", state->guest_RAX);
 	client_stop_reason.cls = CLIENT_STOP_syscall;
 	client_stop_reason.state = state;
 	run_replay_machine();
@@ -529,7 +611,7 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 
 	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
 	    racetrack_address_races((Addr)ptr, size))
-		reschedule(False, "load %d from %p", size, ptr);
+		reschedule_client(False, "load %d from %p", size, ptr);
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
@@ -571,9 +653,9 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 
 	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
 	    racetrack_address_races((Addr)ptr, size))
-		reschedule(False, "store %d to %p (%lx -> %lx)", size, ptr,
-			   *(unsigned long *)ptr,
-			   *(unsigned long *)written_bytes);
+		reschedule_client(False, "store %d to %p (%lx -> %lx)", size, ptr,
+				  *(unsigned long *)ptr,
+				  *(unsigned long *)written_bytes);
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
 	if (ptr == MAGIC_ADDRESS)
 		VG_(printf)("Thread %d doing store %d (%lx) to %p (%lx)\n",
@@ -632,7 +714,7 @@ replay_footstep_record(struct footstep_record *fr,
 	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_footstep,
 			  "expected a footstep, got class %d",
 			  client_stop_reason.cls);
-	validate_fr(fr, &client_stop_reason.u.footstep);
+	validate_fr(fr, &client_stop_reason.u.footstep, rh->tid);
 #else
  	zipper_add_A_pfq(&get_thread(rh->tid)->pending_footsteps,
  			 *fr, rh->tid);
@@ -737,19 +819,39 @@ replay_syscall_record(struct record_header *rh,
 		finish_this_record(&logfile);
 		break;
 
-	case __NR_clone: /* XXX hmm... */
-		client_stop_reason.state->guest_RIP += 2;
-
 		/* Bizarre calling convention: returns the PID, so we need
 		   to run the call and then shove the results in. */
 	case __NR_set_tid_address:
-
 		if (sr_isError(sr->syscall_res)) {
 			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
 		} else {
 			VG_(client_syscall)(VG_(get_running_tid)(),
 					    VEX_TRC_JMP_SYS_SYSCALL);
 			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
+		}
+		finish_this_record(&logfile);
+		break;
+
+	case __NR_clone:
+		/* This is a bit awkward.  First, we need to manually
+		   advance RIP over the syscall instruction, for
+		   reasons which aren't particularly clear. */
+		client_stop_reason.state->guest_RIP += 2;
+		if (sr_isError(sr->syscall_res)) {
+			client_stop_reason.state->guest_RAX = -sr_Err(sr->syscall_res);
+		} else {
+			/* Now we need to issue the clone syscall
+			   itself.  This won't actually do a syscall
+			   at the kernel level, because it'll get
+			   trapped in replay_clone_syscall() and
+			   turned into the creation of a
+			   replay_thread. */
+			VG_(client_syscall)(VG_(get_running_tid)(),
+					    VEX_TRC_JMP_SYS_SYSCALL);
+			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
+
+			/* And now we need to consider running the child. */
+			reschedule_monitor(True, "immediately post clone");
 		}
 		finish_this_record(&logfile);
 		break;
@@ -929,8 +1031,7 @@ block_thread(ThreadId id)
 	rt->blocked = True;
 	finish_this_record(&logfile);
 	if (rt == current_thread)
-		reschedule(True, "thread blocking");
-	return;
+		reschedule_monitor(True, "thread blocking");
 }
 
 static void
@@ -939,8 +1040,7 @@ unblock_thread(ThreadId id)
 	struct replay_thread *rt = get_thread(id);
 	rt->blocked = False;
 	finish_this_record(&logfile);
-	reschedule(True, "thread unblocking");
-	return;
+	reschedule_monitor(True, "thread unblocking");
 }
 
 static void
@@ -1112,6 +1212,7 @@ init(void)
 	VG_(printf)("Invoking replay state machine.\n");
 	current_thread = head_thread;
 	initialise_coroutine(&head_thread->coroutine, "head thread");
+	in_monitor = True;
 	run_coroutine(&head_thread->coroutine, &replay_state_machine,
 		      "start of day");
 	VG_(printf)("Replay state machine activated client.\n");
@@ -1155,7 +1256,7 @@ hit_end_of_log(void)
 static ULong
 replay_rdtsc(void)
 {
-	reschedule(False, "rdtsc");
+	reschedule_client(False, "rdtsc");
 	client_stop_reason.cls = CLIENT_STOP_rdtsc;
 	run_replay_machine();
 	return client_resume.rdtsc;
@@ -1197,20 +1298,17 @@ replay_clone_syscall(Word (*fn)(void *),
 		       1,
 		       arg);
 
-	VG_(running_tid) = VG_INVALID_THREADID;
+	VG_(printf)("Currently in thread %d\n", VG_(running_tid));
 	local_thread = current_thread;
-	VG_(in_generated_code) = False;
 	run_client(spawning_thread, "newly spawning thread");
-	current_thread = local_thread;
-	VG_(printf)("current_thread -> %d (%p) for replay_clone_syscall\n",
-		    current_thread->id, current_thread);
-	VG_(running_tid) = local_thread->id;
-	VG_(in_generated_code) = True;
 
 	rt->next_thread = head_thread;
 	head_thread = rt;
 
-	reschedule(True, "clone syscall");
+	/* Valgrind requires us to be in the parent thread when this
+	   returns, so get there now.  We'll insert a reschedule point
+	   from the normal syscall handlers. */
+	switch_thread_monitor(local_thread, "VG requires no thread switch during clone");
 
 	return 52;
 }
