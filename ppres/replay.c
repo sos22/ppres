@@ -64,7 +64,7 @@
 
 
 /* Debug aid: log every memory access to this virtual address. */
-#define MAGIC_ADDRESS ((void *)0x4220508)
+#define MAGIC_ADDRESS ((void *)0x59b1250)
 
 #define NONDETERMINISM_POISON 0xf001dead
 extern ThreadId VG_(running_tid);
@@ -1294,6 +1294,8 @@ replay_clone_syscall(Word (*fn)(void *),
 {
 	struct replay_thread *rt, *local_thread;
 
+	tl_assert(!spawning_thread);
+
 	VG_(printf)("Clone syscall\n");
 	rt = VG_(malloc)("child thread", sizeof(*rt));
 	VG_(memset)(rt, 0, sizeof(*rt));
@@ -1317,6 +1319,12 @@ replay_clone_syscall(Word (*fn)(void *),
 	   returns, so get there now.  We'll insert a reschedule point
 	   from the normal syscall handlers. */
 	switch_thread_monitor(local_thread, "VG requires no thread switch during clone");
+
+	/* Anything written by the parent thread before the child
+	   thread starts can be accessed by the child without causing
+	   a race.  Let the race tracker know about that. */
+	racetrack_thread_message(local_thread->id,
+				 spawning_thread->id);
 
 	return 52;
 }

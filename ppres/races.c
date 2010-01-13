@@ -317,6 +317,25 @@ mark_address_as_racy(Addr addr)
 	mn->racy = 1;
 }
 
+/* @sender has sent a (synchronising) message to @receiver through
+   some mechanism other than memory.  Update the world state to
+   reflect this fact. */
+void
+racetrack_thread_message(ThreadId sender, ThreadId receiver)
+{
+	const struct vector_clock *send_vc = &find_tc(sender)->local_clock;
+	struct vector_clock *receive_vc = &find_tc(receiver)->local_clock;
+	unsigned x;
+
+	for (x = 0;
+	     x < MAX(send_vc->nr_threads, receive_vc->nr_threads);
+	     x++) {
+		if (get_vc_slot(send_vc, x) > get_vc_slot(receive_vc, x))
+			set_vc_slot(receive_vc, x,
+				    get_vc_slot(send_vc, x));
+	}
+}
+
 void
 dump_vector_clock(const struct vector_clock *vc)
 {
