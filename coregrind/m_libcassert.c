@@ -220,6 +220,7 @@ static void report_and_quit ( const Char* report,
       "In the bug report, send all the above text, the valgrind\n"
       "version, and what OS and version you are using.  Thanks.\n\n",
       report);
+#if 0
    while (1) {
       struct {
 	 long tv_sec;
@@ -231,6 +232,7 @@ static void report_and_quit ( const Char* report,
 	   :
 	   : "i" (__NR_nanosleep), "rdi" (&ts));
    }
+#endif
 
    VG_(exit)(1);
 }

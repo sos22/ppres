@@ -103,6 +103,29 @@ find_vc(Addr addr, struct vector_clock **read_vc, struct vector_clock **write_vc
 	return !mn->racy;
 }
 
+static Bool
+is_racy(Addr addr)
+{
+	struct memhash_node *mn;
+	mn = memhash_lookup(addr, False);
+	if (!mn)
+		return False;
+	return mn->racy;
+}
+
+Bool
+racetrack_address_races(Addr addr, unsigned size)
+{
+	Addr reduced_start, reduced_end;
+	Addr x;
+	reduced_start = addr / RACETRACK_GRANULARITY;
+	reduced_end = (addr + size + RACETRACK_GRANULARITY - 1) / RACETRACK_GRANULARITY;
+	for (x = reduced_start; x < reduced_end; x++)
+		if (is_racy(x))
+			return True;
+	return False;
+}
+
 static void
 race_address(Addr addr)
 {
@@ -328,14 +351,9 @@ dump_racetrack_state(void)
 
 
 #ifdef UNIT_TEST
-static Bool
-is_racy(Addr addr)
+void
+new_race_address(Addr addr)
 {
-	struct memhash_node *mn;
-	mn = memhash_lookup(addr / RACETRACK_GRANULARITY, False);
-	if (!mn)
-		return False;
-	return mn->racy;
 }
 
 int

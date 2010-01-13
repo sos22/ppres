@@ -53,6 +53,10 @@
    a total ordering on all memory accesses. */
 #define MEMORY_DIRECTS_SEARCH 0
 
+/* Setting this makes us reschedule on every memory access, rather
+   than just the ones which might be racy. */
+#define RESCHEDULE_ON_EVERY_MEMORY_ACCESS 0
+
 /* We only use the global order for every nth access.  This is done by
    preventing threads from running if they have more than N memory
    accesses outstanding. */
@@ -508,7 +512,10 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 {
 	struct mem_access_event mae;
 
-	reschedule(False, "load %d from %p", size, ptr);
+	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
+	    racetrack_address_races((Addr)ptr, size))
+		reschedule(False, "load %d from %p", size, ptr);
+
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(read_contents, ptr, size);
 
@@ -532,9 +539,11 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
 	struct mem_access_event mae;
 
-	reschedule(False, "store %d to %p (%lx -> %lx)", size, ptr,
-		   *(unsigned long *)ptr,
-		   *(unsigned long *)written_bytes);
+	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
+	    racetrack_address_races((Addr)ptr, size))
+		reschedule(False, "store %d to %p (%lx -> %lx)", size, ptr,
+			   *(unsigned long *)ptr,
+			   *(unsigned long *)written_bytes);
 	racetrack_write_region((Addr)ptr, size, current_thread->id);
 	VG_(memcpy)(ptr, written_bytes, size);
 
@@ -778,6 +787,9 @@ validate_mem_access(const struct mem_access_event *recorded,
 {
 	int safe;
 
+	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS != 0)
+		return;
+
 	replay_assert_XXX_no_finish(observed->is_read == recorded->is_read,
 				    "wrong memory type (%d, expected %d)",
 				    observed->is_read, recorded->is_read);
@@ -815,11 +827,6 @@ static void
 replay_mem_record(struct record_header *rh,
 		  const struct mem_access_event *recorded)
 {
-	if (mem_access_counter++ % SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS != 0) {
-		finish_this_record(&logfile);
-		return;
-	}
-
 #if MEMORY_DIRECTS_SEARCH
 	run_client(get_thread(rh->tid), "forced by memory read");
 	replay_assert_XXX(current_thread->id == rh->tid,
