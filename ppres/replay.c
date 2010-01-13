@@ -46,6 +46,9 @@
    on all instructions. */
 #define FOOTSTEP_DIRECTS_SEARCH 0
 
+/* Can the replay system see memory records at all? */
+#define SEARCH_USES_MEMORY 0
+
 /* Restrict the search process to only see every nth memory access. */
 #define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
 
@@ -135,7 +138,7 @@ struct replay_thread {
 #if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 	struct zipper_list_pfq pending_footsteps;
 #endif
-#if !MEMORY_DIRECTS_SEARCH
+#if SEARCH_USES_MEMORY && !MEMORY_DIRECTS_SEARCH
 	struct zipper_list_mae pending_memory;
 #endif
 };
@@ -363,7 +366,7 @@ thread_runnable(const struct replay_thread *tr)
 	if (tr->blocked)
 		return False;
 	tl_assert(!tr->failed); /* failed threads are always blocked */
-#if !MEMORY_DIRECTS_SEARCH
+#if SEARCH_USES_MEMORY && !MEMORY_DIRECTS_SEARCH
 	/* Try not to let threads get too far ahead of the log */
 	if (!tr->pending_memory.pending_are_from_A &&
 	    tr->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS) {
@@ -610,7 +613,9 @@ syscall_event(VexGuestAMD64State *state)
 static void
 replay_load(const void *ptr, unsigned size, void *read_contents)
 {
+#if SEARCH_USES_MEMORY
 	struct mem_access_event mae;
+#endif
 
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d load %d from %p\n",
@@ -632,6 +637,7 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 			    ptr,
 			    *(unsigned long *)ptr);
 
+#if SEARCH_USES_MEMORY
 	mae.is_read = True;
 	mae.ptr = (void *)ptr;
 	mae.size = size;
@@ -645,12 +651,15 @@ replay_load(const void *ptr, unsigned size, void *read_contents)
 	zipper_add_B_mae(&current_thread->pending_memory, mae,
 			 current_thread->id);
 #endif
+#endif
 }
 
 static void
 replay_store(void *ptr, unsigned size, const void *written_bytes)
 {
+#if SEARCH_USES_MEMORY
 	struct mem_access_event mae;
+#endif
 
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d storing %d (%lx) to %p (%lx)\n",
@@ -676,6 +685,7 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 
 	VG_(memcpy)(ptr, written_bytes, size);
 
+#if SEARCH_USES_MEMORY
 	mae.is_read = False;
 	mae.ptr = (void *)ptr;
 	mae.size = size;
@@ -688,6 +698,7 @@ replay_store(void *ptr, unsigned size, const void *written_bytes)
 #else
 	zipper_add_B_mae(&current_thread->pending_memory, mae,
 			 current_thread->id);
+#endif
 #endif
 }
 
@@ -981,6 +992,7 @@ validate_mem_access(const struct mem_access_event *recorded,
 			recorded->size);
 }
 
+#if SEARCH_USES_MEMORY
 static void
 replay_mem_record(struct record_header *rh,
 		  const struct mem_access_event *recorded)
@@ -1041,6 +1053,20 @@ replay_mem_write_record(struct record_header *rh,
 	pre_process_mem_write(mwr, rh, &mae);
 	replay_mem_record(rh, &mae);
 }
+#else
+static void
+replay_mem_read_record(struct record_header *rh,
+		       struct mem_read_record *mrr)
+{
+	finish_this_record(&logfile);
+}
+static void
+replay_mem_write_record(struct record_header *rh,
+			struct mem_write_record *mwr)
+{
+	finish_this_record(&logfile);
+}
+#endif
 
 static void
 block_thread(ThreadId id)
