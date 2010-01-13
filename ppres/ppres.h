@@ -21,6 +21,9 @@ struct syscall_record {
 #define RECORD_syscall 2
 	UInt syscall_nr;
 	SysRes syscall_res;
+	UWord arg1;
+	UWord arg2;
+	UWord arg3;
 };
 
 struct memory_record {

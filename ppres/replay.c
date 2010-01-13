@@ -785,6 +785,21 @@ replay_syscall_record(struct record_header *rh,
 			  "wanted syscall %d, got syscall %ld",
 			  sr->syscall_nr,
 			  client_stop_reason.state->guest_RAX);
+	replay_assert_XXX(syscall_arg_1() == sr->arg1,
+			  "wanted arg1 to be %lx, was %lx for syscall %d",
+			  sr->arg1,
+			  syscall_arg_1(),
+			  sr->syscall_nr);
+	replay_assert_XXX(syscall_arg_2() == sr->arg2,
+			  "wanted arg2 to be %lx, was %lx for syscall %d",
+			  sr->arg2,
+			  syscall_arg_2(),
+			  sr->syscall_nr);
+	replay_assert_XXX(syscall_arg_3() == sr->arg3,
+			  "wanted arg3 to be %lx, was %lx for syscall %d",
+			  sr->arg3,
+			  syscall_arg_3(),
+			  sr->syscall_nr);
 
 	switch (sr->syscall_nr) {
 		/* Very easy syscalls: don't bother running them, and

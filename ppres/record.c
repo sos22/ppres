@@ -150,13 +150,16 @@ struct kernel_stat {
 };
 
 static void
-emit_triv_syscall(UInt nr, SysRes res)
+emit_triv_syscall(UInt nr, SysRes res, UWord *args)
 {
 	struct syscall_record *sr;
 
 	sr = emit_record(&logfile, RECORD_syscall, sizeof(*sr));
 	sr->syscall_nr = nr;
 	sr->syscall_res = res;
+	sr->arg1 = args[0];
+	sr->arg2 = args[1];
+	sr->arg3 = args[2];
 }
 
 static jmp_buf
@@ -268,7 +271,7 @@ static void
 post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	     SysRes res)
 {
-	emit_triv_syscall(syscall_nr, res);
+	emit_triv_syscall(syscall_nr, res, syscall_args);
 
 	switch (syscall_nr) {
 	case __NR_brk:
