@@ -144,6 +144,8 @@ static int
 worker_process_output_fd;
 static int
 in_monitor;
+static struct replay_thread *
+spawning_thread;
 
 #define SEARCH_CODE_REPLAY_SUCCESS 0xa2b3c4d5
 #define SEARCH_CODE_REPLAY_FAILURE 0xa2b3c4d6
@@ -848,10 +850,16 @@ replay_syscall_record(struct record_header *rh,
 			   replay_thread. */
 			VG_(client_syscall)(VG_(get_running_tid)(),
 					    VEX_TRC_JMP_SYS_SYSCALL);
+			tl_assert(spawning_thread != NULL);
 			client_stop_reason.state->guest_RAX = sr_Res(sr->syscall_res);
 
-			/* And now we need to consider running the child. */
-			reschedule_monitor(True, "immediately post clone");
+			/* And now we need to consider running the
+			   child.  Linux seems to slightly prefer
+			   running the child before running the
+			   parent, so do the same thing. */
+			switch_thread_monitor(spawning_thread, "run newly spawned thread");
+			spawning_thread = NULL;
+			reschedule_monitor(False, "immediately post clone");
 		}
 		finish_this_record(&logfile);
 		break;
@@ -1099,9 +1107,6 @@ replay_state_machine_fn(void)
 		}
 	}
 }
-
-static struct replay_thread *
-spawning_thread;
 
 static long
 my_fork(void)
