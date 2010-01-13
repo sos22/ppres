@@ -228,7 +228,7 @@ static void report_and_quit ( const Char* report,
       } ts;
       ts.tv_sec = 1;
       ts.tv_nsec = 0;
-      asm ("1: movq %0, %rax; syscall; jmp 1b"
+      asm ("syscall\n"
 	   :
 	   : "i" (__NR_nanosleep), "rdi" (&ts));
    }
