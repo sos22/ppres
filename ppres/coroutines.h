@@ -22,7 +22,8 @@ struct coroutine {
 	const char *name;
 };
 
-void run_coroutine(struct coroutine *me, const struct coroutine *target);
+void *run_coroutine(struct coroutine *me, const struct coroutine *target,
+		    void *pass_through);
 void make_coroutine(struct coroutine *out,
 		    const char *name,
 		    void *stack,

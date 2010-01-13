@@ -263,7 +263,8 @@ run_client(struct replay_thread *who, const char *msg, ...)
 	current_thread = who;
 
 	in_monitor = False;
-	run_coroutine(&replay_state_machine, &who->coroutine);
+	run_coroutine(&replay_state_machine, &who->coroutine,
+		      "run_client");
 	in_monitor = True;
 }
 
@@ -278,7 +279,8 @@ run_replay_machine(void)
 	whom = current_thread;
 	current_thread->in_generated = VG_(in_generated_code);
 	in_monitor = True;
-	run_coroutine(&whom->coroutine, &replay_state_machine);
+	run_coroutine(&whom->coroutine, &replay_state_machine,
+		      "run_replay_machine");
 	in_monitor = False;
 	tl_assert(current_thread == whom);
 	VG_(running_tid) = current_thread->id;
@@ -326,6 +328,7 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	unsigned thread_to_run;
 	unsigned x;
 	unsigned code;
+	const char *who_scheduled_us;
 
 	me = current_thread;
 	other_threads = 0;
@@ -386,11 +389,12 @@ reschedule_core(Bool loud, struct coroutine *my_coroutine, const char *msg, va_l
 	me->in_generated = VG_(in_generated_code);
 	current_thread = rt;
 	in_monitor = False;
-	run_coroutine(my_coroutine, &rt->coroutine);
+	who_scheduled_us = run_coroutine(my_coroutine, &rt->coroutine, "reschedule_core");
 	if (my_coroutine == &replay_state_machine)
 		in_monitor = True;
 	if (!me->blocked) {
-		VG_(printf)("Back in thread %d %p.\n", me->id, me);
+		VG_(printf)("Back in thread %d %p from %s.\n", me->id, me,
+			    who_scheduled_us);
 		current_thread = me;
 	} else
 		VG_(printf)("Switch back again to %d\n", me->id);
@@ -1108,7 +1112,8 @@ init(void)
 	VG_(printf)("Invoking replay state machine.\n");
 	current_thread = head_thread;
 	initialise_coroutine(&head_thread->coroutine, "head thread");
-	run_coroutine(&head_thread->coroutine, &replay_state_machine);
+	run_coroutine(&head_thread->coroutine, &replay_state_machine,
+		      "start of day");
 	VG_(printf)("Replay state machine activated client.\n");
 	VG_(running_tid) = VG_INVALID_THREADID;
 }

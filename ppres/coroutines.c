@@ -17,7 +17,9 @@ asm ( ".text\n"
       ".globl run_coroutine\n"
       "run_coroutine:\n"
 		/* %rdi points at the current routine save area, %rsi
-		   points at the target routine. */
+		   points at the target routine, and %rdx contains the
+		   value which we're supposed to be returning into the
+		   new context. */
 
                 /* Sanity check the supplied coroutines. */
 
@@ -32,6 +34,9 @@ asm ( ".text\n"
                 /* Update the in_use flags */
                 "movq $0, 104(%rdi)\n"
                 "movq $1, 104(%rsi)\n"
+
+                /* Set up return value */
+                "movq %rdx, %rax\n"
 
                 /* Do the switch */
 		DO_REG("rbx", 0)
