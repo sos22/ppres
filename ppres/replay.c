@@ -25,13 +25,17 @@
 #include "pub_tool_options.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_vki.h"
+#include "pub_tool_signals.h"
 #include "pub_tool_libcfile.h"
 #include "pub_tool_libcproc.h"
+#include "pub_tool_libcsignal.h"
 #include "pub_tool_threadstate.h"
 
 #include "libvex_guest_amd64.h"
 #include "libvex_guest_offsets.h"
 #include "libvex_trc_values.h"
+
+#include "valgrind.h"
 
 #include "ppres.h"
 #include "replay.h"
@@ -41,14 +45,14 @@
 #include "list.h"
 
 /* Can the replay system see footstep records at all? */
-#define SEARCH_USES_FOOTSTEPS 0
+#define SEARCH_USES_FOOTSTEPS 1
 /* Use footsteps to explicitly choose which way to go (as opposed to
    just validating our decisions).  This forces a total ordering
    on all instructions. */
 #define FOOTSTEP_DIRECTS_SEARCH 0
 
 /* Can the replay system see memory records at all? */
-#define SEARCH_USES_MEMORY 0
+#define SEARCH_USES_MEMORY 1
 
 /* Restrict the search process to only see every nth memory access. */
 #define SEARCH_SEES_EVERY_NTH_MEMORY_ACCESS 1
@@ -168,12 +172,14 @@ static struct {
 	      CLIENT_STOP_syscall,
 	      CLIENT_STOP_rdtsc,
 	      CLIENT_STOP_mem_access,
-	      CLIENT_STOP_ctxt_switch } cls;
+	      CLIENT_STOP_ctxt_switch,
+	      CLIENT_STOP_client_request } cls;
 	VexGuestAMD64State *state;
 	union {
 		struct mem_access_event mem;
 		struct footstep_record footstep;
 		struct replay_thread *ctxt_switch;
+		unsigned client_req;
 	} u;
 } client_stop_reason;
 
@@ -562,9 +568,10 @@ validate_fr(const struct footstep_record *reference,
 	    ThreadId tid)
 {
 	replay_assert_XXX_no_finish(reference->rip == observed->rip,
-				    "wanted a footstep at %lx, got one at %lx",
+				    "wanted a footstep at %lx, got one at %lx, thread %d",
 				    reference->rip,
-				    observed->rip);
+				    observed->rip,
+				    tid);
 	replay_assert_XXX_no_finish(reference->rax == observed->rax, "RAX mismatch: %lx != %lx",
 				    reference->rax, observed->rax);
 	replay_assert_XXX_no_finish(reference->rdx == observed->rdx, "RDX mismatch");
@@ -1005,6 +1012,25 @@ replay_syscall_record(struct record_header *rh,
 }
 
 static void
+replay_client_request_record(struct record_header *rh,
+			     struct client_req_record *cr)
+{
+	run_client(current_thread, "client request");
+
+	replay_assert_XXX(client_stop_reason.cls == CLIENT_STOP_client_request &&
+			  rh->tid == current_thread->id,
+			  "wanted a client request in thread %d, got class %d in thread %d",
+			  rh->tid,
+			  client_stop_reason.cls,
+			  current_thread->id);
+	replay_assert_XXX(client_stop_reason.u.client_req == cr->flavour,
+			  "wanted CR flavour %x, got flavour %x",
+			  cr->flavour,
+			  client_stop_reason.u.client_req);
+	finish_this_record(&logfile);
+}
+
+static void
 replay_rdtsc_record(struct rdtsc_record *rr)
 {
 	run_client(current_thread, "rdtsc record");
@@ -1208,6 +1234,9 @@ replay_state_machine_fn(void)
 		case RECORD_thread_unblocked:
 			unblock_thread(rh->tid);
 			break;
+		case RECORD_client:
+			replay_client_request_record(rh, payload);
+			break;
 		default:
 			VG_(tool_panic)((signed char *)"Unknown replay record type!");
 		}
@@ -1389,6 +1418,20 @@ driver_loop(const Char *schedule)
 	}
 }
 
+static Bool
+handle_client_request(ThreadId tid, UWord *arg_block, UWord *ret)
+{
+	if (!VG_IS_TOOL_USERREQ('P', 'P', arg_block[0]))
+		return False;
+	reschedule_client(False, "client request %d (%s)",
+			  arg_block[0], (char *)arg_block[1]);
+	client_stop_reason.cls = CLIENT_STOP_client_request;
+	client_stop_reason.u.client_req = arg_block[0];
+	run_replay_machine();
+	*ret = 0;
+	return True;
+}
+
 static void
 init(void)
 {
@@ -1542,6 +1585,7 @@ pre_clo_init(void)
 	VG_(details_bug_reports_to)((signed char *)"sos22@cam.ac.uk");
 	VG_(details_description)((signed char *)"Replayer for PPRES");
 	VG_(basic_tool_funcs)(init, instrument_func, fini);
+	VG_(needs_client_requests)(handle_client_request);
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)

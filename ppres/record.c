@@ -24,6 +24,7 @@
 #include "pub_tool_libcsignal.h"
 #include "libvex_guest_amd64.h"
 #include "libvex_guest_offsets.h"
+#include "valgrind.h"
 
 #include "ppres.h"
 
@@ -433,6 +434,19 @@ record_rdtsc(void)
 	return res;
 }
 
+static Bool
+handle_client_request(ThreadId tid, UWord *arg_block, UWord *ret)
+{
+	struct client_req_record *crr;
+
+	if (!VG_IS_TOOL_USERREQ('P', 'P', arg_block[0]))
+		return False;
+	crr = emit_record(&logfile, RECORD_client, sizeof(*crr));
+	crr->flavour = arg_block[0];
+	*ret = 0;
+	return True;
+}
+
 static void
 pre_clo_init(void)
 {
@@ -445,6 +459,7 @@ pre_clo_init(void)
 	VG_(details_description)((signed char *)"Simple flight data record for PPRES");
 	VG_(basic_tool_funcs)(init, instrument_func, fini);
 	VG_(needs_syscall_wrapper)(pre_syscall, post_syscall);
+	VG_(needs_client_requests)(handle_client_request);
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)

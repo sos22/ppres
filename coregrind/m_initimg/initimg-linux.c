@@ -178,15 +178,19 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
 
    /* Allocate a new space */
    ret = VG_(malloc) ("initimg-linux.sce.3",
-                      sizeof(HChar *) * (envc+1+1)); /* 1 new entry + NULL */
+                      sizeof(HChar *) * (envc+1+2)); /* 1 new entry + NULL */
    vg_assert(ret);
 
    /* copy it over */
    for (cpp = ret; *origenv; )
       *cpp++ = *origenv++;
-   *cpp = NULL;
-   
    vg_assert(envc == (cpp - ret));
+
+   *cpp = "LD_AUDIT=/local/scratch/sos22/valgrind/ppres/ppres_audit.so";
+   cpp++;
+   envc++;
+
+   *cpp = NULL;
 
    /* Walk over the new environment, mashing as we go */
    for (cpp = ret; cpp && *cpp; cpp++) {

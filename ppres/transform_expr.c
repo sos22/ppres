@@ -370,7 +370,8 @@ instrument_func(VgCallbackClosure *closure,
 	}
 	tl_assert(sb_out->jumpkind == Ijk_Boring ||
 		  sb_out->jumpkind == Ijk_Call ||
-		  sb_out->jumpkind == Ijk_Ret);
+		  sb_out->jumpkind == Ijk_Ret ||
+		  sb_out->jumpkind == Ijk_ClientReq);
 #endif
 
 	return sb_out;

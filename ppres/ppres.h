@@ -57,3 +57,8 @@ struct mem_write_record {
 
 /* No payload */
 #define RECORD_thread_unblocked 9
+
+struct client_req_record {
+#define RECORD_client 10
+	UWord flavour;
+};
