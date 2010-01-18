@@ -753,13 +753,47 @@ replay_footstep_record(struct footstep_record *fr,
 	finish_this_record(&logfile);
 }
 
+static jmp_buf
+replay_memory_jmpbuf;
+
+static void
+replay_memory_sighandler(Int signo, Addr addr)
+{
+	if (signo == VKI_SIGBUS || signo == VKI_SIGSEGV) {
+		/* Something bad has happened, and we can't replay the
+		   memory record which we captured.  This shouldn't
+		   happen if we follow the script, but it's possible
+		   if we've diverged. */
+		__builtin_longjmp(replay_memory_jmpbuf, 1);
+	}
+}
+
 static void
 replay_memory_record(struct record_header *rh,
 		     struct memory_record *mr)
 {
+	vki_sigset_t sigmask;
+	Bool should_be_in_gen;
+
+	should_be_in_gen = VG_(in_generated_code);
+	if (__builtin_setjmp(&replay_memory_jmpbuf)) {
+		VG_(in_generated_code) = should_be_in_gen;
+		VG_(set_fault_catcher)(NULL);
+		VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+		failure("Signal trying to replay memory at %p -> thread failed\n",
+			mr->ptr);
+		return;
+	}
+
+	VG_(in_generated_code) = False;
+	VG_(sigprocmask)(VKI_SIG_SETMASK, NULL, &sigmask);
+	VG_(set_fault_catcher)(replay_memory_sighandler);
 	VG_(memcpy)(mr->ptr,
 		    mr + 1,
 		    rh->size - sizeof(*rh) - sizeof(*mr));
+	VG_(set_fault_catcher)(NULL);
+	VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+	VG_(in_generated_code) = should_be_in_gen;
 }
 
 static void
