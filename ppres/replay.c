@@ -47,9 +47,17 @@
 #define DBG_SCHEDULE 0x1
 #define DBG_EVENTS 0x2
 
-#define debug_level (DBG_SCHEDULE)
+#define debug_level (DBG_SCHEDULE|DBG_EVENTS)
 
-#define DEBUG(lvl, fmt, args...) do { if (debug_level & (lvl)) VG_(printf)(fmt, ## args); } while (0)
+#define DEBUG(lvl, fmt, args...)                               \
+do {                                                           \
+	if (debug_level & (lvl))                               \
+		VG_(printf)("%d:%lx " fmt,                     \
+			    current_thread->id,                \
+			    logfile.offset_in_file +           \
+                                 logfile.offset_in_current_chunk\
+			    , ## args);                        \
+} while (0)
 
 /* Can the replay system see footstep records at all? */
 #define SEARCH_USES_FOOTSTEPS 0
