@@ -777,17 +777,11 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 		reschedule_client(False, "load %d from %p", size, ptr);
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
-	VG_(memcpy)(read_contents, ptr, size);
 
-	if (access_is_magic(ptr, size))
-		VG_(printf)("Thread %d did load %d from %p -> %lx\n",
-			    current_thread->id,
-			    size,
-			    ptr,
-			    *(unsigned long *)ptr);
-
+	/* Need to grab the record before capturing memory, because
+	   getting the record can force a reschedule, and we want to
+	   pick up anything which gets written while we're away. */
 	mrr = get_record_this_thread(&rh);
-
 	replay_assert(rh->cls == RECORD_mem_read,
 		      "wanted a memory read record in thread %d, got class %d",
 		      current_thread->id,
@@ -800,6 +794,16 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 		      "wanted a read size %d, got one size %d",
 		      rh->size - sizeof(*rh) - sizeof(*mrr),
 		      size);
+
+	VG_(memcpy)(read_contents, ptr, size);
+
+	if (access_is_magic(ptr, size))
+		VG_(printf)("Thread %d did load %d from %p -> %lx\n",
+			    current_thread->id,
+			    size,
+			    ptr,
+			    *(unsigned long *)ptr);
+
 	safe = 1;
 	if (VG_(memcmp)(read_contents, mrr + 1, size)) {
 		safe = 0;
@@ -848,8 +852,6 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 			    ptr,
 			    *(unsigned long *)ptr);
 
-	VG_(memcpy)(ptr, written_bytes, size);
-
 	mwr = get_record_this_thread(&rh);
 
 	replay_assert(rh->cls == RECORD_mem_write,
@@ -864,6 +866,9 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 		      "wanted a write size %d, got one size %d",
 		      rh->size - sizeof(*rh) - sizeof(*mwr),
 		      size);
+
+	VG_(memcpy)(ptr, written_bytes, size);
+
 	safe = 1;
 	if (VG_(memcmp)(written_bytes, mwr + 1, size)) {
 		safe = 0;
