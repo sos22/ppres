@@ -3,8 +3,8 @@
   to VEX IR. */
 
 #ifdef included_for_replay
-# define load_worker_function replay_load
-# define store_worker_function replay_store
+# define load_worker_function load_event
+# define store_worker_function store_event
 #else
 # ifndef included_for_record
 #  error Neither record nor replay?

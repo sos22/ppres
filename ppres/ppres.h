@@ -1,5 +1,3 @@
-#define DEBUG(fmt, args...) //VG_(printf)(fmt, ## args)
-
 #define RECORD_BLOCK_SIZE 16384
 #define MAX_RECORD_SIZE 4096
 
