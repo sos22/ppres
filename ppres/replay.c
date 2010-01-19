@@ -133,14 +133,20 @@ static void validate_mem_access(const struct mem_access_event *recorded,
 MK_ZIPPER_LIST(struct mem_access_event, mae, validate_mem_access)
 #endif
 
+enum thread_run_state {
+	trs_running = 5678,
+	trs_runnable,
+	trs_blocked,
+	trs_failed,
+	trs_dead
+};
+
 struct replay_thread {
 	struct replay_thread *next_thread;
 	struct coroutine coroutine;
 	ThreadId id;
 	Bool in_generated;
-	Bool blocked;
-	Bool failed;
-	Bool dead;
+	enum thread_run_state run_state;
 #if SEARCH_USES_FOOTSTEPS && !FOOTSTEP_DIRECTS_SEARCH
 	struct zipper_list_pfq pending_footsteps;
 #endif
@@ -287,6 +293,7 @@ _switch_thread_monitor(struct replay_thread *target, const char *msg,
 {
 	tl_assert(in_monitor);
 	tl_assert(current_thread != target);
+	tl_assert(target->run_state = trs_runnable);
 
 	VG_(printf)("Monitor ctxt switch %d -> %d for ",
 		    current_thread->id, target->id);
@@ -294,7 +301,10 @@ _switch_thread_monitor(struct replay_thread *target, const char *msg,
 	VG_(printf)("\n");
 
 	current_thread->in_generated = VG_(in_generated_code);
+	if (current_thread->run_state == trs_running)
+		current_thread->run_state = trs_runnable;
 	current_thread = target;
+	current_thread->run_state = trs_running;
 	VG_(in_generated_code) = current_thread->in_generated;
 	VG_(running_tid) = current_thread->id;
 }
@@ -371,32 +381,40 @@ thread_runnable(const struct replay_thread *tr)
 {
 	const struct replay_thread *other_thread;
 
-	if (tr->blocked)
-		return False;
-	tl_assert(!tr->failed); /* failed threads are always blocked */
+	switch (tr->run_state) {
+	case trs_running:
+	case trs_runnable:
 #if SEARCH_USES_MEMORY && !MEMORY_DIRECTS_SEARCH
-	/* Try not to let threads get too far ahead of the log */
-	if (!tr->pending_memory.pending_are_from_A &&
-	    tr->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS) {
-		/* But if there's nothing else to run, we don't have
-		 * any choice. */
-		for (other_thread = head_thread;
-		     other_thread;
-		     other_thread = other_thread->next_thread) {
-			if (other_thread->blocked)
-				continue;
-			if (!other_thread->pending_memory.pending_are_from_A &&
-			    other_thread->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS)
-				continue;
-			/* We could run other_thread instead, so
-			   shouldn't choose tr */
-			return False;
+		/* Try not to let threads get too far ahead of the log */
+		if (!tr->pending_memory.pending_are_from_A &&
+		    tr->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS) {
+			/* But if there's nothing else to run, we don't have
+			 * any choice. */
+			for (other_thread = head_thread;
+			     other_thread;
+			     other_thread = other_thread->next_thread) {
+				if (other_thread->run_state != trs_running &&
+				    other_thread->run_state != trs_runnable)
+					continue;
+				if (!other_thread->pending_memory.pending_are_from_A &&
+				    other_thread->pending_memory.pending.length >= ORDER_EVERY_NTH_MEMORY_ACCESS)
+					continue;
+				/* We could run other_thread instead, so
+				   shouldn't choose tr */
+				return False;
+			}
+			/* No choice: we have to run this thread, even though
+			 * it's getting ahead. */
 		}
-		/* No choice: we have to run this thread, even though
-		 * it's getting ahead. */
-	}
 #endif
-	return True;
+		return True;
+	case trs_blocked:
+	case trs_failed:
+	case trs_dead:
+		return False;
+	}
+
+	VG_(tool_panic)((Char *)"Bad scheduling state");
 }
 
 static void
@@ -423,10 +441,11 @@ select_new_thread(void)
 	}
 
 	if (other_threads == 0) {
-		if (current_thread->failed || current_thread->blocked) {
+		if (current_thread->run_state == trs_failed ||
+		    current_thread->run_state == trs_blocked) {
 			/* Every thread is either failed or blocked,
-			   so we can't continue.  Tell the monitor
-			   that we're dead. */
+			   so we can't continue.  Tell the driver that
+			   we're dead. */
 			VG_(printf)("Ran out of threads to run.\n");
 			replay_run_finished(SEARCH_CODE_REPLAY_FAILURE);
 		}
@@ -452,8 +471,6 @@ select_new_thread(void)
 
 	tl_assert(rt != NULL);
 	tl_assert(rt != current_thread);
-	tl_assert(!rt->blocked);
-	tl_assert(!rt->failed);
 	tl_assert(thread_runnable(rt));
 
 	return rt;
@@ -530,8 +547,7 @@ failure(const char *fmt, ...)
 	/* Mark this thread as failed, but let every other thread
 	   carry on, so that we have a better chance of finding
 	   interesting races. */
-	current_thread->failed = True;
-	current_thread->blocked = True;
+	current_thread->run_state = trs_failed;
 	if (in_monitor) {
 		reschedule_monitor(True, "thread failed");
 	} else {
@@ -887,8 +903,7 @@ replay_syscall_record(struct record_header *rh,
 		break;
 
 	case __NR_exit:
-		current_thread->dead = True;
-		current_thread->blocked = True;
+		current_thread->run_state = trs_dead;
 		reschedule_monitor(True, "thread exiting");
 		finish_this_record(&logfile);
 		break;
@@ -1168,7 +1183,7 @@ static void
 block_thread(ThreadId id)
 {
 	struct replay_thread *rt = get_thread(id);
-	rt->blocked = True;
+	rt->run_state = trs_blocked;
 	finish_this_record(&logfile);
 	if (rt == current_thread)
 		reschedule_monitor(True, "thread blocking");
@@ -1178,7 +1193,7 @@ static void
 unblock_thread(ThreadId id)
 {
 	struct replay_thread *rt = get_thread(id);
-	rt->blocked = False;
+	rt->run_state = trs_runnable;
 	finish_this_record(&logfile);
 	reschedule_monitor(True, "thread unblocking");
 }
@@ -1194,7 +1209,7 @@ replay_state_machine_fn(void)
 		VG_(running_tid) = 1;
 	while (1) {
 		rh = get_current_record(&logfile);
-		if (get_thread(rh->tid)->failed) {
+		if (get_thread(rh->tid)->run_state == trs_failed) {
 			/* This record relates to a thread which has
 			   already failed, so just throw it away. */
 			finish_this_record(&logfile);
@@ -1450,6 +1465,7 @@ init(void)
 	head_thread = VG_(malloc)("head_thread", sizeof(*head_thread));
 	VG_(memset)(head_thread, 0, sizeof(*head_thread));
 	head_thread->id = 1;
+	head_thread->run_state = trs_running;
 
 	VG_(printf)("Running search phase.\n");
 	open_logfile(&logfile, (signed char *)"logfile1");
@@ -1487,7 +1503,7 @@ hit_end_of_log(void)
 	VG_(printf)("Hit end of log.\n");
 	anything_failed = False;
 	for (rt = head_thread; rt && !anything_failed; rt = rt->next_thread)
-		anything_failed |= rt->failed;
+		anything_failed |= rt->run_state == trs_failed;
 
 	if (anything_failed) {
 		VG_(printf)("But some threads had failed, so the entire replay fails\n");
@@ -1540,6 +1556,7 @@ replay_clone_syscall(Word (*fn)(void *),
 	VG_(printf)("Clone syscall\n");
 	rt = VG_(malloc)("child thread", sizeof(*rt));
 	VG_(memset)(rt, 0, sizeof(*rt));
+	rt->run_state = trs_runnable;
 	spawning_thread = rt;
 	make_coroutine(&rt->coroutine,
 		       "child client thread",
