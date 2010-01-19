@@ -63,7 +63,7 @@ do {                                                           \
 #define SEARCH_USES_FOOTSTEPS 0
 
 /* Can the replay system see memory records at all? */
-#define SEARCH_USES_MEMORY 1
+#define SEARCH_USES_MEMORY 0
 
 /* Setting this makes us reschedule on every memory access, rather
    than just the ones which might be racy. */
@@ -460,6 +460,12 @@ get_record_this_thread(struct record_header **out_rh)
 			finish_this_record(&logfile);
 			break;
 #endif
+#if !SEARCH_USES_MEMORY
+		case RECORD_mem_read:
+		case RECORD_mem_write:
+			finish_this_record(&logfile);
+			break;
+#endif
 		default:
 			if (current_thread->blocked_by_log)
 				tl_assert((*out_rh)->cls == RECORD_syscall);
@@ -761,9 +767,11 @@ syscall_event(VexGuestAMD64State *state)
 static void
 load_event(const void *ptr, unsigned size, void *read_contents)
 {
+#if SEARCH_USES_MEMORY
 	struct mem_read_record *mrr;
 	struct record_header *rh;
 	int safe;
+#endif
 
 	DEBUG(DBG_EVENTS, "load_event(%p, %x)\n", ptr, size);
 	if (access_is_magic(ptr, size))
@@ -778,6 +786,7 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
 
+#if SEARCH_USES_MEMORY
 	/* Need to grab the record before capturing memory, because
 	   getting the record can force a reschedule, and we want to
 	   pick up anything which gets written while we're away. */
@@ -819,16 +828,22 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 		      size);
 
 	finish_this_record(&logfile);
+#else
+	VG_(memcpy)(read_contents, ptr, size);
+#endif
 }
 
 static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
+#if SEARCH_USES_MEMORY
 	struct mem_write_record *mwr;
 	struct record_header *rh;
 	int safe;
+#endif
 
-	DEBUG(DBG_EVENTS, "store_event(%p, %x, %lx)\n", ptr, size, *(unsigned long *)written_bytes);
+	DEBUG(DBG_EVENTS, "store_event(%p, %x, %lx)\n", ptr, size,
+	      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1) );
 
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d storing %d (%lx) to %p (%lx)\n",
@@ -852,6 +867,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 			    ptr,
 			    *(unsigned long *)ptr);
 
+#if SEARCH_USES_MEMORY
 	mwr = get_record_this_thread(&rh);
 
 	replay_assert(rh->cls == RECORD_mem_write,
@@ -884,6 +900,9 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 		      size);
 
 	finish_this_record(&logfile);
+#else
+	VG_(memcpy)(ptr, written_bytes, size);
+#endif
 }
 
 #define included_for_replay
