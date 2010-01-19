@@ -52,7 +52,7 @@
 #define DEBUG(lvl, fmt, args...) do { if (debug_level & (lvl)) VG_(printf)(fmt, ## args); } while (0)
 
 /* Can the replay system see footstep records at all? */
-#define SEARCH_USES_FOOTSTEPS 1
+#define SEARCH_USES_FOOTSTEPS 0
 
 /* Can the replay system see memory records at all? */
 #define SEARCH_USES_MEMORY 1
@@ -387,8 +387,6 @@ failure(Bool finish, const char *fmt, ...)
 	if (finish)
 		finish_this_record(&logfile);
 
-	while (1);
-
 	/* Mark this thread as failed, but let every other thread
 	   carry on, so that we have a better chance of finding
 	   interesting races. */
@@ -436,17 +434,25 @@ get_record_this_thread(struct record_header **out_rh)
 		   and then an unblock record.  Enforce that here, and
 		   also filter out the block/unblock records. */
 		res = _get_record_this_thread(out_rh);
-		if ((*out_rh)->cls == RECORD_thread_blocking) {
+		switch ((*out_rh)->cls) {
+		case RECORD_thread_blocking:
 			tl_assert(!current_thread->blocked_by_log);
 			current_thread->blocked_by_log = True;
 			DEBUG(DBG_SCHEDULE, "Thread %d blocked by log\n", current_thread->id);
 			finish_this_record(&logfile);
-		} else if ((*out_rh)->cls == RECORD_thread_unblocked) {
+			break;
+		case RECORD_thread_unblocked:
 			tl_assert(current_thread->blocked_by_log);
 			current_thread->blocked_by_log = False;
 			DEBUG(DBG_SCHEDULE, "Thread %d unblocked by log\n", current_thread->id);
 			finish_this_record(&logfile);
-		} else {
+			break;
+#if !SEARCH_USES_FOOTSTEPS
+		case RECORD_footstep:
+			finish_this_record(&logfile);
+			break;
+#endif
+		default:
 			if (current_thread->blocked_by_log)
 				tl_assert((*out_rh)->cls == RECORD_syscall);
 			return res;
