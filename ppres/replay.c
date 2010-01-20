@@ -412,18 +412,32 @@ _get_record_this_thread(struct record_header **out_rh)
 {
 	struct record_header *rh;
 
+retry:
 	rh = get_current_record(&logfile);
+
+	switch (rh->cls) {
+#if !SEARCH_USES_FOOTSTEPS
+	case RECORD_footstep:
+		finish_this_record(&logfile);
+		goto retry;
+#endif
+#if !SEARCH_USES_MEMORY
+	case RECORD_mem_read:
+	case RECORD_mem_write:
+		finish_this_record(&logfile);
+		goto retry;
+#endif
+	}
+
 	if (rh->tid == current_thread->id) {
 		*out_rh = rh;
 		return rh + 1;
 	}
 
 	current_thread->run_state = trs_replay_blocked;
-	reschedule_client(True, "waiting for log to catch up");
-	rh = get_current_record(&logfile);
-	tl_assert(rh->tid == current_thread->id);
-	*out_rh = rh;
-	return rh + 1;
+	reschedule_client(True, "waiting for log to catch up (current record tid %d, class %d)",
+			  rh->tid, rh->cls);
+	goto retry;
 }
 
 static void *
@@ -450,17 +464,6 @@ get_record_this_thread(struct record_header **out_rh)
 			DEBUG(DBG_SCHEDULE, "Thread %d unblocked by log\n", current_thread->id);
 			finish_this_record(&logfile);
 			break;
-#if !SEARCH_USES_FOOTSTEPS
-		case RECORD_footstep:
-			finish_this_record(&logfile);
-			break;
-#endif
-#if !SEARCH_USES_MEMORY
-		case RECORD_mem_read:
-		case RECORD_mem_write:
-			finish_this_record(&logfile);
-			break;
-#endif
 		default:
 			if (current_thread->blocked_by_log)
 				tl_assert((*out_rh)->cls == RECORD_syscall);
@@ -578,9 +581,9 @@ syscall_event(VexGuestAMD64State *state)
 		finish_this_record(&logfile);
 		sr = get_record_this_thread(&rh);
 	}
-	replay_assert(rh->cls == RECORD_syscall &&
-		      rh->tid == current_thread->id,
-		      "wanted a syscall record in thread %d, got class %d",
+	replay_assert(rh->cls == RECORD_syscall,
+		      "wanted a syscall record (%d) in thread %d, got class %d",
+		      syscall_sysnr(state),
 		      current_thread->id,
 		      rh->cls);
 
