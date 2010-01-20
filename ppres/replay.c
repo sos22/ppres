@@ -372,11 +372,8 @@ reschedule_client(Bool loud, const char *msg, ...)
 
 /* This thread has failed a validation, and so shouldn't be run any
    further. */
-/* The semantics depend on whether you're in the monitor.  In the
-   monitor, we pick another thread and return.  In client code, this
-   function immediately schedules out and never returns. */
 static void
-failure(Bool finish, const char *fmt, ...)
+failure(const char *fmt, ...)
 {
 	va_list args;
 
@@ -390,8 +387,7 @@ failure(Bool finish, const char *fmt, ...)
 
 	execution_schedule.failed = True;
 
-	if (finish)
-		finish_this_record(&logfile);
+	finish_this_record(&logfile);
 
 	/* Mark this thread as failed, but let every other thread
 	   carry on, so that we have a better chance of finding
@@ -404,8 +400,8 @@ failure(Bool finish, const char *fmt, ...)
 #define replay_assert(cond, msg, ...)                     \
 do {                                                      \
 	if (!(cond)) {                                    \
-		failure(True, "Assertion %s failed at %d: " msg "\n",	\
-                        #cond , __LINE__, ## __VA_ARGS__ );		\
+		failure("Assertion %s failed at %d: " msg "\n", \
+                        #cond , __LINE__, ## __VA_ARGS__ ); \
                 VG_(tool_panic)((Char *)"Failed thread rescheduled!"); \
 	}                                                 \
 } while (0)
@@ -533,8 +529,7 @@ replay_memory_record(struct record_header *rh,
 		VG_(in_generated_code) = should_be_in_gen;
 		VG_(set_fault_catcher)(NULL);
 		VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
-		failure(False,
-			"Signal trying to replay memory at %p -> thread failed\n",
+		failure("Signal trying to replay memory at %p -> thread failed\n",
 			mr->ptr);
 		return;
 	}
