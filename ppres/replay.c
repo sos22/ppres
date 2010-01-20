@@ -47,6 +47,7 @@
 #define DBG_SCHEDULE 0x1
 #define DBG_EVENTS 0x2
 #define DBG_MEM_EVENTS 0x4
+#define DBG_ND_CHOICE 0x8
 
 #define debug_level (DBG_SCHEDULE|DBG_EVENTS)
 
@@ -323,8 +324,14 @@ select_new_thread(void)
 			replay_run_finished(SEARCH_CODE_REPLAY_FAILURE);
 		}
 	}
+
 	thread_to_run = make_nd_choice(&execution_schedule,
 				       other_threads);
+	if (other_threads != 0) {
+		DEBUG(DBG_ND_CHOICE,
+		      "nd choice between %d threads -> %d.\n",
+		      other_threads + 1, thread_to_run);
+	}
 	tl_assert(thread_to_run <= other_threads);
 	if (thread_to_run == 0 && thread_runnable(current_thread))
 		return current_thread;
@@ -433,6 +440,14 @@ retry:
 		*out_rh = rh;
 		return rh + 1;
 	}
+
+	/* The execution has gone wrong, so we should stop adding more
+	   records to the recorded schedule, but it can't be
+	   attributed to any particular thread. */
+	if (!execution_schedule.failed)
+		VG_(printf)("Replay failed after %ld bytes\n",
+			    logfile.offset_in_file);
+	execution_schedule.failed = True;
 
 	current_thread->run_state = trs_replay_blocked;
 	reschedule_client(True, "waiting for log to catch up (current record tid %d, class %d)",
