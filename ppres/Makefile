@@ -15,6 +15,8 @@ ppres_replay: replay.o coroutines.o replay_logfile.o schedule.o races.o
 replay.o: transform_expr.c
 record.o: transform_expr.c
 
+schedule.o: schedule.h
+
 %.o: %.c
 	gcc $(CFLAGS) -c $<
 
