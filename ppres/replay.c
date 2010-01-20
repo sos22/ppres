@@ -438,6 +438,24 @@ do {                                                      \
 	}                                                 \
 } while (0)
 
+static Bool
+record_class_filtered(unsigned cls)
+{
+	switch (cls) {
+	case RECORD_new_thread:
+#if !SEARCH_USES_FOOTSTEPS
+	case RECORD_footstep:
+#endif
+#if !SEARCH_USES_MEMORY
+	case RECORD_mem_read:
+	case RECORD_mem_write:
+#endif
+		return True;
+	default:
+		return False;
+	}
+}
+
 static void *
 _get_record_this_thread(struct record_header **out_rh)
 {
@@ -446,18 +464,9 @@ _get_record_this_thread(struct record_header **out_rh)
 retry:
 	rh = get_current_record(&logfile);
 
-	switch (rh->cls) {
-#if !SEARCH_USES_FOOTSTEPS
-	case RECORD_footstep:
+	if (record_class_filtered(rh->cls)) {
 		finish_this_record(&logfile);
 		goto retry;
-#endif
-#if !SEARCH_USES_MEMORY
-	case RECORD_mem_read:
-	case RECORD_mem_write:
-		finish_this_record(&logfile);
-		goto retry;
-#endif
 	}
 
 	if (rh->tid == current_thread->id) {
@@ -477,6 +486,23 @@ retry:
 	reschedule_client(True, "waiting for log to catch up (current record tid %d, class %d)",
 			  rh->tid, rh->cls);
 	goto retry;
+}
+
+static Bool
+peek_record_this_thread(struct record_header *out_rh)
+{
+	OffT current_log_ptr;
+
+	current_log_ptr = logfile_tell(&logfile);
+	while (1) {
+		if (!peek_record(&logfile, current_log_ptr, out_rh))
+			return False;
+		tl_assert(out_rh->size >= sizeof(*out_rh));
+		if (!record_class_filtered(out_rh->cls) &&
+		    out_rh->tid == current_thread->id)
+			return True;
+		current_log_ptr += out_rh->size;
+	}
 }
 
 static void *
@@ -609,9 +635,18 @@ syscall_event(VexGuestAMD64State *state)
 {
 	struct syscall_record *sr;
 	struct record_header *rh;
+	struct record_header peek_rh;
 
 	DEBUG(DBG_EVENTS, "syscall_event() sysnr = %ld\n",
 	      syscall_sysnr(state));
+
+	if (peek_record_this_thread(&peek_rh)) {
+		replay_assert_local(peek_rh.cls == RECORD_syscall,
+				    "wanted a peek syscall record (%d) in thread %d, got class %d",
+				    syscall_sysnr(state),
+				    current_thread->id,
+				    peek_rh.cls);
+	}
 
 	reschedule_client(False, "syscall %d", syscall_sysnr(state));
 

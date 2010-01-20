@@ -60,3 +60,5 @@ struct client_req_record {
 #define RECORD_client 10
 	UWord flavour;
 };
+
+#define RECORD_MAX_CLASS RECORD_client
