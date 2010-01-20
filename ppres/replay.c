@@ -46,6 +46,7 @@
 
 #define DBG_SCHEDULE 0x1
 #define DBG_EVENTS 0x2
+#define DBG_MEM_EVENTS 0x4
 
 #define debug_level (DBG_SCHEDULE|DBG_EVENTS)
 
@@ -564,7 +565,8 @@ syscall_event(VexGuestAMD64State *state)
 	struct syscall_record *sr;
 	struct record_header *rh;
 
-	DEBUG(DBG_EVENTS, "syscall_event()\n");
+	DEBUG(DBG_EVENTS, "syscall_event() sysnr = %ld\n",
+	      syscall_sysnr(state));
 
 	reschedule_client(False, "syscall %d", syscall_sysnr(state));
 
@@ -766,7 +768,7 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 	int safe;
 #endif
 
-	DEBUG(DBG_EVENTS, "load_event(%p, %x)\n", ptr, size);
+	DEBUG(DBG_MEM_EVENTS, "load_event(%p, %x)\n", ptr, size);
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d load %d from %p\n",
 			    current_thread->id,
@@ -835,8 +837,9 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 	int safe;
 #endif
 
-	DEBUG(DBG_EVENTS, "store_event(%p, %x, %lx)\n", ptr, size,
-	      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1) );
+	DEBUG(DBG_MEM_EVENTS, "store_event(%p, %x, %lx) (%lx)\n", ptr, size,
+	      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
+	      *(unsigned long *)written_bytes);
 
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d storing %d (%lx) to %p (%lx)\n",
@@ -1092,6 +1095,8 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 
 	if (!VG_IS_TOOL_USERREQ('P', 'P', arg_block[0]))
 		return False;
+	DEBUG(DBG_EVENTS, "client_request_event(%lx, %s)\n",
+	      arg_block[0], (char *)arg_block[1]);
 	cr = get_record_this_thread(&rh);
 	replay_assert(rh->cls == RECORD_client,
 		      "wanted a client request record, got class %d (%s)",
