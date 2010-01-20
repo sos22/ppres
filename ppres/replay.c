@@ -133,7 +133,7 @@ struct replay_thread {
 	struct replay_thread *next_thread;
 	struct coroutine coroutine;
 	ThreadId id;
-	ThreadId parent_id;
+	struct replay_thread *parent;
 	Bool in_generated;
 	Bool blocked_by_log;
 	enum thread_run_state run_state;
@@ -1213,7 +1213,7 @@ new_thread_starting(void)
 		   child thread starts can be accessed by the child
 		   without causing a race.  Let the race tracker know
 		   about that. */
-		racetrack_thread_message(current_thread->parent_id,
+		racetrack_thread_message(current_thread->parent->id,
 					 current_thread->id);
 
 		reschedule_client(True, "immediately post spawn");
@@ -1235,7 +1235,7 @@ replay_clone_syscall(Word (*fn)(void *),
 	rt = VG_(malloc)("child thread", sizeof(*rt));
 	VG_(memset)(rt, 0, sizeof(*rt));
 	rt->run_state = trs_runnable;
-	rt->parent_id = current_thread->id;
+	rt->parent = current_thread;
 	make_coroutine(&rt->coroutine,
 		       "child client thread",
 		       stack,
