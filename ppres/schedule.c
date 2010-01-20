@@ -66,6 +66,7 @@ advance_schedule_to_next_choice(const Char *filename,
 	SysRes open_res;
 	OffT ptr;
 	struct schedule_entry buffer;
+	int r;
 
 	open_res = VG_(open)((const Char *)filename,
 			     VKI_O_RDWR,
@@ -75,7 +76,8 @@ advance_schedule_to_next_choice(const Char *filename,
 	while (ptr != min_size) {
 		ptr -= sizeof(buffer);
 		VG_(lseek)(fd, ptr, VKI_SEEK_SET);
-		VG_(read)(fd, &buffer, sizeof(buffer));
+		r = VG_(read)(fd, &buffer, sizeof(buffer));
+		tl_assert(r == sizeof(buffer));
 		tl_assert(buffer.max_option > 0);
 		tl_assert(buffer.current_option <= buffer.max_option);
 		if (buffer.current_option < buffer.max_option) {
