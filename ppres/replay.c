@@ -314,15 +314,13 @@ select_new_thread(void)
 	}
 
 	if (other_threads == 0) {
-		if (current_thread->run_state == trs_failed ||
-		    current_thread->run_state == trs_blocked) {
+		if (!thread_runnable(current_thread)) {
 			/* Every thread is either failed or blocked,
 			   so we can't continue.  Tell the driver that
 			   we're dead. */
 			VG_(printf)("Ran out of threads to run.\n");
 			replay_run_finished(SEARCH_CODE_REPLAY_FAILURE);
 		}
-		tl_assert(thread_runnable(current_thread));
 	}
 	thread_to_run = make_nd_choice(&execution_schedule,
 				       other_threads);
