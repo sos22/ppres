@@ -222,8 +222,6 @@ make_nd_choice(struct execution_schedule *es,
 	se = get_schedule_entry(es);
 	if (es->replay_mode) {
 		tl_assert(se->max_option == max_allowed);
-		if (snapshot)
-			VG_(printf)("Snapshot returns %d\n", se->current_option);
 		return se->current_option;
 	} else if (es->failed) {
 		return 0;
