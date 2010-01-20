@@ -48,8 +48,9 @@
 #define DBG_EVENTS 0x2
 #define DBG_MEM_EVENTS 0x4
 #define DBG_ND_CHOICE 0x8
+#define DBG_MEM_RACES 0x10
 
-#define debug_level (DBG_SCHEDULE|DBG_EVENTS)
+#define debug_level (DBG_SCHEDULE|DBG_ND_CHOICE|DBG_MEM_RACES)
 
 #define DEBUG(lvl, fmt, args...)                               \
 do {                                                           \
@@ -139,6 +140,8 @@ struct replay_thread {
 	Bool in_generated;
 	Bool blocked_by_log;
 	enum thread_run_state run_state;
+
+	OffT schedule_size_at_last_racing_load;
 };
 
 static struct replay_thread *
@@ -380,8 +383,13 @@ reschedule_client(Bool loud, const char *msg, ...)
 
 /* This thread has failed a validation, and so shouldn't be run any
    further. */
+/* If @local is True, this is assumed to be an assertion on purely
+   thread-local state.  If it fails, that must indicate that something
+   unpleasant happened before the last load was issued from this
+   thread.  That allows us to truncate the log much more aggresively
+   than we otherwise would. */
 static void
-failure(const char *fmt, ...)
+failure(Bool local, const char *fmt, ...)
 {
 	va_list args;
 
@@ -394,6 +402,11 @@ failure(const char *fmt, ...)
 	VG_(printf)("In thread %d\n", current_thread->id);
 
 	execution_schedule.failed = True;
+
+	if (local)
+		schedule_failed_before(
+			&execution_schedule,
+			current_thread->schedule_size_at_last_racing_load);
 
 	finish_this_record(&logfile);
 
@@ -408,7 +421,18 @@ failure(const char *fmt, ...)
 #define replay_assert(cond, msg, ...)                     \
 do {                                                      \
 	if (!(cond)) {                                    \
-		failure("Assertion %s failed at %d: " msg "\n", \
+		failure(False,		 		  \
+			"Assertion %s failed at %d: " msg "\n",	\
+                        #cond , __LINE__, ## __VA_ARGS__ ); \
+                VG_(tool_panic)((Char *)"Failed thread rescheduled!"); \
+	}                                                 \
+} while (0)
+
+#define replay_assert_local(cond, msg, ...)               \
+do {                                                      \
+	if (!(cond)) {                                    \
+		failure(True,                             \
+			"Assertion %s failed at %d: " msg "\n",	\
                         #cond , __LINE__, ## __VA_ARGS__ ); \
                 VG_(tool_panic)((Char *)"Failed thread rescheduled!"); \
 	}                                                 \
@@ -487,39 +511,41 @@ get_record_this_thread(struct record_header **out_rh)
 	}
 }
 
-#if SEARCH_USES_FOOTSTEPS
 static void
 footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 {
+#if SEARCH_USES_FOOTSTEPS
 	struct footstep_record *fr;
 	struct record_header *rh;
+#endif
 
 	DEBUG(DBG_EVENTS, "footstep_event(%lx, %lx, %lx, %lx)\n", rip, rdx, rcx, rax);
 
+#if SEARCH_USES_FOOTSTEPS
 	reschedule_client(False, "footstep at %lx\n", rip);
 
 	fr = get_record_this_thread(&rh);
-	replay_assert(rh->cls == RECORD_footstep,
+	replay_assert_local(rh->cls == RECORD_footstep,
 		      "wanted a footstep record in thread %d, got class %d (rip %lx)",
 		      current_thread->id,
 		      rh->cls,
 		      rip);
-	replay_assert(rip == fr->rip,
+	replay_assert_local(rip == fr->rip,
 		      "wanted a footstep at %lx, got one at %lx, thread %d",
 		      fr->rip, rip, current_thread->id);
-	replay_assert(rax == fr->rax,
+	replay_assert_local(rax == fr->rax,
 		      "RAX mismatch: %lx != %lx at %lx",
 		      rax, fr->rax, rip);
-	replay_assert(rdx == fr->rdx,
+	replay_assert_local(rdx == fr->rdx,
 		      "RDX mismatch: %lx != %lx at %lx",
 		      rdx, fr->rdx, rip);
-	replay_assert(rcx == fr->rcx ||
+	replay_assert_local(rcx == fr->rcx ||
 		      rcx == NONDETERMINISM_POISON,
 		      "RCX mismatch: %lx != %lx at %lx",
 		      rcx, fr->rcx, rip);
 	finish_this_record(&logfile);
-}
 #endif
+}
 
 static jmp_buf
 replay_memory_jmpbuf;
@@ -548,7 +574,8 @@ replay_memory_record(struct record_header *rh,
 		VG_(in_generated_code) = should_be_in_gen;
 		VG_(set_fault_catcher)(NULL);
 		VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
-		failure("Signal trying to replay memory at %p -> thread failed\n",
+		failure(False,
+			"Signal trying to replay memory at %p -> thread failed\n",
 			mr->ptr);
 		return;
 	}
@@ -596,27 +623,27 @@ syscall_event(VexGuestAMD64State *state)
 		finish_this_record(&logfile);
 		sr = get_record_this_thread(&rh);
 	}
-	replay_assert(rh->cls == RECORD_syscall,
+	replay_assert_local(rh->cls == RECORD_syscall,
 		      "wanted a syscall record (%d) in thread %d, got class %d",
 		      syscall_sysnr(state),
 		      current_thread->id,
 		      rh->cls);
 
-	replay_assert(syscall_sysnr(state) == sr->syscall_nr,
+	replay_assert_local(syscall_sysnr(state) == sr->syscall_nr,
 		      "wanted syscall %d, got syscall %ld",
 		      sr->syscall_nr,
 		      syscall_sysnr(state));
-	replay_assert(syscall_arg_1(state) == sr->arg1,
+	replay_assert_local(syscall_arg_1(state) == sr->arg1,
 		      "wanted arg1 to be %lx, was %lx for syscall %d",
 		      sr->arg1,
 		      syscall_arg_1(state),
 		      sr->syscall_nr);
-	replay_assert(syscall_arg_2(state) == sr->arg2,
+	replay_assert_local(syscall_arg_2(state) == sr->arg2,
 		      "wanted arg2 to be %lx, was %lx for syscall %d",
 		      sr->arg2,
 		      syscall_arg_2(state),
 		      sr->syscall_nr);
-	replay_assert(syscall_arg_3(state) == sr->arg3,
+	replay_assert_local(syscall_arg_3(state) == sr->arg3,
 		      "wanted arg3 to be %lx, was %lx for syscall %d",
 		      sr->arg3,
 		      syscall_arg_3(state),
@@ -677,12 +704,12 @@ syscall_event(VexGuestAMD64State *state)
 		VG_(client_syscall)(VG_(get_running_tid)(),
 				    VEX_TRC_JMP_SYS_SYSCALL);
 		if (sr_isError(sr->syscall_res))
-			replay_assert(-state->guest_RAX == sr_Err(sr->syscall_res),
+			replay_assert_local(-state->guest_RAX == sr_Err(sr->syscall_res),
 				      "Expected syscall to fail %d, actually got %d",
 				      sr_Err(sr->syscall_res),
 				      -state->guest_RAX);
 		else
-			replay_assert(state->guest_RAX == sr_Res(sr->syscall_res),
+			replay_assert_local(state->guest_RAX == sr_Res(sr->syscall_res),
 				      "expected syscall to succeed %d, actually got %d",
 				      sr_Res(sr->syscall_res),
 				      state->guest_RAX);
@@ -785,16 +812,19 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 	struct record_header *rh;
 	int safe;
 #endif
+	unsigned racey;
 
-	DEBUG(DBG_MEM_EVENTS, "load_event(%p, %x)\n", ptr, size);
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d load %d from %p\n",
 			    current_thread->id,
 			    size,
 			    ptr);
 
-	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
-	    racetrack_address_races((Addr)ptr, size))
+	racey = racetrack_address_races((Addr)ptr, size);
+	DEBUG(racey ? DBG_MEM_RACES : DBG_MEM_EVENTS,
+	      "load_event(%p, %x) race %d\n", ptr, size,
+	      racey);
+	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS || racey)
 		reschedule_client(False, "load %d from %p", size, ptr);
 
 	racetrack_read_region((Addr)ptr, size, current_thread->id);
@@ -804,15 +834,15 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 	   getting the record can force a reschedule, and we want to
 	   pick up anything which gets written while we're away. */
 	mrr = get_record_this_thread(&rh);
-	replay_assert(rh->cls == RECORD_mem_read,
+	replay_assert_local(rh->cls == RECORD_mem_read,
 		      "wanted a memory read record in thread %d, got class %d",
 		      current_thread->id,
 		      rh->cls);
-	replay_assert(ptr == mrr->ptr,
+	replay_assert_local(ptr == mrr->ptr,
 		      "wanted a read from %p, got one from %p",
 		      mrr->ptr,
 		      ptr);
-	replay_assert(size == rh->size - sizeof(*rh) - sizeof(*mrr),
+	replay_assert_local(size == rh->size - sizeof(*rh) - sizeof(*mrr),
 		      "wanted a read size %d, got one size %d",
 		      rh->size - sizeof(*rh) - sizeof(*mrr),
 		      size);
@@ -844,6 +874,10 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 #else
 	VG_(memcpy)(read_contents, ptr, size);
 #endif
+
+	if (racey)
+		current_thread->schedule_size_at_last_racing_load =
+			get_schedule_size(&execution_schedule);
 }
 
 static void
@@ -854,10 +888,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 	struct record_header *rh;
 	int safe;
 #endif
-
-	DEBUG(DBG_MEM_EVENTS, "store_event(%p, %x, %lx) (%lx)\n", ptr, size,
-	      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
-	      *(unsigned long *)written_bytes);
+	Bool racey;
 
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d storing %d (%lx) to %p (%lx)\n",
@@ -867,8 +898,14 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 			    ptr,
 			    *(unsigned long *)ptr);
 
-	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS ||
-	    racetrack_address_races((Addr)ptr, size))
+	racey = racetrack_address_races((Addr)ptr, size);
+	DEBUG(racey ? DBG_MEM_RACES : DBG_MEM_EVENTS,
+	      "store_event(%p, %x, %lx) (%lx) race %d\n", ptr, size,
+	      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
+	      *(unsigned long *)written_bytes,
+	      racey);
+
+	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS || racey)
 		reschedule_client(False, "store %d to %p (%lx -> %lx)", size, ptr,
 				  *(unsigned long *)ptr,
 				  *(unsigned long *)written_bytes);
@@ -884,15 +921,15 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 #if SEARCH_USES_MEMORY
 	mwr = get_record_this_thread(&rh);
 
-	replay_assert(rh->cls == RECORD_mem_write,
+	replay_assert_local(rh->cls == RECORD_mem_write,
 		      "wanted a memory write record in thread %d, got class %d",
 		      current_thread->id,
 		      rh->cls);
-	replay_assert(ptr == mwr->ptr,
+	replay_assert_local(ptr == mwr->ptr,
 		      "wanted a write to %p, got one to %p",
 		      mwr->ptr,
 		      ptr);
-	replay_assert(size == rh->size - sizeof(*rh) - sizeof(*mwr),
+	replay_assert_local(size == rh->size - sizeof(*rh) - sizeof(*mwr),
 		      "wanted a write size %d, got one size %d",
 		      rh->size - sizeof(*rh) - sizeof(*mwr),
 		      size);
@@ -906,7 +943,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 		    (size == 8 && *(unsigned long *)written_bytes == NONDETERMINISM_POISON))
 			safe = 1;
 	}
-	replay_assert(safe,
+	replay_assert_local(safe,
 		      "memory write divergence at address %p: wanted %lx but got %lx (size %d)",
 		      ptr,
 		      *(unsigned long *)(mwr + 1),
@@ -1100,7 +1137,8 @@ driver_loop(const Char *schedule)
 
 		/* That schedule didn't work.  Try another one. */
 		VG_(close)(fds[0]);
-		if (!advance_schedule_to_next_choice(schedule, 0))
+		if (!need_schedule_reset &&
+		    !advance_schedule_to_next_choice(schedule, 0))
 			VG_(tool_panic)((Char *)"Ran out of non-deterministic choices!");
 	}
 }
@@ -1116,11 +1154,11 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 	DEBUG(DBG_EVENTS, "client_request_event(%lx, %s)\n",
 	      arg_block[0], (char *)arg_block[1]);
 	cr = get_record_this_thread(&rh);
-	replay_assert(rh->cls == RECORD_client,
+	replay_assert_local(rh->cls == RECORD_client,
 		      "wanted a client request record, got class %d (%s)",
 		      rh->cls,
 		      (const char *)arg_block[1]);
-	replay_assert(cr->flavour == arg_block[0],
+	replay_assert_local(cr->flavour == arg_block[0],
 		      "wanted client request %x, got CR %x (%s)",
 		      cr->flavour,
 		      arg_block[0],
@@ -1208,7 +1246,7 @@ rdtsc_event(void)
 	reschedule_client(False, "rdtsc");
 
 	rr = get_record_this_thread(&rh);
-	replay_assert(rh->cls == RECORD_rdtsc,
+	replay_assert_local(rh->cls == RECORD_rdtsc,
 		      "wanted a rdtsc, got class %d",
 		      rh->cls);
 	res = rr->stashed_tsc;

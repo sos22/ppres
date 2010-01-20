@@ -23,3 +23,8 @@ Bool advance_schedule_to_next_choice(const Char *filename,
 void close_execution_schedule(struct execution_schedule *es);
 unsigned make_nd_choice(struct execution_schedule *es,
 			unsigned max_allowed);
+void exploration_take_snapshot(const Char *schedule);
+
+OffT get_schedule_size(struct execution_schedule *sched);
+void schedule_failed_before(struct execution_schedule *sched,
+			    OffT cookie);

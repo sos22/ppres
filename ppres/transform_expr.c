@@ -278,7 +278,6 @@ instrument_func(VgCallbackClosure *closure,
 		case Ist_NoOp:
 			break;
 		case Ist_IMark:
-#if SEARCH_USES_FOOTSTEPS || defined(included_for_record)
 			helper = unsafeIRDirty_0_N(
 				0,
 #ifdef included_for_replay
@@ -295,7 +294,6 @@ instrument_func(VgCallbackClosure *closure,
 
 			addStmtToIRSB(sb_out, out_stmt);
 			out_stmt = IRStmt_Dirty(helper);
-#endif
 			break;
 		case Ist_AbiHint:
 			break;
