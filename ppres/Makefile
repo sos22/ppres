@@ -34,4 +34,4 @@ ppres_audit.so: catch_pthread.o /usr/local/lib/libaudit.a
 	gcc -fPIC -nostdlib -shared -o ppres_audit.so /usr/local/lib/libaudit.a catch_pthread.o -Wl,-u -Wl,la_version
 
 catch_pthread.o: catch_pthread.c
-	gcc -I/usr/local/include -I../include -shared -c -fPIC catch_pthread.c -Wall
+	gcc -Wall -I/usr/local/include -I../include -shared -c -fPIC catch_pthread.c
