@@ -35,7 +35,7 @@ close_logfile(struct record_consumer *rc)
 	VG_(free)(rc->peek_chunk);
 }
 
-static void
+static Bool
 advance_chunk(struct record_consumer *rc)
 {
 	unsigned to_read;
@@ -54,10 +54,10 @@ advance_chunk(struct record_consumer *rc)
 			  to_read);
 	rc->avail_in_current_chunk += actually_read;
 	rc->offset_in_file += actually_read;
-	if (actually_read == 0) {
-		hit_end_of_log();
-		/* Don't get here */
-	}
+	if (actually_read == 0)
+		return False;
+	else
+		return True;
 }
 
 struct record_header *
@@ -66,14 +66,17 @@ get_current_record(struct record_consumer *rc)
 	struct record_header *res;
 
 	if (rc->offset_in_current_chunk + sizeof(struct record_header) >
-	    rc->avail_in_current_chunk)
-		advance_chunk(rc);
+	    rc->avail_in_current_chunk) {
+		if (!advance_chunk(rc))
+			return NULL;
+	}
 	tl_assert(rc->avail_in_current_chunk >=
 		  rc->offset_in_current_chunk + sizeof(struct record_header));
 	res = rc->current_chunk + rc->offset_in_current_chunk;
 	if (rc->offset_in_current_chunk + res->size >
 	    rc->avail_in_current_chunk) {
-		advance_chunk(rc);
+		if (!advance_chunk(rc))
+			return NULL;
 		res = rc->current_chunk + rc->offset_in_current_chunk;
 	}
 	tl_assert(rc->avail_in_current_chunk >=
