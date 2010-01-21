@@ -49,8 +49,9 @@
 #define DBG_MEM_EVENTS 0x4
 #define DBG_ND_CHOICE 0x8
 #define DBG_MEM_RACES 0x10
+#define DBG_FOOTSTEPS 0x20
 
-#define debug_level (DBG_SCHEDULE|DBG_ND_CHOICE|DBG_MEM_RACES)
+#define debug_level (DBG_SCHEDULE|DBG_ND_CHOICE)
 
 #define DEBUG(lvl, fmt, args...)                               \
 do {                                                           \
@@ -139,6 +140,7 @@ struct replay_thread {
 	struct replay_thread *parent;
 	Bool in_generated;
 	Bool blocked_by_log;
+	Bool in_monitor;
 	enum thread_run_state run_state;
 
 	OffT schedule_size_at_last_racing_load;
@@ -545,7 +547,7 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 	struct record_header *rh;
 #endif
 
-	DEBUG(DBG_EVENTS, "footstep_event(%lx, %lx, %lx, %lx)\n", rip, rdx, rcx, rax);
+	DEBUG(DBG_FOOTSTEPS, "footstep_event(%lx, %lx, %lx, %lx)\n", rip, rdx, rcx, rax);
 
 #if SEARCH_USES_FOOTSTEPS
 	reschedule_client(False, "footstep at %lx\n", rip);
@@ -855,14 +857,18 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 			    size,
 			    ptr);
 
-	racey = racetrack_address_races((Addr)ptr, size);
-	DEBUG(racey ? DBG_MEM_RACES : DBG_MEM_EVENTS,
-	      "load_event(%p, %x) race %d\n", ptr, size,
-	      racey);
-	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS || racey)
-		reschedule_client(False, "load %d from %p", size, ptr);
+	if (current_thread->in_monitor) {
+		racey = 0;
+	} else {
+		racey = racetrack_address_races((Addr)ptr, size);
+		DEBUG(racey ? DBG_MEM_RACES : DBG_MEM_EVENTS,
+		      "load_event(%p, %x) race %d\n", ptr, size,
+		      racey);
+		if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS || racey)
+			reschedule_client(False, "load %d from %p", size, ptr);
 
-	racetrack_read_region((Addr)ptr, size, current_thread->id);
+		racetrack_read_region((Addr)ptr, size, current_thread->id);
+	}
 
 #if SEARCH_USES_MEMORY
 	/* Need to grab the record before capturing memory, because
@@ -933,18 +939,23 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 			    ptr,
 			    *(unsigned long *)ptr);
 
-	racey = racetrack_address_races((Addr)ptr, size);
-	DEBUG(racey ? DBG_MEM_RACES : DBG_MEM_EVENTS,
-	      "store_event(%p, %x, %lx) (%lx) race %d\n", ptr, size,
-	      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
-	      *(unsigned long *)written_bytes,
-	      racey);
+	if (current_thread->in_monitor) {
+		racey = 0;
+	} else {
+		racey = racetrack_address_races((Addr)ptr, size);
+		DEBUG(racey ? DBG_MEM_RACES : DBG_MEM_EVENTS,
+		      "store_event(%p, %x, %lx) (%lx) race %d\n", ptr, size,
+		      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
+		      *(unsigned long *)written_bytes,
+		      racey);
 
-	if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS || racey)
-		reschedule_client(False, "store %d to %p (%lx -> %lx)", size, ptr,
-				  *(unsigned long *)ptr,
-				  *(unsigned long *)written_bytes);
-	racetrack_write_region((Addr)ptr, size, current_thread->id);
+		if (RESCHEDULE_ON_EVERY_MEMORY_ACCESS || racey)
+			reschedule_client(False, "store %d to %p (%lx -> %lx)", size, ptr,
+					  *(unsigned long *)ptr,
+					  *(unsigned long *)written_bytes);
+		racetrack_write_region((Addr)ptr, size, current_thread->id);
+	}
+
 	if (access_is_magic(ptr, size))
 		VG_(printf)("Thread %d doing store %d (%lx) to %p (%lx)\n",
 			    current_thread->id,
@@ -1026,11 +1037,18 @@ exploration_take_snapshot(const Char *schedule)
 	unsigned code;
 	Bool need_reset;
 	int fds[2];
+	int r;
 
 	need_reset = False;
 	while (1) {
-		VG_(pipe)(fds);
+		r = VG_(pipe)(fds);
+		if (r < 0) {
+			VG_(printf)("r is %d\n", r);
+			VG_(tool_panic)((Char *)"pipe failed");
+		}
 		child = my_fork();
+		if (child < 0)
+			VG_(tool_panic)((Char *)"fork failed");
 		if (child == 0) {
 			/* Go and do some work. */
 			VG_(close)(fds[0]);
@@ -1046,8 +1064,13 @@ exploration_take_snapshot(const Char *schedule)
 		do {
 			if (VG_(read)(fds[0], &code, sizeof(code)) !=
 			    sizeof(code)) {
-				VG_(printf)("Child exitted unexpectedly.\n");
-				my__exit(1);
+				Int status;
+				r = VG_(waitpid)(child, &status, 0);
+				VG_(printf)("waitpid for child -> %d\n", r);
+				VG_(printf)("exited %d (code %d), signaled %d (signal %d)\n",
+					    WIFEXITED(status), WEXITSTATUS(status),
+					    WIFSIGNALED(status), WTERMSIG(status));
+				VG_(tool_panic)((Char *)"Child exitted unexpectedly.\n");
 			}
 
 			switch (code) {
@@ -1119,6 +1142,8 @@ driver_loop(const Char *schedule)
 
 		VG_(pipe)(fds);
 		child = my_fork();
+		if (child < 0)
+			VG_(tool_panic)((Char *)"fork failed");
 		if (child == 0) {
 			/* We're the child process, and so we need to
 			   go and do the exploration. */
@@ -1131,10 +1156,8 @@ driver_loop(const Char *schedule)
 		/* We're the parent.  See how far that child gets. */
 		do {
 			if (VG_(read)(fds[0], &code, sizeof(code)) !=
-			    sizeof(code)) {
-				VG_(printf)("Child exitted unexpectedly.\n");
-				my__exit(1);
-			}
+			    sizeof(code))
+				VG_(tool_panic)((Char *)"Child exitted unexpectedly.\n");
 
 			switch (code) {
 			case  SEARCH_CODE_REPLAY_SUCCESS:
@@ -1184,23 +1207,36 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 	struct record_header *rh;
 	struct client_req_record *cr;
 
-	if (!VG_IS_TOOL_USERREQ('P', 'P', arg_block[0]))
+	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
+		DEBUG(DBG_EVENTS, "client_request_event(%lx, %s)\n",
+		      arg_block[0], (char *)arg_block[1]);
+		cr = get_record_this_thread(&rh);
+		replay_assert_local(rh->cls == RECORD_client,
+				    "wanted a client request record, got class %d (%s)",
+				    rh->cls,
+				    (const char *)arg_block[1]);
+		replay_assert_local(cr->flavour == arg_block[0],
+				    "wanted client request %x, got CR %x (%s)",
+				    cr->flavour,
+				    arg_block[0],
+				    (const char *)arg_block[1]);
+		finish_this_record(&logfile);
+		*ret = 0;
+		return True;
+	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
+		if ((arg_block[0] & 0xffff) == 0) {
+			tl_assert(!current_thread->in_monitor);
+			current_thread->in_monitor = True;
+		} else {
+			tl_assert(current_thread->in_monitor);
+			current_thread->in_monitor = False;
+		}
+		*ret = 0;
+		return True;
+	} else {
+		VG_(printf)("Unknown userreq %lx\n", arg_block[0]);
 		return False;
-	DEBUG(DBG_EVENTS, "client_request_event(%lx, %s)\n",
-	      arg_block[0], (char *)arg_block[1]);
-	cr = get_record_this_thread(&rh);
-	replay_assert_local(rh->cls == RECORD_client,
-		      "wanted a client request record, got class %d (%s)",
-		      rh->cls,
-		      (const char *)arg_block[1]);
-	replay_assert_local(cr->flavour == arg_block[0],
-		      "wanted client request %x, got CR %x (%s)",
-		      cr->flavour,
-		      arg_block[0],
-		      (const char *)arg_block[1]);
-	finish_this_record(&logfile);
-	*ret = 0;
-	return True;
+	}
 }
 
 static void

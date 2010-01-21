@@ -439,12 +439,17 @@ handle_client_request(ThreadId tid, UWord *arg_block, UWord *ret)
 {
 	struct client_req_record *crr;
 
-	if (!VG_IS_TOOL_USERREQ('P', 'P', arg_block[0]))
+	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
+		crr = emit_record(&logfile, RECORD_client, sizeof(*crr));
+		crr->flavour = arg_block[0];
+		*ret = 0;
+		return True;
+	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
+		*ret = 0;
+		return True;
+	} else {
 		return False;
-	crr = emit_record(&logfile, RECORD_client, sizeof(*crr));
-	crr->flavour = arg_block[0];
-	*ret = 0;
-	return True;
+	}
 }
 
 static void
