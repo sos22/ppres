@@ -700,6 +700,7 @@ syscall_event(VexGuestAMD64State *state)
 	case __NR_getrlimit:
 	case __NR_clock_gettime:
 	case __NR_lseek:
+	case __NR_getuid:
 
 	case __NR_write: /* Should maybe do something special with
 			    these so that we see stuff on stdout? */

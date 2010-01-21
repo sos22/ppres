@@ -290,6 +290,7 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_rt_sigprocmask:
 	case __NR_lseek:
 	case __NR_exit:
+	case __NR_getuid:
 		break;
 
 	case __NR_nanosleep: {
