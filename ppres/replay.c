@@ -43,6 +43,7 @@
 #include "schedule.h"
 #include "races.h"
 #include "list.h"
+#include "ppres_client.h"
 
 #define DBG_SCHEDULE 0x1
 #define DBG_EVENTS 0x2
@@ -141,6 +142,9 @@ struct replay_thread {
 	Bool in_generated;
 	Bool blocked_by_log;
 	Bool in_monitor;
+
+	int atomic_level;
+
 	enum thread_run_state run_state;
 
 	OffT schedule_size_at_last_racing_load;
@@ -858,7 +862,7 @@ load_event(const void *ptr, unsigned size, void *read_contents)
 			    size,
 			    ptr);
 
-	if (current_thread->in_monitor) {
+	if (current_thread->in_monitor || current_thread->atomic_level) {
 		racey = 0;
 	} else {
 		racey = racetrack_address_races((Addr)ptr, size);
@@ -940,7 +944,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 			    ptr,
 			    *(unsigned long *)ptr);
 
-	if (current_thread->in_monitor) {
+	if (current_thread->in_monitor || current_thread->atomic_level) {
 		racey = 0;
 	} else {
 		racey = racetrack_address_races((Addr)ptr, size);
@@ -1211,6 +1215,18 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
 		DEBUG(DBG_EVENTS, "client_request_event(%lx, %s)\n",
 		      arg_block[0], (char *)arg_block[1]);
+		if (arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY) {
+			reschedule_client(False, "call(%s)",
+					  (char *)arg_block[1]);
+			if (VG_(strcmp)((char *)arg_block[1], "pthread_create"))
+				current_thread->atomic_level++;
+		} else {
+			tl_assert(arg_block[0] == VG_USERREQ_PPRES_CALLED_LIBRARY);
+			if (VG_(strcmp)((Char *)arg_block[1], "pthread_create") &&
+			    VG_(strcmp)((Char *)arg_block[1], "pthread_create_child"))
+				current_thread->atomic_level--;
+			tl_assert(current_thread->atomic_level >= 0);
+		}
 		cr = get_record_this_thread(&rh);
 		replay_assert_local(rh->cls == RECORD_client,
 				    "wanted a client request record, got class %d (%s)",
