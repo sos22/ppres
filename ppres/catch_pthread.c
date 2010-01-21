@@ -62,6 +62,9 @@ pre_func_audit(const char *name, unsigned long *args, unsigned long *res,
 		if (r != 0)
 			free(trampoline);
 		*res = r;
+		VALGRIND_DO_CLIENT_REQUEST(rv, 0,
+					   VG_USERREQ_PPRES_CALLED_LIBRARY,
+					   "pthread_create", 0, 0, 0, 0);
 		return 1;
 	} else {
 		return 0;
