@@ -14,7 +14,7 @@
 #define SCHEDULE_WINDOW_SIZE 16384
 
 #define SANITY_CHECK_SCHEDULE 0
-#define SNAPSHOT_FREQUENCY 100000
+#define SNAPSHOT_FREQUENCY 10
 
 /* A schedule is just a list of schedule entries.  Each schedule entry
    represents the result of a non-deterministic choice, and is a pair

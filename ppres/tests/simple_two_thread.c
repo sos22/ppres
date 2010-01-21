@@ -3,6 +3,7 @@
 static void
 thread(void)
 {
+  getuid();
 }
 
 int

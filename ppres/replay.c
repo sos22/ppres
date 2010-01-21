@@ -52,7 +52,7 @@
 #define DBG_MEM_RACES 0x10
 #define DBG_FOOTSTEPS 0x20
 
-#define debug_level (DBG_SCHEDULE|DBG_ND_CHOICE)
+#define debug_level (DBG_SCHEDULE|DBG_ND_CHOICE|DBG_EVENTS)
 
 #define DEBUG(lvl, fmt, args...)                               \
 do {                                                           \
@@ -309,7 +309,7 @@ replay_run_finished(unsigned code)
 }
 
 static struct replay_thread *
-select_new_thread(void)
+select_new_thread(const char *msg)
 {
 	struct replay_thread *rt;
 	unsigned other_threads;
@@ -338,8 +338,8 @@ select_new_thread(void)
 				       other_threads);
 	if (other_threads != 0) {
 		DEBUG(DBG_ND_CHOICE,
-		      "nd choice between %d threads -> %d.\n",
-		      other_threads + 1, thread_to_run);
+		      "nd choice between %d threads -> %d (%s).\n",
+		      other_threads + 1, thread_to_run, msg);
 	}
 	tl_assert(thread_to_run <= other_threads);
 	if (thread_to_run == 0 && thread_runnable(current_thread))
@@ -372,7 +372,7 @@ reschedule_client(Bool loud, const char *msg, ...)
 	struct replay_thread *rt;
 	va_list args;
 
-	rt = select_new_thread();
+	rt = select_new_thread(msg);
 	va_start(args, msg);
 	if (rt == current_thread) {
 		if (loud) {
@@ -480,6 +480,7 @@ retry:
 		return rh + 1;
 	}
 
+#if 0
 	/* The execution has gone wrong, so we should stop adding more
 	   records to the recorded schedule, but it can't be
 	   attributed to any particular thread. */
@@ -487,6 +488,7 @@ retry:
 		VG_(printf)("Replay failed after %ld bytes\n",
 			    logfile.offset_in_file);
 	execution_schedule.failed = True;
+#endif
 
 	current_thread->run_state = trs_replay_blocked;
 	reschedule_client(True, "waiting for log to catch up (current record tid %d, class %d)",
@@ -1215,9 +1217,9 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
 		DEBUG(DBG_EVENTS, "client_request_event(%lx, %s)\n",
 		      arg_block[0], (char *)arg_block[1]);
+		reschedule_client(False, "call(%s)",
+				  (char *)arg_block[1]);
 		if (arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY) {
-			reschedule_client(False, "call(%s)",
-					  (char *)arg_block[1]);
 			if (VG_(strcmp)((char *)arg_block[1], "pthread_create"))
 				current_thread->atomic_level++;
 		} else {
