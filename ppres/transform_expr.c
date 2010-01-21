@@ -106,6 +106,8 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 			VG_(tool_panic)((signed char *)"Bad type 1");;
 		case Ity_I1:
 			VG_(tool_panic)((signed char *)"Bad type 2");
+		default:
+			VG_(tool_panic)((signed char *)"Bad type 3");
 		case Ity_I8:
 			HLP(8);
 			break;
