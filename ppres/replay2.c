@@ -914,6 +914,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_SNAPSHOT:
 		control_process_socket = do_snapshot(control_process_socket);
+		logfile_reset_file_ptr(logfile);
 		break;
 	case WORKER_TRACE_THREAD:
 		do_trace_thread_command(cmd->u.trace_thread.thread);

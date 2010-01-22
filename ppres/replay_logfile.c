@@ -145,3 +145,10 @@ peek_record(struct record_consumer *rc, OffT ptr, struct record_header *rh)
 	else
 		return False;
 }
+
+void
+logfile_reset_file_ptr(struct record_consumer *lf)
+{
+	VG_(lseek)(lf->fd, lf->offset_in_file, VKI_SEEK_SET);
+}
+

@@ -19,3 +19,5 @@ void hit_end_of_log(void);
 
 OffT logfile_tell(struct record_consumer *rc);
 Bool peek_record(struct record_consumer *rc, OffT ptr, struct record_header *rh);
+
+void logfile_reset_file_ptr(struct record_consumer *lf);
