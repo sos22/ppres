@@ -364,8 +364,11 @@ void VG_(vg_yield)(void)
 {
    ThreadId tid = VG_(running_tid);
 
+   if (VG_(tool_handles_synchronisation))
+      return;
+
    vg_assert(tid != VG_INVALID_THREADID);
-   //vg_assert(VG_(threads)[tid].os_state.lwpid == VG_(gettid)());
+   vg_assert(VG_(threads)[tid].os_state.lwpid == VG_(gettid)());
 
    VG_(release_BigLock)(tid, VgTs_Yielding, "VG_(vg_yield)");
 
