@@ -377,9 +377,9 @@ load_event(const void *ptr, unsigned size, void *read_bytes)
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
 		_TRACE("Load %lx(%d) from %p%s",
-		      size == 8 ?
-		      *(unsigned long *)read_bytes :
-		      *(unsigned long *)read_bytes & ((1 << (size * 8)) - 1),
+		       size == 8 ?
+		       *(unsigned long *)read_bytes :
+		       *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
 		       size, ptr,
 		       current_thread->in_monitor ? " (monitor)" : "");
 	if (!current_thread->in_monitor) {
@@ -399,7 +399,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 		_TRACE("Store %lx(%d) to %p%s",
 		       size == 8 ?
 		       *(unsigned long *)written_bytes :
-		       *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
+		       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
 		       size, ptr,
 		       current_thread->in_monitor ? " (monitor)" : "");
 	if (!current_thread->in_monitor) {
