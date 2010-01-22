@@ -1021,7 +1021,6 @@ init(void)
 	VG_(printf)("Running replay machine.\n");
 	run_coroutine(&head_thread->coroutine, &replay_machine,
 		      "start of day");
-	VG_(printf)("Replay machine starts the world.\n");
 
 	VG_(running_tid) = VG_INVALID_THREADID;
 }

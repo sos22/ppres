@@ -396,7 +396,6 @@ send_fd(int parent_fd, int child_fd)
 	cmsg.hdr.cmsg_type = SCM_RIGHTS;
 	cmsg.fd = child_fd;
 	r = sendmsg(parent_fd, &mh, 0);
-	VG_(printf)("sendmsg fd %d said %d\n", child_fd, r);
 	if (r < 0)
 		VG_(tool_panic)((Char *)"sending file descriptor");
 }
