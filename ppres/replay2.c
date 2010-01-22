@@ -22,6 +22,9 @@
 #include "coroutines.h"
 #include "replay.h"
 
+/* What kinds of records are we allowed to use? */
+#define USE_FOOTSTEP_RECORDS 0
+
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
 extern Bool VG_(tool_handles_synchronisation);
@@ -197,7 +200,9 @@ do {                                                              \
 static void
 footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 {
+#if USE_FOOTSTEP_RECORDS
 	event(EVENT_footstep, rip, rdx, rcx, rax);
+#endif
 }
 
 static void
@@ -609,7 +614,9 @@ replay_machine_fn(void)
 			break;
 		if (rec->cls == RECORD_new_thread ||
 		    rec->cls == RECORD_thread_blocking ||
-		    rec->cls == RECORD_thread_unblocked) {
+		    rec->cls == RECORD_thread_unblocked ||
+		    (!USE_FOOTSTEP_RECORDS &&
+		     rec->cls == RECORD_footstep)) {
 			finish_this_record(&logfile);
 			continue;
 		}
