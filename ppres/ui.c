@@ -509,6 +509,8 @@ run_command(const struct command *cmd)
 	case COMMAND_exit:
 		while (root_snapshot)
 			kill_snapshot(root_snapshot);
+		if (current_worker)
+			kill_worker(current_worker);
 		my__exit(0);
 	case COMMAND_whereami:
 		if (!current_worker) {
