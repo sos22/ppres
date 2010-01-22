@@ -819,6 +819,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 {
 	struct client_event_record cer;
 
+	trace_mode = True;
 	access_nr = 0;
 	while (access_nr < nr_accesses) {
 		run_thread(thr, &cer);
@@ -832,6 +833,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 			replay_failed();
 		}
 	}
+	trace_mode = False;
 }
 
 static void
