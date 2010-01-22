@@ -93,6 +93,9 @@ struct control_command {
 			long thread;
 			long nr;
 		} runm;
+		struct {
+			long thread;
+		} trace_thread;
 	} u;
 };
 
@@ -421,6 +424,10 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.trace.nr, 8);
 		break;
+	case WORKER_TRACE_THREAD:
+		tl_assert(ch.nr_args == 1);
+		safeish_read(control_process_socket, &cmd->u.trace_thread.thread, 8);
+		break;
 	case WORKER_RUNM:
 		tl_assert(ch.nr_args == 2);
 		safeish_read(control_process_socket, &cmd->u.runm.thread, 8);
@@ -433,6 +440,28 @@ get_control_command(struct control_command *cmd)
 }
 
 static void
+do_trace_thread_command(long thread)
+{
+	struct replay_thread *rt;
+	struct client_event_record cer;
+
+	rt = get_thread_by_id(thread);
+	if (!rt) {
+		VG_(printf)("Couldn't find thread %ld\n", thread);
+		send_response(1);
+		return;
+	}
+	trace_mode = True;
+	do {
+		run_thread(rt, &cer);
+	} while (cer.type == EVENT_footstep ||
+		 cer.type == EVENT_load ||
+		 cer.type == EVENT_store);
+	trace_mode = False;
+	send_response(0);
+}
+
+static void
 replay_failed(void)
 {
 	struct control_command cmd;
@@ -440,13 +469,18 @@ replay_failed(void)
 	send_response(1);
 	while (1) {
 		get_control_command(&cmd);
-		if (cmd.cmd != WORKER_KILL) {
-			VG_(printf)("Only the kill command is valid after replay fails\n");
+		switch (cmd.cmd) {
+		case WORKER_KILL:
+			send_response(0);
+			my__exit(0);
+		case WORKER_TRACE_THREAD:
+			do_trace_thread_command(cmd.u.trace_thread.thread);
+			break;
+		default:
+			VG_(printf)("Only the kill and trace thread commands are valid after replay fails\n");
 			send_response(1);
-			continue;
+			break;
 		}
-		send_response(0);
-		my__exit(0);
 	}
 }
 
@@ -876,6 +910,9 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_SNAPSHOT:
 		control_process_socket = do_snapshot(control_process_socket);
+		break;
+	case WORKER_TRACE_THREAD:
+		do_trace_thread_command(cmd->u.trace_thread.thread);
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");

@@ -27,6 +27,7 @@ struct command {
 		COMMAND_activate_snapshot,
 		COMMAND_run,
 		COMMAND_trace,
+		COMMAND_trace_thread,
 		COMMAND_runm
 	} cmd;
 	union {
@@ -44,6 +45,9 @@ struct command {
 		} trace;
 		struct {
 			long thread;
+		} trace_thread;
+		struct {
+			long thread;
 			long nr;
 		} runm;
 	} u;
@@ -52,7 +56,8 @@ struct command {
 struct history_entry {
 	enum {
 		HISTORY_run = 0xdead,
-		HISTORY_runm
+		HISTORY_runm,
+		HISTORY_run_thread
 	} type;
 	union {
 		struct {
@@ -62,6 +67,9 @@ struct history_entry {
 			long thread;
 			long count;
 		} runm;
+		struct {
+			long thread;
+		} run_thread;
 	} u;
 };
 
@@ -117,6 +125,9 @@ static Bool
 my_strtol(long *out, const char *buf)
 {
 	long r;
+
+	if (*buf == 0)
+		return False;
 
 	r = 0;
 	*out = 0;
@@ -209,6 +220,12 @@ retry:
 			cmd->u.trace.nr = -1;
 		} else if (!my_strtol(&cmd->u.trace.nr, args)) {
 			VG_(printf)("trace commands needs, at most, a record count\n");
+			goto retry;
+		}
+	} else if (!strcmp(verb, "tracet")) {
+		cmd->cmd = COMMAND_trace_thread;
+		if (!my_strtol(&cmd->u.trace_thread.thread, args)) {
+			VG_(printf)("Need to know which thread to trace\n");
 			goto retry;
 		}
 	} else if (!strcmp(verb, "runm")) {
@@ -376,6 +393,10 @@ dump_history(const struct history *h)
 				    h->entries[x].u.runm.thread,
 				    h->entries[x].u.runm.count);
 			break;
+		case HISTORY_run_thread:
+			VG_(printf)("\tRUN THREAD %ld\n",
+				    h->entries[x].u.run_thread.thread);
+			break;
 		default:
 			VG_(tool_panic)((Char *)"history corrupted");
 		}
@@ -489,6 +510,16 @@ trace_worker(struct worker *worker, long nr_steps)
 }
 
 static void
+trace_thread_worker(struct worker *worker, long thread)
+{
+	if (send_command(worker, WORKER_TRACE_THREAD, thread))
+		VG_(printf)("Can't trace thread %ld\n", thread);
+	history_append(&worker->history,
+		       ((struct history_entry){.type = HISTORY_run_thread,
+				       .u = { .run_thread = { .thread = thread}}}));
+}
+
+static void
 run_m_worker(struct worker *worker, long thread, long nr_steps)
 {
 	if (send_command(worker, WORKER_RUNM, thread, nr_steps))
@@ -570,6 +601,13 @@ run_command(const struct command *cmd)
 		} else {
 			run_m_worker(current_worker, cmd->u.runm.nr,
 				     cmd->u.runm.thread);
+		}
+		break;
+	case COMMAND_trace_thread:
+		if (!current_worker) {
+			VG_(printf)("No current worker.\n");
+		} else {
+			trace_thread_worker(current_worker, cmd->u.trace_thread.thread);
 		}
 		break;
 	}

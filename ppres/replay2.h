@@ -16,6 +16,7 @@ size_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
 #define WORKER_RUN 0x1236
 #define WORKER_TRACE 0x1237
 #define WORKER_RUNM 0x1238
+#define WORKER_TRACE_THREAD 0x1239
 
 struct command_header {
 	unsigned command;
