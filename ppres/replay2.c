@@ -26,8 +26,8 @@
 #include "replay2.h"
 
 /* What kinds of records are we allowed to use? */
-#define USE_FOOTSTEP_RECORDS 1
-#define USE_MEMORY_RECORDS 1
+#define USE_FOOTSTEP_RECORDS 0
+#define USE_MEMORY_RECORDS 0
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
