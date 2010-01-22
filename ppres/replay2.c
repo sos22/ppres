@@ -20,6 +20,7 @@
 #include "valgrind.h"
 
 #include "ppres.h"
+#include "ppres_client.h"
 #include "coroutines.h"
 #include "replay.h"
 #include "replay2.h"
@@ -314,9 +315,19 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 #endif
 }
 
+#define TRACE(fmt, args...)                              \
+do {                                                     \
+	if (trace_mode)                                  \
+		VG_(printf)("%d:%d: " fmt "\n",          \
+			    record_nr,                   \
+			    current_thread->id,          \
+			    ## args);                    \
+} while (0)
+
 static void
 syscall_event(VexGuestAMD64State *state)
 {
+	TRACE("syscall(%lld)", state->guest_RAX);
 	event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 	      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 }
@@ -324,6 +335,7 @@ syscall_event(VexGuestAMD64State *state)
 static ULong
 rdtsc_event(void)
 {
+	TRACE("rdtsc");
 	event(EVENT_rdtsc);
 	return current_thread->rdtsc_result;
 }
@@ -331,9 +343,7 @@ rdtsc_event(void)
 static void
 load_event(const void *ptr, unsigned size, void *read_bytes)
 {
-	if (trace_mode)
-		VG_(printf)("%d:%d: Load %d from %p\n", record_nr,
-			    current_thread->id, size, ptr);
+	TRACE("Load %d from %p", size, ptr);
 	VG_(memcpy)(read_bytes, ptr, size);
 	access_nr++;
 	event(EVENT_load, (unsigned long)ptr, size,
@@ -343,9 +353,7 @@ load_event(const void *ptr, unsigned size, void *read_bytes)
 static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
-	if (trace_mode)
-		VG_(printf)("%d:%d: Store %d to %p\n", record_nr,
-			    current_thread->id, size, ptr);
+	TRACE("Store %d to %p", size, ptr);
 	VG_(memcpy)(ptr, written_bytes, size);
 	access_nr++;
 	event(EVENT_store, (unsigned long)ptr, size,
@@ -359,6 +367,10 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		/* We are in generated code here, despite what
 		   Valgrind might think about it. */
 		VG_(in_generated_code) = True;
+		TRACE("%s %s",
+		      arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY ?
+		      "call" : "called",
+		      (char *)arg_block[1]);
 		event(EVENT_client_request, arg_block[0], arg_block[1]);
 		VG_(in_generated_code) = False;
 		*ret = 0;
