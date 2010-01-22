@@ -12,6 +12,7 @@
 #include "pub_tool_signals.h"
 #include "pub_tool_machine.h"
 #include "pub_tool_mallocfree.h"
+#include "pub_tool_threadstate.h"
 #include "libvex_guest_amd64.h"
 #include "libvex_guest_offsets.h"
 #include "libvex_trc_values.h"
@@ -25,7 +26,14 @@ extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
 extern Bool VG_(tool_handles_synchronisation);
 extern ULong (*tool_provided_rdtsc)(void);
-
+extern void (*VG_(tool_provided_thread_starting))(void);
+extern Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
+					   void *stack,
+					   Long flags,
+					   void *arg,
+					   Long *child_tid,
+					   Long *parent_tid,
+					   vki_modify_ldt_t *);
 extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
@@ -42,6 +50,7 @@ struct client_event_record {
 	       EVENT_rdtsc,
 	       EVENT_load,
 	       EVENT_store,
+	       EVENT_client_request,
 	       EVENT_resched_candidate } type;
 	unsigned nr_args;
 
@@ -61,6 +70,7 @@ struct replay_thread {
 	ULong rdtsc_result;
 
 	Bool failed;
+	Bool dead;
 };
 
 static struct client_event_record *
@@ -138,10 +148,13 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer)
 	tl_assert(!VG_(in_generated_code));
 	tl_assert(client_event == NULL);
 	tl_assert(current_thread == NULL);
+	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
+	tl_assert(!rt->dead);
 
 	cer->type = EVENT_nothing;
 	current_thread = rt;
 	client_event = cer;
+	VG_(running_tid) = rt->id;
 
 	run_coroutine(&replay_machine,
 		      &rt->coroutine,
@@ -151,6 +164,7 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer)
 	tl_assert(rt == current_thread);
 	client_event = NULL;
 	current_thread = NULL;
+	VG_(running_tid) = VG_INVALID_THREADID;
 
 	tl_assert(cer->type != EVENT_nothing);
 	tl_assert(!VG_(in_generated_code));
@@ -214,6 +228,25 @@ store_event(void *ptr, unsigned size, const void *written_bytes)
 	event(EVENT_store, (unsigned long)ptr, size,
 	      (unsigned long)written_bytes);
 	VG_(memcpy)(ptr, written_bytes, size);
+}
+
+static Bool
+client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
+{
+	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
+		/* We are in generated code here, despite what
+		   Valgrind might think about it. */
+		VG_(in_generated_code) = True;
+		event(EVENT_client_request, arg_block[0], arg_block[1]);
+		VG_(in_generated_code) = False;
+		*ret = 0;
+		return True;
+	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
+		*ret = 0;
+		return True;
+	} else {
+		return False;
+	}
 }
 
 #define included_for_replay
@@ -340,6 +373,12 @@ validate_event(const struct record_header *rec,
 		}
 		return;
 	}
+	case EVENT_client_request: {
+		const struct client_req_record *crr = payload;
+		replay_assert_eq(rec->cls, RECORD_client);
+		replay_assert_eq(args[0], crr->flavour);
+		return;
+	}
 	case EVENT_resched_candidate:
 		/* Should have been handled by caller. */
 		VG_(tool_panic)((Char *)"resched candidate in bad place");
@@ -408,6 +447,7 @@ process_memory_records(struct record_consumer *logfile)
 /* This finishes the current record */
 static void
 replay_syscall(const struct syscall_record *sr,
+	       struct replay_thread *rt,
 	       struct client_event_record *event,
 	       struct record_consumer *logfile)
 {
@@ -420,11 +460,22 @@ replay_syscall(const struct syscall_record *sr,
 	case __NR_close:
 	case __NR_fstat:
 	case __NR_getcwd:
+	case __NR_getuid:
 	case __NR_open:
 	case __NR_read:
 	case __NR_stat:
 	case __NR_uname:
+	case __NR_getrlimit:
+
+	case __NR_futex: /* XXX not even slightly right */
+
 		state->guest_RAX = sysres_to_eax(sr->syscall_res);
+		finish_this_record(logfile);
+		break;
+
+	case __NR_exit:
+		VG_(printf)("Thread %d exits.\n", rt->id);
+		rt->dead = True;
 		finish_this_record(logfile);
 		break;
 
@@ -434,9 +485,18 @@ replay_syscall(const struct syscall_record *sr,
 	case __NR_brk:
 	case __NR_mprotect:
 	case __NR_munmap:
-		VG_(client_syscall)(VG_(running_tid),
-				    VEX_TRC_JMP_SYS_SYSCALL);
+	case __NR_rt_sigaction:
+	case __NR_rt_sigprocmask:
+	case __NR_set_robust_list:
+		VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
 		tl_assert(sysres_to_eax(sr->syscall_res) == state->guest_RAX);
+		finish_this_record(logfile);
+		break;
+
+	case __NR_set_tid_address:
+		if (!sr_isError(sr->syscall_res))
+			VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
+		state->guest_RAX = sysres_to_eax(sr->syscall_res);;
 		finish_this_record(logfile);
 		break;
 
@@ -472,6 +532,30 @@ replay_syscall(const struct syscall_record *sr,
 		break;
 	}
 
+	case __NR_clone:
+		/* Because of the way we turn syscall exits into calls
+		   to syscall_event(), the rip points to the start of
+		   the syscall instruction rather than the end.
+		   That's fine in the parent thread, because we'll
+		   finish the IRSB and advance it immediately, but
+		   it's no good in the child, which will immediately
+		   issue another clone system call and set off a fork
+		   bomb.  Fix it up by just manually bumping RIP. */
+		state->guest_RIP += 2;
+
+		/* Try to issue the syscall.  This gets caught in
+		   replay_clone_syscall() and turned into a coroutine
+		   create. */
+		if (!sr_isError(sr->syscall_res)) {
+			VG_(printf)("Spawning a new thread.\n");
+			VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
+			VG_(printf)("Done spawn.\n");
+		}
+
+		state->guest_RAX = sysres_to_eax(sr->syscall_res);
+		finish_this_record(logfile);
+		break;
+
 	default:
 		VG_(printf)("Don't yet support syscall %lld\n",
 			    state->guest_RAX);
@@ -496,7 +580,7 @@ replay_record(const struct record_header *rec, struct replay_thread *thr,
 	}
 	case RECORD_syscall: {
 		const struct syscall_record *sr = payload;
-		replay_syscall(sr, event, logfile);
+		replay_syscall(sr, thr, event, logfile);
 		break;
 	}
 	default:
@@ -523,9 +607,12 @@ replay_machine_fn(void)
 		rec = get_current_record(&logfile);
 		if (!rec)
 			break;
+		if (rec->cls == RECORD_new_thread) {
+			finish_this_record(&logfile);
+			continue;
+		}
 
 		tl_assert(rec->cls != RECORD_memory);
-		ASSUME(rec->cls != RECORD_client);
 
 		thr = get_thread_by_id(rec->tid);
 		tl_assert(thr != NULL);
@@ -557,6 +644,87 @@ init(void)
 	run_coroutine(&head_thread->coroutine, &replay_machine,
 		      "start of day");
 	VG_(printf)("Replay machine starts the world.\n");
+
+	VG_(running_tid) = VG_INVALID_THREADID;
+}
+
+
+/* Thread creation machinery. */
+static Bool
+creating_new_thread;
+static struct coroutine
+creating_thread_coroutine;
+static struct replay_thread *
+newly_spawning_thread;
+
+static void
+new_thread_starting(void)
+{
+	VG_(printf)("In new thread\n");
+	if (!creating_new_thread) {
+		VG_(printf)("Main thread\n");
+		return;
+	}
+
+	newly_spawning_thread->id = VG_(running_tid);
+	newly_spawning_thread->next = head_thread;
+	head_thread = newly_spawning_thread;
+
+	VG_(printf)("New thread is id %d, switching back to parent.\n",
+		    VG_(running_tid));
+	run_coroutine(&newly_spawning_thread->coroutine,
+		      &creating_thread_coroutine,
+		      "new_thread_starting");
+	VG_(printf)("New thread starts for real in %d\n", VG_(running_tid));
+}
+
+/* We tweak Valgrind to call this rather than the normal sys_clone()
+   system call when it wants to create threads.  That allows us to
+   take control over scheduling and so forth. */
+static Long
+replay_clone_syscall(Word (*fn)(void *),
+		     void *stack,
+		     Long flags,
+		     void *arg,
+		     Long *child_tid,
+		     Long *parent_tid,
+		     vki_modify_ldt_t *modify_ldt)
+{
+	VG_(printf)("Clone syscall\n");
+
+	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
+	tl_assert(!creating_new_thread);
+	creating_new_thread = True;
+
+	initialise_coroutine(&creating_thread_coroutine, "creating thread coroutine");
+
+	VG_(printf)("Current thread %p, id %d\n", current_thread,
+		    VG_(running_tid));
+
+	newly_spawning_thread = VG_(malloc)("child thread",
+					    sizeof(struct replay_thread));
+	VG_(memset)(newly_spawning_thread, 0, sizeof(struct replay_thread));
+	make_coroutine(&newly_spawning_thread->coroutine,
+		       "child client thread",
+		       stack,
+		       0,
+		       fn,
+		       1,
+		       arg);
+
+	/* Get it going. */
+	run_coroutine(&creating_thread_coroutine,
+		      &newly_spawning_thread->coroutine,
+		      "create new thread");
+
+	VG_(running_tid) = VG_INVALID_THREADID;
+
+	VG_(printf)("New thread spawned, my id now %d\n",
+		    VG_(running_tid));
+	tl_assert(creating_new_thread);
+	creating_new_thread = False;
+
+	return 0xaabbccdd;
 }
 
 static void
@@ -578,6 +746,9 @@ pre_clo_init(void)
 
 	VG_(tool_handles_synchronisation) = True;
 	tool_provided_rdtsc = rdtsc_event;
+	VG_(tool_provided_thread_starting) = new_thread_starting;
+	tool_provided_clone_syscall =
+		replay_clone_syscall;
 
 	VG_(details_name)((signed char *)"ppres_rep");
 	VG_(details_version)((signed char *)"0.0");
@@ -585,6 +756,7 @@ pre_clo_init(void)
 	VG_(details_bug_reports_to)((signed char *)"sos22@cam.ac.uk");
 	VG_(details_description)((signed char *)"Replayer for PPRES");
 	VG_(basic_tool_funcs)(init, instrument_func, fini);
+	VG_(needs_client_requests)(client_request_event);
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)

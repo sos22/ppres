@@ -1266,7 +1266,6 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
 
    vg_assert(VG_(is_valid_tid)(tid));
    vg_assert(tid >= 1 && tid < VG_N_THREADS);
-   vg_assert(VG_(is_running_thread)(tid));
 
    tst = VG_(get_ThreadState)(tid);
 
@@ -1608,8 +1607,6 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
 
    vg_assert(sci->status.what == SsComplete);
 
-   vg_assert(VG_(is_running_thread)(tid));
-
    /* Dump the syscall result back in the guest state.  This is
       a platform-specific action. */
    if (!(sci->flags & SfNoWriteResult))
@@ -1652,7 +1649,6 @@ void VG_(post_syscall) (ThreadId tid)
    /* Preliminaries */
    vg_assert(VG_(is_valid_tid)(tid));
    vg_assert(tid >= 1 && tid < VG_N_THREADS);
-   vg_assert(VG_(is_running_thread)(tid));
 
    tst = VG_(get_ThreadState)(tid);
    sci = & syscallInfo[tid];

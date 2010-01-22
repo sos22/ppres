@@ -223,7 +223,6 @@ static SysRes do_clone ( ThreadId ptid,
 
    VG_(sigfillset)(&blockall);
 
-   vg_assert(VG_(is_running_thread)(ptid));
    vg_assert(VG_(is_valid_tid)(ctid));
 
    stack = (UWord*)ML_(allocstack)(ctid);
@@ -525,7 +524,6 @@ PRE(sys_arch_prctl)
 
    vg_assert(VG_(is_valid_tid)(tid));
    vg_assert(tid >= 1 && tid < VG_N_THREADS);
-   vg_assert(VG_(is_running_thread)(tid));
 
    // Nb: can't use "ARG2".."ARG5" here because that's our own macro...
    PRE_REG_READ2(long, "arch_prctl",
