@@ -333,8 +333,8 @@ static void
 footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 {
 	if (!current_thread->in_monitor) {
-#if USE_FOOTSTEP_RECORDS
 		TRACE("footstep(%lx, rcx = %lx)", rip, rcx);
+#if USE_FOOTSTEP_RECORDS
 		event(EVENT_footstep, rip, rdx, rcx, rax);
 #endif
 	}
