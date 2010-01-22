@@ -63,6 +63,40 @@ helper_cas_ ## suffix (typ *addr,                      \
 
 mk_helper_cas(unsigned, 32)
 
+static Bool
+isStackRelative(IRExpr *exp)
+{
+	switch (exp->tag) {
+	case Iex_Binder:
+	case Iex_RdTmp:
+	case Iex_Qop:
+	case Iex_Triop:
+	case Iex_Unop:
+	case Iex_Load:
+	case Iex_Const:
+	case Iex_CCall:
+	case Iex_GetI:
+		return False;
+	case Iex_Get:
+		if (exp->Iex.Get.offset == OFFSET_amd64_RSP ||
+		    exp->Iex.Get.offset == OFFSET_amd64_RBP)
+			return True;
+		else
+			return False;
+	case Iex_Binop:
+		if (exp->Iex.Binop.op < Iop_Add8 &&
+		    exp->Iex.Binop.op > Iop_Sub64)
+			return False;
+		else
+			return isStackRelative(exp->Iex.Binop.arg1) ||
+				isStackRelative(exp->Iex.Binop.arg2);
+	case Iex_Mux0X:
+		return isStackRelative(exp->Iex.Mux0X.expr0) &&
+			isStackRelative(exp->Iex.Mux0X.exprX);
+	}
+	VG_(tool_panic)((Char *)"strange expression");
+}
+
 static IRExpr *
 log_reads_expr(IRSB *sb, IRExpr *exp)
 {
@@ -99,6 +133,11 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 		const char *helper_name;
 		IRTemp dest;
 		IRDirty *f;
+
+		if (isStackRelative(exp->Iex.Load.addr))
+			return IRExpr_Load(exp->Iex.Load.end,
+					   exp->Iex.Load.ty,
+					   log_reads_expr(sb, exp->Iex.Load.addr));
 
 #define HLP(x) helper_name = "helper_load_" #x ; helper = helper_load_ ## x ;
 		switch (exp->Iex.Load.ty) {
@@ -169,6 +208,9 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 	IRExpr **args;
 	const char *helper_name;
 	void *helper_addr;
+
+	if (isStackRelative(addr))
+		return IRStmt_Store(Iend_LE, addr, data);
 
 	args = NULL;
 	switch (typ) {
