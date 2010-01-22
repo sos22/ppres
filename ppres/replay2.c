@@ -7,6 +7,7 @@
 #include "pub_tool_tooliface.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
+#include "pub_tool_libcfile.h"
 #include "pub_tool_libcprint.h"
 #include "pub_tool_libcsignal.h"
 #include "pub_tool_signals.h"
@@ -21,6 +22,7 @@
 #include "ppres.h"
 #include "coroutines.h"
 #include "replay.h"
+#include "replay2.h"
 
 /* What kinds of records are we allowed to use? */
 #define USE_FOOTSTEP_RECORDS 0
@@ -76,6 +78,22 @@ struct replay_thread {
 	Bool dead;
 };
 
+struct control_command {
+	unsigned cmd;
+	union {
+		struct {
+			long nr;
+		} run;
+		struct {
+			long nr;
+		} trace;
+		struct {
+			long thread;
+			long nr;
+		} runm;
+	} u;
+};
+
 static struct client_event_record *
 client_event;
 
@@ -88,23 +106,108 @@ head_thread;
 static struct replay_thread *
 current_thread;
 
+static int
+control_process_socket;
+
+static unsigned
+record_nr;
+
+static unsigned
+access_nr;
+
+static Bool
+trace_mode;
+
 static void
 my_mprotect(void *base, size_t len, int prot)
 {
 	long res;
 	asm ("syscall"
 	     : "=a" (res)
-	     : "0" (__NR_mprotect), "rdi" (base),
-	     "rsi" (len), "rdx" (prot));
+	     : "0" (__NR_mprotect), "D" (base),
+	       "S" (len), "d" (prot));
 }
 
-static long
+long
 my__exit(int code)
 {
 	long res;
 	asm ("syscall"
 	     : "=a" (res)
-	     : "0" (__NR_exit), "rdi" (code));
+	     : "0" (__NR_exit), "D" (code));
+	return res;
+}
+
+long
+my_fork(void)
+{
+	long res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_fork));
+	return res;
+}
+
+/* Safe against partial writes, but kills you if it hits any other
+   errors. */
+void
+safeish_write(int fd, const void *buffer, size_t buffer_size)
+{
+	unsigned x;
+	Int this_time;
+
+	for (x = 0; x < buffer_size; x++) {
+		this_time = VG_(write)(fd, buffer + x, buffer_size - x);
+		if (this_time <= 0)
+			VG_(tool_panic)((Char *)"writing");
+		x += this_time;
+	}
+}
+
+/* Likewise for read. */
+void
+safeish_read(int fd, void *buffer, size_t buffer_size)
+{
+	unsigned x;
+	Int this_time;
+
+	for (x = 0; x < buffer_size; x++) {
+		this_time = VG_(read)(fd, buffer + x, buffer_size - x);
+		if (this_time <= 0)
+			VG_(tool_panic)((Char *)"reading");
+		x += this_time;
+	}
+}
+
+int
+socketpair(int domain, int type, int protocol, int *fds)
+{
+	long res;
+	register int *_fds asm ("r10") = fds;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_socketpair), "D" (domain), "S" (type),
+	       "d" (protocol), "r" (_fds));
+	return res;
+}
+
+size_t
+recvmsg(int sockfd, struct msghdr *msg, int flags)
+{
+	size_t res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_recvmsg), "D" (sockfd), "S" (msg), "d" (flags));
+	return res;
+}
+
+size_t
+sendmsg(int sockfd, const struct msghdr *msg, int flags)
+{
+	size_t res;
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_sendmsg), "D" (sockfd), "S" (msg), "d" (flags));
 	return res;
 }
 
@@ -222,7 +325,10 @@ rdtsc_event(void)
 static void
 load_event(const void *ptr, unsigned size, void *read_bytes)
 {
+	if (trace_mode)
+		VG_(printf)("%d: Load %d from %p\n", record_nr, size, ptr);
 	VG_(memcpy)(read_bytes, ptr, size);
+	access_nr++;
 	event(EVENT_load, (unsigned long)ptr, size,
 	      (unsigned long)read_bytes);
 }
@@ -230,7 +336,10 @@ load_event(const void *ptr, unsigned size, void *read_bytes)
 static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
+	if (trace_mode)
+		VG_(printf)("%d: Store %d to %p\n", record_nr, size, ptr);
 	VG_(memcpy)(ptr, written_bytes, size);
+	access_nr++;
 	event(EVENT_store, (unsigned long)ptr, size,
 	      (unsigned long)written_bytes);
 }
@@ -267,16 +376,71 @@ get_thread_by_id(ThreadId id)
 	return rt;
 }
 
+static void
+send_response(int res)
+{
+	safeish_write(control_process_socket, &res, sizeof(res));
+}
+
+static void
+get_control_command(struct control_command *cmd)
+{
+	struct command_header ch;
+	safeish_read(control_process_socket, &ch, sizeof(ch));
+	cmd->cmd = ch.command;
+	switch (ch.command) {
+	case WORKER_SNAPSHOT:
+	case WORKER_KILL:
+		tl_assert(ch.nr_args == 0);
+		return;
+	case WORKER_RUN:
+		tl_assert(ch.nr_args == 1);
+		safeish_read(control_process_socket, &cmd->u.run.nr, 8);
+		break;
+	case WORKER_TRACE:
+		tl_assert(ch.nr_args == 1);
+		safeish_read(control_process_socket, &cmd->u.trace.nr, 8);
+		break;
+	case WORKER_RUNM:
+		tl_assert(ch.nr_args == 2);
+		safeish_read(control_process_socket, &cmd->u.runm.thread, 8);
+		safeish_read(control_process_socket, &cmd->u.runm.nr, 8);
+		break;
+	default:
+		VG_(tool_panic)((Char *)"bad worker command");
+	}
+	return;
+}
+
+static void
+replay_failed(void)
+{
+	struct control_command cmd;
+
+	send_response(1);
+	while (1) {
+		get_control_command(&cmd);
+		if (cmd.cmd != WORKER_KILL) {
+			VG_(printf)("Only the kill command is valid after replay fails\n");
+			send_response(1);
+			continue;
+		}
+		send_response(0);
+		my__exit(0);
+	}
+}
+
 #define replay_assert_eq(a, b)                                             \
 do {                                                                       \
 	if ((a) != (b)) {                                                  \
-		VG_(printf)("Replay failed at %d: %s(%lx) != %s(%lx)\n",   \
+		VG_(printf)("%d: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
+	                    record_nr,                                     \
 			    __LINE__,                                      \
                             #a,                                            \
 			    (unsigned long)(a),				   \
 			    #b,                                            \
 			    (unsigned long)(b));			   \
-		my__exit(1);                                               \
+		replay_failed();                                           \
 	}                                                                  \
 } while (0)
 
@@ -479,7 +643,7 @@ replay_syscall(const struct syscall_record *sr,
 		break;
 
 	case __NR_exit:
-		VG_(printf)("Thread %d exits.\n", rt->id);
+		VG_(printf)("%d: Thread %d exits.\n", record_nr, rt->id);
 		rt->dead = True;
 		finish_this_record(logfile);
 		break;
@@ -506,7 +670,7 @@ replay_syscall(const struct syscall_record *sr,
 		break;
 
 	case __NR_exit_group:
-		VG_(printf)("Exit group, status %ld.\n", event->args[1]);
+		VG_(printf)("%d: Exit group, status %ld.\n", record_nr, event->args[1]);
 		finish_this_record(logfile);
 		break;
 
@@ -552,9 +716,8 @@ replay_syscall(const struct syscall_record *sr,
 		   replay_clone_syscall() and turned into a coroutine
 		   create. */
 		if (!sr_isError(sr->syscall_res)) {
-			VG_(printf)("Spawning a new thread.\n");
+			VG_(printf)("%d: Spawning a new thread.\n", record_nr);
 			VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
-			VG_(printf)("Done spawn.\n");
 		}
 
 		state->guest_RAX = sysres_to_eax(sr->syscall_res);
@@ -594,22 +757,36 @@ replay_record(const struct record_header *rec, struct replay_thread *thr,
 	}
 }
 
-/* The replay machine itself.  This consumes records from the log file
-   and decides how we're going to try to satisfy them. */
 static void
-replay_machine_fn(void)
+run_for_n_mem_accesses(struct replay_thread *thr,
+		       unsigned nr_accesses)
 {
-	struct record_consumer logfile;
+	struct client_event_record cer;
+
+	while (access_nr < nr_accesses) {
+		run_thread(thr, &cer);
+		if (cer.type == EVENT_footstep)
+			continue;
+		if (cer.type != EVENT_load &&
+		    cer.type != EVENT_store) {
+			VG_(printf)("%d: Client made unexpected event %x\n",
+				    record_nr,
+				    cer.type);
+			replay_failed();
+		}
+	}
+}
+
+static void
+run_for_n_records(struct record_consumer *logfile,
+		  unsigned nr_records)
+{
 	const struct record_header *rec;
 	struct replay_thread *thr;
 	struct client_event_record thread_event;
 
-	VG_(printf)("Replay machine starting.\n");
-
-	open_logfile(&logfile, (Char *)"logfile1");
-
-	while (1) {
-		rec = get_current_record(&logfile);
+	while (record_nr != nr_records) {
+		rec = get_current_record(logfile);
 		if (!rec)
 			break;
 		if (rec->cls == RECORD_new_thread ||
@@ -617,9 +794,11 @@ replay_machine_fn(void)
 		    rec->cls == RECORD_thread_unblocked ||
 		    (!USE_FOOTSTEP_RECORDS &&
 		     rec->cls == RECORD_footstep)) {
-			finish_this_record(&logfile);
+			finish_this_record(logfile);
 			continue;
 		}
+
+		record_nr++;
 
 		tl_assert(rec->cls != RECORD_memory);
 
@@ -634,7 +813,62 @@ replay_machine_fn(void)
 
 		validate_event(rec, &thread_event);
 
-		replay_record(rec, thr, &thread_event, &logfile); /* Finishes the record */
+		replay_record(rec, thr, &thread_event, logfile); /* Finishes the record */
+	}
+}
+
+static void
+run_control_command(struct control_command *cmd, struct record_consumer *logfile)
+{
+	struct replay_thread *rt;
+
+	switch (cmd->cmd) {
+	case WORKER_KILL:
+		send_response(0);
+		my__exit(0);
+	case WORKER_RUN:
+		run_for_n_records(logfile, cmd->u.run.nr);
+		send_response(0);
+		break;
+	case WORKER_TRACE:
+		trace_mode = True;
+		run_for_n_records(logfile, cmd->u.trace.nr);
+		trace_mode = False;
+		send_response(0);
+		break;
+	case WORKER_RUNM:
+		rt = get_thread_by_id(cmd->u.runm.thread);
+		if (!rt) {
+			VG_(printf)("Cannot find thread %ld\n", cmd->u.runm.thread);
+			send_response(-1);
+		} else {
+			run_for_n_mem_accesses(rt, cmd->u.runm.nr);
+			send_response(0);
+		}
+		break;
+	case WORKER_SNAPSHOT:
+		control_process_socket = do_snapshot(control_process_socket);
+		break;
+	default:
+		VG_(tool_panic)((Char *)"Bad worker command");
+	}
+}
+
+/* The replay machine itself.  This consumes records from the log file
+   and decides how we're going to try to satisfy them. */
+static void
+replay_machine_fn(void)
+{
+	struct record_consumer logfile;
+	struct control_command cmd;
+
+	VG_(printf)("Replay machine starting.\n");
+
+	open_logfile(&logfile, (Char *)"logfile1");
+
+	while (1) {
+		get_control_command(&cmd);
+		run_control_command(&cmd, &logfile);
 	}
 
 	VG_(printf)("Hit end of log.\n");
@@ -644,6 +878,8 @@ replay_machine_fn(void)
 static void
 init(void)
 {
+	control_process_socket = ui_loop();
+
 	head_thread = VG_(malloc)("head thread", sizeof(*head_thread));
 	VG_(memset)(head_thread, 0, sizeof(*head_thread));
 	head_thread->id = 1;
@@ -669,7 +905,7 @@ newly_spawning_thread;
 static void
 new_thread_starting(void)
 {
-	VG_(printf)("In new thread\n");
+	VG_(printf)("%d: In new thread\n", record_nr);
 	if (!creating_new_thread) {
 		VG_(printf)("Main thread\n");
 		return;
@@ -699,7 +935,7 @@ replay_clone_syscall(Word (*fn)(void *),
 		     Long *parent_tid,
 		     vki_modify_ldt_t *modify_ldt)
 {
-	VG_(printf)("Clone syscall\n");
+	VG_(printf)("%d: Clone syscall\n", record_nr);
 
 	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
 	tl_assert(!creating_new_thread);
