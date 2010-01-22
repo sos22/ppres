@@ -321,8 +321,9 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 #define TRACE(fmt, args...)                              \
 do {                                                     \
 	if (trace_mode)                                  \
-		VG_(printf)("%d:%d: " fmt "\n",          \
+		VG_(printf)("%d:%d:%d: " fmt "\n",       \
 			    record_nr,                   \
+			    access_nr,                   \
 			    current_thread->id,          \
 			    ## args);                    \
 } while (0)
@@ -452,6 +453,7 @@ do_trace_thread_command(long thread)
 		return;
 	}
 	trace_mode = True;
+	access_nr = 0;
 	do {
 		run_thread(rt, &cer);
 	} while (cer.type == EVENT_footstep ||
@@ -817,6 +819,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 {
 	struct client_event_record cer;
 
+	access_nr = 0;
 	while (access_nr < nr_accesses) {
 		run_thread(thr, &cer);
 		if (cer.type == EVENT_footstep)
@@ -856,6 +859,7 @@ run_for_n_records(struct record_consumer *logfile,
 		}
 
 		record_nr++;
+		access_nr = 0;
 
 		tl_assert(rec->cls != RECORD_memory);
 
