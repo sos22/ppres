@@ -19,5 +19,5 @@ main()
   pthread_create(&pthr, NULL, thread, NULL);
   for (x = 0; x < 1000000; x++)
     global++;
-  return 0;
+  return global;
 }
