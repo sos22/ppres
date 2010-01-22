@@ -28,6 +28,7 @@ struct command {
 		COMMAND_run,
 		COMMAND_trace,
 		COMMAND_trace_thread,
+		COMMAND_trace_address,
 		COMMAND_runm
 	} cmd;
 	union {
@@ -46,6 +47,9 @@ struct command {
 		struct {
 			long thread;
 		} trace_thread;
+		struct {
+			long address;
+		} trace_mem;
 		struct {
 			long thread;
 			long nr;
@@ -143,6 +147,35 @@ my_strtol(long *out, const char *buf)
 	return True;
 }
 
+static Bool
+my_strtol_x(long *out, const char *buf)
+{
+	long r;
+
+	if (*buf == 0)
+		return False;
+
+	r = 0;
+	*out = 0;
+	while (buf[0]) {
+		if (r >= LONG_MAX / 16)
+			return False;
+		r *= 16;
+		if (buf[0] >= '0' && buf[0] <= '9') {
+			r += buf[0] - '0';
+		} else if (buf[0] >= 'a' && buf[0] <= 'f') {
+			r += buf[0] - 'a' + 10;
+		} else if (buf[0] >= 'A' && buf[0] <= 'F') {
+			r += buf[0] - 'A' + 10;
+		} else {
+			return False;
+		}
+		buf++;
+	}
+	*out = r;
+	return True;
+}
+
 static void
 strip(char *buf)
 {
@@ -226,6 +259,12 @@ retry:
 		cmd->cmd = COMMAND_trace_thread;
 		if (!my_strtol(&cmd->u.trace_thread.thread, args)) {
 			VG_(printf)("Need to know which thread to trace\n");
+			goto retry;
+		}
+	} else if (!strcmp(verb, "tracem")) {
+		cmd->cmd = COMMAND_trace_address;
+		if (!my_strtol_x(&cmd->u.trace_mem.address, args)) {
+			VG_(printf)("Need to know what address to trace\n");
 			goto retry;
 		}
 	} else if (!strcmp(verb, "runm")) {
@@ -520,6 +559,16 @@ trace_thread_worker(struct worker *worker, long thread)
 }
 
 static void
+trace_address_worker(struct worker *worker, long addr)
+{
+	if (send_command(worker, WORKER_TRACE_ADDRESS, addr))
+		VG_(printf)("Can't trace address %lx\n", addr);
+	history_append(&worker->history,
+		       ((struct history_entry){.type = HISTORY_run,
+				       .u = { .run = {.count = -1}}}));
+}
+
+static void
 run_m_worker(struct worker *worker, long thread, long nr_steps)
 {
 	if (send_command(worker, WORKER_RUNM, thread, nr_steps))
@@ -593,6 +642,13 @@ run_command(const struct command *cmd)
 			VG_(printf)("No current worker.\n");
 		} else {
 			trace_worker(current_worker, cmd->u.trace.nr);
+		}
+		break;
+	case COMMAND_trace_address:
+		if (!current_worker) {
+			VG_(printf)("No current worker.\n");
+		} else {
+			trace_address_worker(current_worker, cmd->u.trace_mem.address);
 		}
 		break;
 	case COMMAND_runm:

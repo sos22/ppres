@@ -97,6 +97,9 @@ struct control_command {
 		struct {
 			long thread;
 		} trace_thread;
+		struct {
+			long address;
+		} trace_mem;
 	} u;
 };
 
@@ -123,6 +126,9 @@ access_nr;
 
 static Bool
 trace_mode;
+
+static Addr
+trace_address;
 
 static void
 my_mprotect(void *base, size_t len, int prot)
@@ -309,14 +315,16 @@ do {                                                              \
 	_client_event();                                          \
 } while (0)
 
+#define _TRACE(fmt, args...)                             \
+	VG_(printf)("%d:%d:%d: " fmt "\n",               \
+		    record_nr,                           \
+		    access_nr,                           \
+		    current_thread->id,			 \
+		    ## args)
+
 #define TRACE(fmt, args...)                              \
 do {                                                     \
-	if (trace_mode)                                  \
-		VG_(printf)("%d:%d:%d: " fmt "\n",       \
-			    record_nr,                   \
-			    access_nr,                   \
-			    current_thread->id,          \
-			    ## args);                    \
+	if (trace_mode) _TRACE(fmt, ## args);		 \
 } while (0)
 
 /* The various events.  These are the bits which run in client
@@ -365,8 +373,16 @@ static void
 load_event(const void *ptr, unsigned size, void *read_bytes)
 {
 	VG_(memcpy)(read_bytes, ptr, size);
+	if ( (ptr <= (const void *)trace_address &&
+	      ptr + size > (const void *)trace_address) ||
+	    (trace_mode && !current_thread->in_monitor))
+		_TRACE("Load %lx(%d) from %p%s",
+		      size == 8 ?
+		      *(unsigned long *)read_bytes :
+		      *(unsigned long *)read_bytes & ((1 << (size * 8)) - 1),
+		       size, ptr,
+		       current_thread->in_monitor ? " (monitor)" : "");
 	if (!current_thread->in_monitor) {
-		TRACE("Load %d from %p", size, ptr);
 		access_nr++;
 		event(EVENT_load, (unsigned long)ptr, size,
 		      (unsigned long)read_bytes);
@@ -377,12 +393,16 @@ static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
 	VG_(memcpy)(ptr, written_bytes, size);
+	if ( (ptr <= (const void *)trace_address &&
+	      ptr + size > (const void *)trace_address) ||
+	    (trace_mode && !current_thread->in_monitor))
+		_TRACE("Store %lx(%d) to %p%s",
+		       size == 8 ?
+		       *(unsigned long *)written_bytes :
+		       *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
+		       size, ptr,
+		       current_thread->in_monitor ? " (monitor)" : "");
 	if (!current_thread->in_monitor) {
-		TRACE("Store %lx(%d) to %p",
-		      size == 8 ?
-		      *(unsigned long *)written_bytes :
-		      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
-		      size, ptr);
 		access_nr++;
 		event(EVENT_store, (unsigned long)ptr, size,
 		      (unsigned long)written_bytes);
@@ -460,6 +480,10 @@ get_control_command(struct control_command *cmd)
 	case WORKER_TRACE_THREAD:
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.trace_thread.thread, 8);
+		break;
+	case WORKER_TRACE_ADDRESS:
+		tl_assert(ch.nr_args == 1);
+		safeish_read(control_process_socket, &cmd->u.trace_mem.address, 8);
 		break;
 	case WORKER_RUNM:
 		tl_assert(ch.nr_args == 2);
@@ -952,6 +976,11 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_TRACE_THREAD:
 		do_trace_thread_command(cmd->u.trace_thread.thread);
+		break;
+	case WORKER_TRACE_ADDRESS:
+		trace_address = cmd->u.trace_mem.address;
+		run_for_n_records(logfile, -1);
+		send_response(0);
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");
