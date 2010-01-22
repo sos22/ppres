@@ -26,8 +26,8 @@
 #include "replay2.h"
 
 /* What kinds of records are we allowed to use? */
-#define USE_FOOTSTEP_RECORDS 0
-#define USE_MEMORY_RECORDS 0
+#define USE_FOOTSTEP_RECORDS 1
+#define USE_MEMORY_RECORDS 1
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -78,6 +78,7 @@ struct replay_thread {
 
 	Bool failed;
 	Bool dead;
+	Bool in_monitor;
 };
 
 struct control_command {
@@ -308,16 +309,6 @@ do {                                                              \
 	_client_event();                                          \
 } while (0)
 
-/* The various events.  These are the bits which run in client
-   context. */
-static void
-footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
-{
-#if USE_FOOTSTEP_RECORDS
-	event(EVENT_footstep, rip, rdx, rcx, rax);
-#endif
-}
-
 #define TRACE(fmt, args...)                              \
 do {                                                     \
 	if (trace_mode)                                  \
@@ -328,40 +319,74 @@ do {                                                     \
 			    ## args);                    \
 } while (0)
 
+/* The various events.  These are the bits which run in client
+   context. */
+static void
+footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
+{
+	TRACE("footstep(%lx, rcx = %lx)", rip, rcx);
+	if (!current_thread->in_monitor) {
+#if USE_FOOTSTEP_RECORDS
+		event(EVENT_footstep, rip, rdx, rcx, rax);
+#endif
+	}
+}
+
 static void
 syscall_event(VexGuestAMD64State *state)
 {
-	TRACE("syscall(%lld)", state->guest_RAX);
-	event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
-	      state->guest_RSI, state->guest_RDX, (unsigned long)state);
+	if (current_thread->in_monitor) {
+		VG_(client_syscall)(VG_(running_tid), VEX_TRC_JMP_SYS_SYSCALL);
+	} else {
+		TRACE("syscall(%lld)", state->guest_RAX);
+		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
+		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
+	}
 }
 
 static ULong
 rdtsc_event(void)
 {
-	TRACE("rdtsc");
-	event(EVENT_rdtsc);
-	return current_thread->rdtsc_result;
+	if (current_thread->in_monitor) {
+		/* This is obviously non-deterministic.  We rely on
+		   the in-client monitor code to do the right
+		   thing. */
+		unsigned eax, edx;
+		__asm__ __volatile__("rdtsc" : "=a" (eax), "=d" (edx));
+		return (((ULong)edx) << 32) | ((ULong)eax);
+	} else {
+		TRACE("rdtsc");
+		event(EVENT_rdtsc);
+		return current_thread->rdtsc_result;
+	}
 }
 
 static void
 load_event(const void *ptr, unsigned size, void *read_bytes)
 {
-	TRACE("Load %d from %p", size, ptr);
 	VG_(memcpy)(read_bytes, ptr, size);
-	access_nr++;
-	event(EVENT_load, (unsigned long)ptr, size,
-	      (unsigned long)read_bytes);
+	if (!current_thread->in_monitor) {
+		TRACE("Load %d from %p", size, ptr);
+		access_nr++;
+		event(EVENT_load, (unsigned long)ptr, size,
+		      (unsigned long)read_bytes);
+	}
 }
 
 static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
-	TRACE("Store %d to %p", size, ptr);
 	VG_(memcpy)(ptr, written_bytes, size);
-	access_nr++;
-	event(EVENT_store, (unsigned long)ptr, size,
-	      (unsigned long)written_bytes);
+	if (!current_thread->in_monitor) {
+		TRACE("Store %lx(%d) to %p",
+		      size == 8 ?
+		      *(unsigned long *)written_bytes :
+		      *(unsigned long *)written_bytes & ((1 << (size * 8)) - 1),
+		      size, ptr);
+		access_nr++;
+		event(EVENT_store, (unsigned long)ptr, size,
+		      (unsigned long)written_bytes);
+	}
 }
 
 static Bool
@@ -380,6 +405,13 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		*ret = 0;
 		return True;
 	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
+		if ((arg_block[0] & 0xffff) == 0) {
+			TRACE("entering monitor");
+			current_thread->in_monitor = True;
+		} else {
+			TRACE("exiting monitor");
+			current_thread->in_monitor = False;
+		}
 		*ret = 0;
 		return True;
 	} else {

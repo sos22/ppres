@@ -58,6 +58,50 @@ open_logfile(struct record_emitter *res,
 	res->current_block_used = 0;
 }
 
+struct thread_info {
+	struct thread_info *next;
+	ThreadId id;
+	Bool in_monitor;
+};
+
+static struct thread_info *
+head_thread_info;
+
+static struct thread_info *
+get_thread_info(ThreadId id)
+{
+	struct thread_info *t;
+	for (t = head_thread_info; t && t->id != id; t = t->next)
+		;
+	if (t)
+		return t;
+	t = VG_(malloc)("thread info", sizeof(*t));
+	VG_(memset)(t, 0, sizeof(*t));
+	t->next = head_thread_info;
+	t->id = id;
+	t->in_monitor = False;
+	head_thread_info = t;
+	return t;
+}
+
+static void
+client_entering_monitor(ThreadId tid)
+{
+	get_thread_info(tid)->in_monitor = True;
+}
+
+static void
+client_exiting_monitor(ThreadId tid)
+{
+	get_thread_info(tid)->in_monitor = False;
+}
+
+static Bool
+client_in_monitor(void)
+{
+	return get_thread_info(VG_(get_running_tid)())->in_monitor;
+}
+
 static void *
 emit_record(struct record_emitter *re,
 	    unsigned record_class,
@@ -97,6 +141,8 @@ static void
 record_instr(Word addr, Word rdx, Word rcx, Word rax)
 {
 	struct footstep_record *fr;
+	if (client_in_monitor())
+		return;
 	fr = emit_record(&logfile, RECORD_footstep, sizeof(*fr));
 	fr->rip = addr;
 	fr->rdx = rdx;
@@ -108,20 +154,24 @@ static void
 record_load(const void *ptr, unsigned size, void *base)
 {
 	struct mem_read_record *mrr;
-	mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
-	mrr->ptr = (void *)ptr;
 	VG_(memcpy)(base, ptr, size);
-	VG_(memcpy)(mrr + 1, base, size);
+	if (!client_in_monitor()) {
+		mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
+		mrr->ptr = (void *)ptr;
+		VG_(memcpy)(mrr + 1, base, size);
+	}
 }
 
 static void
 record_store(void *ptr, unsigned size, const void *base)
 {
 	struct mem_write_record *mrr;
-	mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
-	mrr->ptr = ptr;
 	VG_(memcpy)(ptr, base, size);
-	VG_(memcpy)(mrr + 1, base, size);
+	if (!client_in_monitor()) {
+		mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
+		mrr->ptr = ptr;
+		VG_(memcpy)(mrr + 1, base, size);
+	}
 }
 
 #define included_for_record
@@ -154,6 +204,8 @@ static void
 emit_triv_syscall(UInt nr, SysRes res, UWord *args)
 {
 	struct syscall_record *sr;
+
+	tl_assert(!client_in_monitor());
 
 	sr = emit_record(&logfile, RECORD_syscall, sizeof(*sr));
 	sr->syscall_nr = nr;
@@ -221,6 +273,9 @@ capture_memory(void *base, unsigned size)
 static void
 pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 {
+	if (client_in_monitor())
+		return;
+
 	switch (syscall_nr) {
 	case __NR_mmap: {
 		UWord flags = syscall_args[3];
@@ -272,6 +327,9 @@ static void
 post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	     SysRes res)
 {
+	if (client_in_monitor())
+		return;
+
 	emit_triv_syscall(syscall_nr, res, syscall_args);
 
 	switch (syscall_nr) {
@@ -397,7 +455,7 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		default:
 			VG_(printf)("Don't understand futex operation %ld\n",
 				    syscall_args[1]);
-			VG_(tool_panic)("Not implemented yet");
+			VG_(tool_panic)((Char *)"Not implemented yet");
 		}
 		break;
 	}
@@ -429,9 +487,11 @@ record_rdtsc(void)
 
 	__asm__ __volatile__("rdtsc" : "=a" (eax), "=d" (edx));
 	res = (((ULong)edx) << 32) | ((ULong)eax);
-	rr = emit_record(&logfile, RECORD_rdtsc, sizeof(*rr));
-	rr->stashed_tsc = res;
-	VG_(printf)("Recorded a RDTSC.\n");
+	if (!client_in_monitor()) {
+		rr = emit_record(&logfile, RECORD_rdtsc, sizeof(*rr));
+		rr->stashed_tsc = res;
+		VG_(printf)("Recorded a RDTSC.\n");
+	}
 	return res;
 }
 
@@ -446,6 +506,11 @@ handle_client_request(ThreadId tid, UWord *arg_block, UWord *ret)
 		*ret = 0;
 		return True;
 	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
+		if ((arg_block[0] & 0xffff) == 0) {
+			client_entering_monitor(tid);
+		} else {
+			client_exiting_monitor(tid);
+		}
 		*ret = 0;
 		return True;
 	} else {
