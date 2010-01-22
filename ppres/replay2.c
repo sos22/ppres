@@ -501,7 +501,7 @@ replay_syscall(const struct syscall_record *sr,
 		break;
 
 	case __NR_exit_group:
-		VG_(printf)("Exit group.\n");
+		VG_(printf)("Exit group, status %ld.\n", event->args[1]);
 		finish_this_record(logfile);
 		break;
 
