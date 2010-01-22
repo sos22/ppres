@@ -26,6 +26,7 @@
 
 /* What kinds of records are we allowed to use? */
 #define USE_FOOTSTEP_RECORDS 0
+#define USE_MEMORY_RECORDS 0
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -251,12 +252,17 @@ sysres_to_eax(SysRes sr)
 static void
 run_thread(struct replay_thread *rt, struct client_event_record *cer)
 {
+	static ThreadId last_run;
+
 	tl_assert(!VG_(in_generated_code));
 	tl_assert(client_event == NULL);
 	tl_assert(current_thread == NULL);
 	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
 	tl_assert(!rt->dead);
 
+	if (last_run != rt->id)
+		VG_(printf)("%d: Go to thread %d\n", record_nr, rt->id);
+	last_run = rt->id;
 	cer->type = EVENT_nothing;
 	current_thread = rt;
 	client_event = cer;
@@ -326,7 +332,8 @@ static void
 load_event(const void *ptr, unsigned size, void *read_bytes)
 {
 	if (trace_mode)
-		VG_(printf)("%d: Load %d from %p\n", record_nr, size, ptr);
+		VG_(printf)("%d:%d: Load %d from %p\n", record_nr,
+			    current_thread->id, size, ptr);
 	VG_(memcpy)(read_bytes, ptr, size);
 	access_nr++;
 	event(EVENT_load, (unsigned long)ptr, size,
@@ -337,7 +344,8 @@ static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
 	if (trace_mode)
-		VG_(printf)("%d: Store %d to %p\n", record_nr, size, ptr);
+		VG_(printf)("%d:%d: Store %d to %p\n", record_nr,
+			    current_thread->id, size, ptr);
 	VG_(memcpy)(ptr, written_bytes, size);
 	access_nr++;
 	event(EVENT_store, (unsigned long)ptr, size,
@@ -793,7 +801,10 @@ run_for_n_records(struct record_consumer *logfile,
 		    rec->cls == RECORD_thread_blocking ||
 		    rec->cls == RECORD_thread_unblocked ||
 		    (!USE_FOOTSTEP_RECORDS &&
-		     rec->cls == RECORD_footstep)) {
+		     rec->cls == RECORD_footstep) ||
+		    (!USE_MEMORY_RECORDS &&
+		     (rec->cls == RECORD_mem_read ||
+		      rec->cls == RECORD_mem_write))) {
 			finish_this_record(logfile);
 			continue;
 		}
@@ -807,7 +818,12 @@ run_for_n_records(struct record_consumer *logfile,
 
 		ASSUME(!thr->failed);
 
-		run_thread(thr, &thread_event);
+		do {
+			run_thread(thr, &thread_event);
+		} while (!(USE_MEMORY_RECORDS ||
+			   (thread_event.type != EVENT_load &&
+			    thread_event.type != EVENT_store)));
+
 
 		ASSUME(thread_event.type != EVENT_resched_candidate);
 
