@@ -607,7 +607,9 @@ replay_machine_fn(void)
 		rec = get_current_record(&logfile);
 		if (!rec)
 			break;
-		if (rec->cls == RECORD_new_thread) {
+		if (rec->cls == RECORD_new_thread ||
+		    rec->cls == RECORD_thread_blocking ||
+		    rec->cls == RECORD_thread_unblocked) {
 			finish_this_record(&logfile);
 			continue;
 		}
