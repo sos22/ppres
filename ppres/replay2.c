@@ -225,9 +225,9 @@ load_event(const void *ptr, unsigned size, void *read_bytes)
 static void
 store_event(void *ptr, unsigned size, const void *written_bytes)
 {
+	VG_(memcpy)(ptr, written_bytes, size);
 	event(EVENT_store, (unsigned long)ptr, size,
 	      (unsigned long)written_bytes);
-	VG_(memcpy)(ptr, written_bytes, size);
 }
 
 static Bool
