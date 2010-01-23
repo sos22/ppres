@@ -60,12 +60,11 @@ runMemoryWorker worker tid cntr =
 withWorker :: WorldState -> (Worker -> IO WorldState) -> IO WorldState
 withWorker ws f = f $ ws_worker ws
 
-takeSnapshot :: String -> Worker -> IO (Maybe Snapshot)
-takeSnapshot sid worker =
+takeSnapshot :: Worker -> IO (Maybe Snapshot)
+takeSnapshot worker =
     do ack <- sendWorkerCommand worker 0x1234 []
        if ack < 0
           then return Nothing
           else do newFd <- recvSocket (worker_fd worker)
-                  return $ Just $ Snapshot {snapshot_fd = newFd,
-                                            snapshot_id = sid }
+                  return $ Just $ Snapshot {snapshot_fd = newFd }
 

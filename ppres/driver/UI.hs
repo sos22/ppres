@@ -14,14 +14,12 @@ import Types
 import Worker
 import Snapshot
 import WorldState
+import UIValue
 
 data UICommand = UIExit
                | UIWhereAmI
-               | UISnapshot SnapshotId
-               | UIListSnapshots
-               | UIKillSnapshot SnapshotId
-               | UIActivateSnapshot SnapshotId
                | UIRun Integer
+               | UIActivateSnapshot VariableName
                | UITrace Integer
                | UITraceThread ThreadId
                | UITraceAddress Word64
@@ -29,14 +27,13 @@ data UICommand = UIExit
                  deriving Show
 
 data UIFunction = UIDummyFunction
+                | UISnapshot
 
 data UIAssignment = UIAssignment (Either UICommand (Maybe VariableName, UIFunction))
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
 
-snapshot_id_parser :: Parser SnapshotId
-snapshot_id_parser = P.identifier command_lexer
 thread_id_parser :: Parser ThreadId
 thread_id_parser = P.integer command_lexer
 
@@ -48,10 +45,7 @@ commandParser =
          "quit" -> return UIExit
          "loc" -> return UIWhereAmI
          "whereami" -> return UIWhereAmI
-         "snapshot" -> liftM UISnapshot snapshot_id_parser
-         "ls" -> return UIListSnapshots
-         "kill" -> liftM UIKillSnapshot snapshot_id_parser
-         "activate" -> liftM UIActivateSnapshot snapshot_id_parser
+         "activate" -> liftM UIActivateSnapshot (P.identifier command_lexer)
          "run" -> liftM UIRun (P.integer command_lexer)
          "trace" -> liftM UITrace (P.integer command_lexer)
          "tracet" -> liftM UITraceThread thread_id_parser
@@ -66,8 +60,15 @@ keyword :: String -> Parser String
 keyword x = do v <- P.identifier command_lexer
                if v == x then return v
                 else unexpected (v ++ ", wanted " ++ x)
+
 functionParser :: Parser UIFunction
-functionParser = liftM (const UIDummyFunction) $ keyword "dummy"
+functionParser =
+    let chooseKeyword ks =
+            choice $
+            map Text.Parsec.try [liftM (const cons) $ keyword key |
+                                 (cons, key) <- ks]
+    in chooseKeyword [(UIDummyFunction, "dummy"),
+                      (UISnapshot, "snapshot")]
 
 assignmentParser :: Parser UIAssignment
 assignmentParser =
@@ -94,47 +95,22 @@ ignore x = x >> return ()
 runCommand :: UICommand -> WorldState -> IO WorldState
 runCommand UIExit ws =
     sequence_ [ignore $ killWorker $ ws_worker ws,
-               mapM_ killSnapshot $ ws_snapshots ws,
-               ignore $ killSnapshot $ ws_root_snapshot ws,
+               mapM_ (uiv_destruct . snd) $ ws_bindings ws,
                exitWith ExitSuccess] >> return ws
-runCommand (UISnapshot name) ws =
-    withWorker ws $
-     \w ->
-        do s <- takeSnapshot name w
-           case s of
-             Nothing -> do putStrLn "cannot take snapshot"
-                           return ws
-             Just s' -> do print $ snapshot_id s'
-                           return $ ws { ws_snapshots = s':(ws_snapshots ws) }
-runCommand UIListSnapshots ws =
-    do mapM_ (\s -> print $ snapshot_id s) $ ws_snapshots ws
-       return ws
-runCommand (UIKillSnapshot sid) ws =
-    if sid == (snapshot_id $ ws_root_snapshot ws)
-    then do putStrLn "Can't kill the root snapshot"
-            return ws
-    else
-        case getSnapshot ws sid of
-          Nothing -> do putStrLn ("Can't find snapshot " ++ (show sid))
-                        return ws
-          Just s -> do r <- killSnapshot s
-                       if r
-                        then return $ ws { ws_snapshots =
-                                               [s' | s' <- ws_snapshots ws,
-                                                snapshot_id s' /= sid] }
-                        else do putStrLn "Error killing snapshot"
-                                return ws
 runCommand (UIActivateSnapshot sid) ws =
-    case getSnapshot ws sid of
+    case lookupVariable sid ws of
       Nothing -> do putStrLn ("Cannot find snapshot " ++ (show sid))
                     return ws
-      Just s -> do worker <- activateSnapshot s
-                   case worker of
-                     Nothing -> do putStrLn "cannot activate snapshot"
-                                   return ws
-                     Just w ->
-                         do killWorker $ ws_worker ws
-                            return $ ws { ws_worker = w } 
+      Just (UIValueSnapshot s) ->
+          do worker <- activateSnapshot s
+             case worker of
+               Nothing -> do putStrLn "cannot activate snapshot"
+                             return ws
+               Just w ->
+                   do killWorker $ ws_worker ws
+                      return $ ws { ws_worker = w } 
+      _ -> do putStrLn "Not a snapshot"
+              return ws
 runCommand (UIRun cntr) ws =
     withWorker ws $ \w -> do runWorker w cntr
                              return ws
@@ -151,15 +127,18 @@ runCommand (UIRunMemory tid cntr) ws =
     withWorker ws $ \w -> do runMemoryWorker w tid cntr
                              return ws
 
-mkUIValue :: Show a => a -> UIValue
-mkUIValue x =
-    UIValue { uiv_destruct = print x,
-              uiv_show = show x }
-
 runFunction :: UIFunction -> WorldState -> IO (WorldState, UIValue)
 runFunction f ws =
     case f of
-      UIDummyFunction -> return (ws, mkUIValue ())
+      UIDummyFunction -> return (ws, UIValueNull)
+      UISnapshot ->
+          do s <- takeSnapshot $ ws_worker ws
+             case s of
+               Nothing ->
+                   do putStrLn "cannot take snapshot"
+                      return (ws, UIValueNull)
+               Just s' ->
+                   return (ws, UIValueSnapshot s')
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
@@ -169,7 +148,7 @@ runAssignment as ws =
           do (ws', res) <- runFunction rhs ws
              case var of
                Nothing ->
-                   do print $ uiv_show res
+                   do print res
                       return ws'
                Just v ->
                    doAssignment ws v res

@@ -1,24 +1,23 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module WorldState(initialWorldState, doAssignment) where
+module WorldState(initialWorldState, doAssignment, lookupVariable) where
 
 import Foreign.C.Types
 
 import Socket
 import Types
 import Snapshot
+import UIValue
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
-       let root_snap = Snapshot f "root"
+       let root_snap = Snapshot f
        worker <- activateSnapshot root_snap
        case worker of
          Nothing -> error "cannot activate root snapshot"
          Just w ->
            return $ WorldState { ws_worker = w,
-                                 ws_snapshots = [],
-                                 ws_root_snapshot = root_snap,
-                                 ws_bindings = [] }
+                                 ws_bindings = [("root", UIValueSnapshot root_snap)] }
 
 lookupVariable :: VariableName -> WorldState -> Maybe UIValue
 lookupVariable name ws = lookup name $ ws_bindings ws
