@@ -75,6 +75,8 @@ assignmentParser =
                           P.reservedOp command_lexer "="
                           rhs <- functionParser
                           return $ UIAssignment $ Right (Just var, rhs)) <|>
+    (Text.Parsec.try $ do rhs <- functionParser
+                          return $ UIAssignment $ Right (Nothing, rhs)) <|>
     (do command <- commandParser
         return $ UIAssignment $ Left command)
 
