@@ -954,11 +954,14 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 {
 	struct replay_thread *rt;
 
+	logfile_reset_file_ptr(logfile);
 	switch (cmd->cmd) {
 	case WORKER_KILL:
 		send_response(0);
 		my__exit(0);
 	case WORKER_RUN:
+		VG_(printf)("Run for %ld records (at %d)\n",
+			    cmd->u.run.nr, record_nr);
 		run_for_n_records(logfile, cmd->u.run.nr);
 		send_response(0);
 		break;
@@ -980,7 +983,6 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_SNAPSHOT:
 		control_process_socket = do_snapshot(control_process_socket);
-		logfile_reset_file_ptr(logfile);
 		break;
 	case WORKER_TRACE_THREAD:
 		do_trace_thread_command(cmd->u.trace_thread.thread);
