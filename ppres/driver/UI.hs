@@ -88,13 +88,9 @@ getCommand =
                         getCommand
          Right v -> return v
 
-ignore :: IO a -> IO ()
-ignore x = x >> return ()
-
 runCommand :: UICommand -> WorldState -> IO WorldState
 runCommand UIExit ws =
-    sequence_ [ignore $ killWorker $ ws_worker ws,
-               mapM_ (uiv_destruct . snd) $ ws_bindings ws,
+    sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
                exitWith ExitSuccess] >> return ws
 runCommand (UIActivateSnapshot sid) ws =
     case lookupVariable sid ws of
