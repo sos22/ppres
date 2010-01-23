@@ -17,7 +17,7 @@ import WorldState
 
 data UICommand = UIExit
                | UIWhereAmI
-               | UISnapshot
+               | UISnapshot SnapshotId
                | UIListSnapshots
                | UIKillSnapshot SnapshotId
                | UIActivateSnapshot SnapshotId
@@ -32,7 +32,7 @@ command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
 
 snapshot_id_parser :: Parser SnapshotId
-snapshot_id_parser = P.integer command_lexer
+snapshot_id_parser = P.identifier command_lexer
 thread_id_parser :: Parser ThreadId
 thread_id_parser = P.integer command_lexer
 
@@ -44,7 +44,7 @@ command_parser =
          "quit" -> return UIExit
          "loc" -> return UIWhereAmI
          "whereami" -> return UIWhereAmI
-         "snapshot" -> return UISnapshot
+         "snapshot" -> liftM UISnapshot snapshot_id_parser
          "ls" -> return UIListSnapshots
          "kill" -> liftM UIKillSnapshot snapshot_id_parser
          "activate" -> liftM UIActivateSnapshot snapshot_id_parser
@@ -77,10 +77,10 @@ runCommand UIExit ws =
                mapM_ killSnapshot $ ws_snapshots ws,
                ignore $ killSnapshot $ ws_root_snapshot ws,
                exitWith ExitSuccess] >> return ws
-runCommand UISnapshot ws =
+runCommand (UISnapshot name) ws =
     withWorker ws $
      \w ->
-        do s <- takeSnapshot (ws_next_snap_id ws) w
+        do s <- takeSnapshot name w
            case s of
              Nothing -> do putStrLn "cannot take snapshot"
                            return ws

@@ -5,7 +5,6 @@ module Worker(withWorker,
 
 import Data.Word
 import Data.Int
-import Data.IORef
 import Network.Socket
 
 import Types
@@ -61,11 +60,9 @@ runMemoryWorker worker tid cntr =
 withWorker :: WorldState -> (Worker -> IO WorldState) -> IO WorldState
 withWorker ws f = f $ ws_worker ws
 
-takeSnapshot :: IORef SnapshotId -> Worker -> IO (Maybe Snapshot)
-takeSnapshot sid' worker =
-    do sid <- readIORef sid'
-       writeIORef sid' (sid + 1)
-       ack <- sendWorkerCommand worker 0x1234 []
+takeSnapshot :: String -> Worker -> IO (Maybe Snapshot)
+takeSnapshot sid worker =
+    do ack <- sendWorkerCommand worker 0x1234 []
        if ack < 0
           then return Nothing
           else do newFd <- recvSocket (worker_fd worker)
