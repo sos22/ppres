@@ -20,9 +20,6 @@ struct command_response {
 	int res;
 };
 
-#define SNAPSHOT_KILL 0xabcd
-#define SNAPSHOT_ACTIVATE 0xabce
-
 /* Making the normal headers work with Valgrind's is a pain, so don't
    bother. */
 struct msghdr {
@@ -83,49 +80,6 @@ send_fd(int parent_fd, int child_fd)
 		VG_(tool_panic)((Char *)"sending file descriptor");
 }
 
-static int
-snapshot_command_loop(int fd)
-{
-	struct command_header ch;
-	struct command_response resp;
-	long child;
-	int fds[2];
-	int r;
-
-	while (1) {
-		safeish_read(fd, &ch, sizeof(ch));
-		switch (ch.command) {
-		case SNAPSHOT_KILL:
-			resp.res = 0;
-			safeish_write(fd, &resp, sizeof(resp));
-			my__exit(0);
-
-		case SNAPSHOT_ACTIVATE:
-			VG_(printf)("Activating snapshot\n");
-			r = socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
-			if (r < 0)
-				VG_(tool_panic)((Char *)"error creating socket pair");
-			child = my_fork();
-			if (child < 0)
-				VG_(tool_panic)((Char *)"forking worker");
-			if (child == 0) {
-				VG_(close)(fds[1]);
-				VG_(close)(fd);
-				return fds[0];
-			}
-			VG_(close)(fds[0]);
-			resp.res = 0;
-			safeish_write(fd, &resp, sizeof(resp));
-			send_fd(fd, fds[1]);
-			VG_(close)(fds[1]);
-			break;
-
-		default:
-			VG_(tool_panic)((Char *)"bad snapshot command");
-		}
-	}
-}
-
 int
 do_snapshot(int parent_fd)
 {
@@ -144,7 +98,7 @@ do_snapshot(int parent_fd)
 	if (child == 0) {
 		VG_(close)(fds[1]);
 		VG_(close)(parent_fd);
-		return snapshot_command_loop(fds[0]);
+		return fds[0];
 	}
 	VG_(close)(fds[0]);
 	resp.res = 0;
@@ -172,7 +126,7 @@ ui_loop(void)
 	child = my_fork();
 	if (child == 0) {
 		VG_(close)(fds[1]);
-		return snapshot_command_loop(fds[0]);
+		return fds[0];
 	}
 	VG_(close)(fds[0]);
 

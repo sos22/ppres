@@ -13,7 +13,7 @@ sendSnapshotCommand snapshot command args =
 
 activateSnapshot :: Snapshot -> IO (Maybe Worker)
 activateSnapshot ss =
-    do ack <- sendSnapshotCommand ss 0xabce []
+    do ack <- sendSnapshotCommand ss 0x1234 []
        if ack /= 0
         then return Nothing
         else do fd <- recvSocket (snapshot_fd ss)
@@ -21,7 +21,7 @@ activateSnapshot ss =
 
 killSnapshot :: Snapshot -> IO Bool
 killSnapshot worker =
-    do ack <- sendSnapshotCommand worker 0xabcd []
+    do ack <- sendSnapshotCommand worker 0x1235 []
        if ack == 0
           then do sClose $ snapshot_fd worker
                   return True
