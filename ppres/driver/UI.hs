@@ -28,6 +28,10 @@ data UICommand = UIExit
                | UIRunMemory ThreadId Integer
                  deriving Show
 
+data UIFunction = UIDummyFunction
+
+data UIAssignment = UIAssignment (Either UICommand (Maybe VariableName, UIFunction))
+
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
 
@@ -36,8 +40,8 @@ snapshot_id_parser = P.identifier command_lexer
 thread_id_parser :: Parser ThreadId
 thread_id_parser = P.integer command_lexer
 
-command_parser :: Parser UICommand
-command_parser =
+commandParser :: Parser UICommand
+commandParser =
     do w <- P.identifier command_lexer
        case w of
          "exit" -> return UIExit
@@ -58,12 +62,28 @@ command_parser =
                       return $ UIRunMemory t n
          _ -> unexpected ("keyword " ++ w)
 
-getCommand :: IO UICommand
+keyword :: String -> Parser String
+keyword x = do v <- P.identifier command_lexer
+               if v == x then return v
+                else unexpected (v ++ ", wanted " ++ x)
+functionParser :: Parser UIFunction
+functionParser = liftM (const UIDummyFunction) $ keyword "dummy"
+
+assignmentParser :: Parser UIAssignment
+assignmentParser =
+    (Text.Parsec.try $ do var <- P.identifier command_lexer
+                          P.reservedOp command_lexer "="
+                          rhs <- functionParser
+                          return $ UIAssignment $ Right (Just var, rhs)) <|>
+    (do command <- commandParser
+        return $ UIAssignment $ Left command)
+
+getCommand :: IO UIAssignment
 getCommand =
     do putStr "> "
        hFlush stdout
        l <- getLine
-       case parse command_parser "" l of
+       case parse assignmentParser "" l of
          Left err -> do putStrLn $ "Cannot parse command " ++ l ++ ": " ++ (show err)
                         getCommand
          Right v -> return v
@@ -131,10 +151,33 @@ runCommand (UIRunMemory tid cntr) ws =
     withWorker ws $ \w -> do runMemoryWorker w tid cntr
                              return ws
 
+mkUIValue :: Show a => a -> UIValue
+mkUIValue x =
+    UIValue { uiv_destruct = print x,
+              uiv_show = show x }
+
+runFunction :: UIFunction -> WorldState -> IO (WorldState, UIValue)
+runFunction f ws =
+    case f of
+      UIDummyFunction -> return (ws, mkUIValue ())
+
+runAssignment :: UIAssignment -> WorldState -> IO WorldState
+runAssignment as ws =
+    case as of
+      UIAssignment (Left cmd) -> runCommand cmd ws
+      UIAssignment (Right (var, rhs)) ->
+          do (ws', res) <- runFunction rhs ws
+             case var of
+               Nothing ->
+                   do print $ uiv_show res
+                      return ws'
+               Just v ->
+                   doAssignment ws v res
+      
 commandLoop :: WorldState -> IO ()
 commandLoop ws =
     do cmd <- getCommand
-       ws' <- runCommand cmd ws
+       ws' <- runAssignment cmd ws
        commandLoop ws'
 
 main :: IO ()
