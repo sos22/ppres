@@ -12,6 +12,7 @@
 #include "pub_tool_libcsignal.h"
 #include "pub_tool_signals.h"
 #include "pub_tool_machine.h"
+#include "pub_tool_options.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_threadstate.h"
 #include "libvex_guest_amd64.h"
@@ -24,10 +25,6 @@
 #include "coroutines.h"
 #include "replay.h"
 #include "replay2.h"
-
-/* What kinds of records are we allowed to use? */
-#define USE_FOOTSTEP_RECORDS 0
-#define USE_MEMORY_RECORDS 0
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -102,6 +99,12 @@ struct control_command {
 		} trace_mem;
 	} u;
 };
+
+static Bool
+use_footsteps;
+
+static Bool
+use_memory;
 
 static struct client_event_record *
 client_event;
@@ -334,9 +337,8 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
 {
 	if (!current_thread->in_monitor) {
 		TRACE("footstep(%lx, rcx = %lx)", rip, rcx);
-#if USE_FOOTSTEP_RECORDS
-		event(EVENT_footstep, rip, rdx, rcx, rax);
-#endif
+		if (use_footsteps)
+			event(EVENT_footstep, rip, rdx, rcx, rax);
 	}
 }
 
@@ -907,9 +909,9 @@ run_for_n_records(struct record_consumer *logfile,
 		if (rec->cls == RECORD_new_thread ||
 		    rec->cls == RECORD_thread_blocking ||
 		    rec->cls == RECORD_thread_unblocked ||
-		    (!USE_FOOTSTEP_RECORDS &&
+		    (!use_footsteps &&
 		     rec->cls == RECORD_footstep) ||
-		    (!USE_MEMORY_RECORDS &&
+		    (!use_memory &&
 		     (rec->cls == RECORD_mem_read ||
 		      rec->cls == RECORD_mem_write))) {
 			finish_this_record(logfile);
@@ -928,7 +930,7 @@ run_for_n_records(struct record_consumer *logfile,
 
 		do {
 			run_thread(thr, &thread_event);
-		} while (!(USE_MEMORY_RECORDS ||
+		} while (!(use_memory ||
 			   (thread_event.type != EVENT_load &&
 			    thread_event.type != EVENT_store)));
 
@@ -1110,6 +1112,31 @@ fini(Int ignore)
 	VG_(printf)("Huh? Didn't expect fini() to get called.\n");
 }
 
+static Bool
+process_cmd_line(Char *argv)
+{
+	VG_(printf)("argv %s\n", argv);
+	if (!VG_(strcmp)(argv, (Char *)"--use-footsteps")) {
+		use_footsteps = True;
+		return True;
+	}
+	if (!VG_(strcmp)(argv, (Char *)"--use-memory")) {
+		use_memory = True;
+		return True;
+	}
+        return False;
+}
+
+static void
+print_usage(void)
+{
+}
+
+static void
+print_debug(void)
+{
+}
+
 static void
 pre_clo_init(void)
 {
@@ -1134,6 +1161,9 @@ pre_clo_init(void)
 	VG_(details_description)((signed char *)"Replayer for PPRES");
 	VG_(basic_tool_funcs)(init, instrument_func, fini);
 	VG_(needs_client_requests)(client_request_event);
+	VG_(needs_command_line_options)(process_cmd_line,
+					print_usage,
+					print_debug);
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)
