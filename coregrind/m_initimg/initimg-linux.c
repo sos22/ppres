@@ -442,6 +442,8 @@ Addr setup_client_stack( void*  init_sp,
    /* now, how big is the auxv? */
    auxsize = sizeof(*auxv);	/* there's always at least one entry: AT_NULL */
    for (cauxv = orig_auxv; cauxv->a_type != AT_NULL; cauxv++) {
+      if (cauxv->a_type == AT_RANDOM)
+	 continue;
       if (cauxv->a_type == AT_PLATFORM ||
           cauxv->a_type == AT_BASE_PLATFORM)
 	 stringsize += VG_(strlen)(cauxv->u.a_ptr) + 1;
@@ -613,6 +615,9 @@ Addr setup_client_stack( void*  init_sp,
 
    for (; orig_auxv->a_type != AT_NULL; auxv++, orig_auxv++) {
       const NSegment *ehdrseg;
+
+      if (orig_auxv->a_type == AT_RANDOM)
+	 continue;
 
       /* copy the entry... */
       *auxv = *orig_auxv;
