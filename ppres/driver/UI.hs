@@ -12,7 +12,6 @@ import Control.Monad
 
 import Types
 import Worker
-import Snapshot
 import WorldState
 import UIValue
 
@@ -102,13 +101,7 @@ runCommand (UIActivateSnapshot sid) ws =
       Nothing -> do putStrLn ("Cannot find snapshot " ++ (show sid))
                     return ws
       Just (UIValueSnapshot s) ->
-          do worker <- activateSnapshot s
-             case worker of
-               Nothing -> do putStrLn "cannot activate snapshot"
-                             return ws
-               Just w ->
-                   do killWorker $ ws_worker ws
-                      return $ ws { ws_worker = w } 
+          return $ ws { ws_worker = s } 
       _ -> do putStrLn "Not a snapshot"
               return ws
 runCommand (UIRun cntr) ws =
