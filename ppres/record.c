@@ -297,8 +297,9 @@ pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 		break;
 	}
 	case __NR_futex: {
-		switch (syscall_args[1]) {
-		case FUTEX_WAIT_PRIVATE: {
+		switch (syscall_args[1] & FUTEX_CMD_MASK) {
+		case FUTEX_WAIT:
+		case FUTEX_WAIT_BITSET: {
 			int expected;
 			int observed;
 			expected = syscall_args[2];
@@ -443,18 +444,21 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		break;
 
 	case __NR_futex: {
-		switch (syscall_args[1]) {
-		case FUTEX_WAKE_PRIVATE:
+		/* Often need to modify pre_syscall when you modify
+		 * this. */
+		switch (syscall_args[1] & FUTEX_CMD_MASK) {
+		case FUTEX_WAKE:
 			/* No special handling needed */
 			break;
-		case FUTEX_WAIT_PRIVATE:
+		case FUTEX_WAIT:
+		case FUTEX_WAIT_BITSET:
 			if (!sr_isError(res) ||
 			    sr_Err(res) != EWOULDBLOCK)
 				emit_record(&logfile, RECORD_thread_unblocked, 0);
 			break;
 		default:
 			VG_(printf)("Don't understand futex operation %ld\n",
-				    syscall_args[1]);
+				    syscall_args[1] & FUTEX_CMD_MASK);
 			VG_(tool_panic)((Char *)"Not implemented yet");
 		}
 		break;
