@@ -59,11 +59,7 @@ runMemoryWorker worker tid cntr =
           else return ()
 
 withWorker :: WorldState -> (Worker -> IO WorldState) -> IO WorldState
-withWorker ws f =
-    case ws_worker ws of
-      Nothing -> do putStrLn "Need a worker for that"
-                    return ws
-      Just w -> f w
+withWorker ws f = f $ ws_worker ws
 
 takeSnapshot :: IORef SnapshotId -> Worker -> IO (Maybe Snapshot)
 takeSnapshot sid' worker =

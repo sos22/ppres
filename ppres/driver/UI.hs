@@ -73,7 +73,7 @@ ignore x = x >> return ()
 
 runCommand :: UICommand -> WorldState -> IO WorldState
 runCommand UIExit ws =
-    sequence_ [maybe (return ()) (ignore . killWorker) $ ws_worker ws,
+    sequence_ [ignore $ killWorker $ ws_worker ws,
                mapM_ killSnapshot $ ws_snapshots ws,
                ignore $ killSnapshot $ ws_root_snapshot ws,
                exitWith ExitSuccess] >> return ws
@@ -112,11 +112,9 @@ runCommand (UIActivateSnapshot sid) ws =
                    case worker of
                      Nothing -> do putStrLn "cannot activate snapshot"
                                    return ws
-                     Just _ ->
-                         do case ws_worker ws of
-                              Nothing -> return ()
-                              Just w' -> ignore $ killWorker w'
-                            return $ ws { ws_worker = worker } 
+                     Just w ->
+                         do killWorker $ ws_worker ws
+                            return $ ws { ws_worker = w } 
 runCommand (UIRun cntr) ws =
     withWorker ws $ \w -> do runWorker w cntr
                              return ws
