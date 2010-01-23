@@ -62,3 +62,14 @@ struct client_req_record {
 };
 
 #define RECORD_MAX_CLASS RECORD_client
+
+
+static inline int
+IS_STACK(const void *ptr, unsigned long rsp)
+{
+	if (ptr < (const void *)rsp - 128 ||
+	    ptr > (const void *)rsp + 16384)
+		return False;
+	else
+		return True;
+}

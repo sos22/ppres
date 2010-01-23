@@ -13,20 +13,20 @@
 # define store_worker_function record_store
 #endif
 
-#define mk_helper_load(typ, suffix)                    \
-static typ                                             \
-helper_load_ ## suffix (const typ *ptr)                \
-{                                                      \
-        typ val;                                       \
-	load_worker_function(ptr, sizeof(val), &val);  \
-	return val;                                    \
+#define mk_helper_load(typ, suffix)                            \
+static typ                                                     \
+helper_load_ ## suffix (const typ *ptr, unsigned long rsp)     \
+{							       \
+        typ val;					       \
+	load_worker_function(ptr, sizeof(val), &val, rsp);     \
+	return val;					       \
 }
 
-#define mk_helper_store(typ, suffix)                   \
-static void                                            \
-helper_store_ ## suffix (typ *ptr, typ val)            \
-{                                                      \
-	store_worker_function(ptr, sizeof(val), &val); \
+#define mk_helper_store(typ, suffix)                           \
+static void						       \
+helper_store_ ## suffix (typ *ptr, typ val, unsigned long rsp) \
+{							       \
+	store_worker_function(ptr, sizeof(val), &val, rsp);    \
 }
 
 #define mk_helpers(typ, suffix)                        \
@@ -51,51 +51,19 @@ mk_helpers(ultralong_t, 128)
 static typ                                             \
 helper_cas_ ## suffix (typ *addr,                      \
 		       typ expected,                   \
-		       typ data)                       \
+		       typ data,                       \
+                       unsigned long rsp)	       \
 {                                                      \
 	typ seen;                                      \
                                                        \
-	seen = helper_load_ ## suffix (addr);          \
+	seen = helper_load_ ## suffix (addr, rsp);     \
 	if (seen == expected)                          \
-		helper_store_ ## suffix (addr, data);  \
+		helper_store_ ## suffix (addr, data,   \
+					 rsp);	       \
 	return seen;                                   \
 }
 
 mk_helper_cas(unsigned, 32)
-
-static Bool
-isStackRelative(IRExpr *exp)
-{
-	switch (exp->tag) {
-	case Iex_Binder:
-	case Iex_RdTmp:
-	case Iex_Qop:
-	case Iex_Triop:
-	case Iex_Unop:
-	case Iex_Load:
-	case Iex_Const:
-	case Iex_CCall:
-	case Iex_GetI:
-		return False;
-	case Iex_Get:
-		if (exp->Iex.Get.offset == OFFSET_amd64_RSP ||
-		    exp->Iex.Get.offset == OFFSET_amd64_RBP)
-			return True;
-		else
-			return False;
-	case Iex_Binop:
-		if (exp->Iex.Binop.op < Iop_Add8 &&
-		    exp->Iex.Binop.op > Iop_Sub64)
-			return False;
-		else
-			return isStackRelative(exp->Iex.Binop.arg1) ||
-				isStackRelative(exp->Iex.Binop.arg2);
-	case Iex_Mux0X:
-		return isStackRelative(exp->Iex.Mux0X.expr0) &&
-			isStackRelative(exp->Iex.Mux0X.exprX);
-	}
-	VG_(tool_panic)((Char *)"strange expression");
-}
 
 static IRExpr *
 log_reads_expr(IRSB *sb, IRExpr *exp)
@@ -134,11 +102,6 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 		IRTemp dest;
 		IRDirty *f;
 
-		if (isStackRelative(exp->Iex.Load.addr))
-			return IRExpr_Load(exp->Iex.Load.end,
-					   exp->Iex.Load.ty,
-					   log_reads_expr(sb, exp->Iex.Load.addr));
-
 #define HLP(x) helper_name = "helper_load_" #x ; helper = helper_load_ ## x ;
 		switch (exp->Iex.Load.ty) {
 		case Ity_INVALID:
@@ -170,7 +133,8 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 		}
 #undef HLP
 
-		args = mkIRExprVec_1(log_reads_expr(sb, exp->Iex.Load.addr));
+		args = mkIRExprVec_2(log_reads_expr(sb, exp->Iex.Load.addr),
+				     IRExpr_Get(OFFSET_amd64_RSP, Ity_I64));
 		dest = newIRTemp(sb->tyenv, exp->Iex.Load.ty);
 		f = unsafeIRDirty_1_N(dest,
 				      0,
@@ -206,12 +170,11 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 {
 	IRDirty *f;
 	IRExpr **args;
+	IRExpr *rsp;
 	const char *helper_name;
 	void *helper_addr;
 
-	if (isStackRelative(addr))
-		return IRStmt_Store(Iend_LE, addr, data);
-
+	rsp = IRExpr_Get(OFFSET_amd64_RSP, Ity_I64);
 	args = NULL;
 	switch (typ) {
 	case Ity_I8:
@@ -236,22 +199,24 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 	case Ity_I128:
 		helper_name = "helper_store_128";
 		helper_addr = helper_store_128;
-		args = mkIRExprVec_3(addr,
+		args = mkIRExprVec_4(addr,
 				     IRExpr_Unop(Iop_128to64, data),
-				     IRExpr_Unop(Iop_128HIto64, data));
+				     IRExpr_Unop(Iop_128HIto64, data),
+				     rsp);
 		break;
 	case Ity_V128:
 		helper_name = "helper_store_128";
 		helper_addr = helper_store_128;
-		args = mkIRExprVec_3(addr,
+		args = mkIRExprVec_4(addr,
 				     IRExpr_Unop(Iop_V128to64, data),
-				     IRExpr_Unop(Iop_V128HIto64, data));
+				     IRExpr_Unop(Iop_V128HIto64, data),
+				     rsp);
 		break;
 	default:
 		VG_(tool_panic)((signed char *)"Bad write");
 	}
 	if (!args)
-		args = mkIRExprVec_2(addr, data);
+		args = mkIRExprVec_3(addr, data, rsp);
 	f = unsafeIRDirty_0_N(0,
 			      (HChar *)helper_name,
 			      VG_(fnptr_to_fnentry)(helper_addr),
@@ -289,9 +254,10 @@ log_cas_stmt(IRSB *sb, IRCAS *details)
 	}
 #undef HLP
 
-	args = mkIRExprVec_3(log_reads_expr(sb, details->addr),
+	args = mkIRExprVec_4(log_reads_expr(sb, details->addr),
 			     log_reads_expr(sb, cast_expdLo),
-			     log_reads_expr(sb, cast_dataLo));
+			     log_reads_expr(sb, cast_dataLo),
+			     IRExpr_Get(OFFSET_amd64_RSP, Ity_I64));
 	f = unsafeIRDirty_1_N(details->oldLo,
 			      0,
 			      helper_name,
@@ -355,10 +321,12 @@ instrument_func(VgCallbackClosure *closure,
 			IRExpr *addr = current_in_stmt->Ist.Store.addr;
 			IRExpr *data = current_in_stmt->Ist.Store.data;
 
-			out_stmt = log_write_stmt(log_reads_expr(sb_out, addr),
-						  log_reads_expr(sb_out, data),
-						  typeOfIRExpr(sb_in->tyenv,
-							       current_in_stmt->Ist.Store.data));
+			out_stmt = log_write_stmt(
+				log_reads_expr(sb_out, addr),
+				log_reads_expr(sb_out, data),
+				typeOfIRExpr(
+					sb_in->tyenv,
+					current_in_stmt->Ist.Store.data));
 			break;
 		}
 		case Ist_CAS:

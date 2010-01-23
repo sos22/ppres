@@ -151,11 +151,11 @@ record_instr(Word addr, Word rdx, Word rcx, Word rax)
 }
 
 static void
-record_load(const void *ptr, unsigned size, void *base)
+record_load(const void *ptr, unsigned size, void *base, unsigned long rsp)
 {
 	struct mem_read_record *mrr;
 	VG_(memcpy)(base, ptr, size);
-	if (!client_in_monitor()) {
+	if (!client_in_monitor() && !IS_STACK(ptr, rsp)) {
 		mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
 		mrr->ptr = (void *)ptr;
 		VG_(memcpy)(mrr + 1, base, size);
@@ -163,11 +163,11 @@ record_load(const void *ptr, unsigned size, void *base)
 }
 
 static void
-record_store(void *ptr, unsigned size, const void *base)
+record_store(void *ptr, unsigned size, const void *base, unsigned long rsp)
 {
 	struct mem_write_record *mrr;
 	VG_(memcpy)(ptr, base, size);
-	if (!client_in_monitor()) {
+	if (!client_in_monitor() && !IS_STACK(ptr, rsp)) {
 		mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
 		mrr->ptr = ptr;
 		VG_(memcpy)(mrr + 1, base, size);

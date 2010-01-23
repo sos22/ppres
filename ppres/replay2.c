@@ -372,9 +372,12 @@ rdtsc_event(void)
 }
 
 static void
-load_event(const void *ptr, unsigned size, void *read_bytes)
+load_event(const void *ptr, unsigned size, void *read_bytes,
+	   unsigned long rsp)
 {
 	VG_(memcpy)(read_bytes, ptr, size);
+	if (IS_STACK(ptr, rsp))
+		return;
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
@@ -392,9 +395,12 @@ load_event(const void *ptr, unsigned size, void *read_bytes)
 }
 
 static void
-store_event(void *ptr, unsigned size, const void *written_bytes)
+store_event(void *ptr, unsigned size, const void *written_bytes,
+	    unsigned long rsp)
 {
 	VG_(memcpy)(ptr, written_bytes, size);
+	if (IS_STACK(ptr, rsp))
+		return;
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
