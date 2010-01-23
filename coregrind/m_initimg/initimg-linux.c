@@ -186,7 +186,7 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
       *cpp++ = *origenv++;
    vg_assert(envc == (cpp - ret));
 
-   *cpp = "LD_AUDIT=/local/scratch/sos22/valgrind/ppres/ppres_audit.so";
+   *cpp = "LD_AUDIT=./ppres/ppres_audit.so";
    cpp++;
    envc++;
 
