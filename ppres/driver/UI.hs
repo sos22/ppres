@@ -138,11 +138,9 @@ runAssignment as ws =
       UIAssignment (Right (var, rhs)) ->
           do (ws', res) <- runFunction rhs ws
              case var of
-               Nothing ->
-                   do print res
-                      return ws'
-               Just v ->
-                   doAssignment ws v res
+               Nothing -> do print res
+                             doAssignment ws' "last" res
+               Just v -> doAssignment ws' v res
       
 commandLoop :: WorldState -> IO ()
 commandLoop ws =
