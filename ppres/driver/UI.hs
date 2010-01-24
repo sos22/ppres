@@ -14,19 +14,19 @@ import WorldState
 import WorkerCache
 import UIValue()
 
-data UIFunction = UIDummyFunction
-                | UIExit
-                | UIRun VariableName Integer
-                | UITrace VariableName Integer
-                | UITraceThread VariableName ThreadId
-                | UITraceAddress VariableName Word64
-                | UIRunMemory VariableName ThreadId Integer
-                | UIDir
-                | UIPrint VariableName
-                | UIVarName VariableName
+data UIExpression = UIDummyFunction
+                  | UIExit
+                  | UIRun UIExpression Integer
+                  | UITrace UIExpression Integer
+                  | UITraceThread UIExpression ThreadId
+                  | UITraceAddress UIExpression Word64
+                  | UIRunMemory UIExpression ThreadId Integer
+                  | UIDir
+                  | UIPrint UIExpression
+                  | UIVarName VariableName
 
-data UIAssignment = UIAssignment VariableName UIFunction
-                  | UIFunction UIFunction
+data UIAssignment = UIAssignment VariableName UIExpression
+                  | UIFunction UIExpression
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -44,33 +44,33 @@ keyword x = do v <- P.identifier command_lexer
 tchoice :: [Parser a] -> Parser a
 tchoice = choice . (map Text.Parsec.try)
 
-functionParser :: Parser UIFunction
-functionParser =
+expressionParser :: Parser UIExpression
+expressionParser =
     tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
              liftM (const UIExit) $ keyword "exit",
              liftM (const UIExit) $ keyword "quit",
              liftM (const UIDir) $ keyword "dir",
              do keyword "print"
-                var <- P.identifier command_lexer
+                var <- expressionParser
                 return $ UIPrint var,
              do keyword "run"
-                snap <- P.identifier command_lexer
+                snap <- expressionParser
                 cntr <- option (-1) (P.integer command_lexer)
                 return $ UIRun snap cntr,
              do keyword "trace"
-                snap <- P.identifier command_lexer
+                snap <- expressionParser
                 cntr <- option (-1) (P.integer command_lexer)
                 return $ UITrace snap cntr,
              do keyword "tracet"
-                snap <- P.identifier command_lexer
+                snap <- expressionParser
                 thr <- thread_id_parser
                 return $ UITraceThread snap thr,
              do keyword "tracem"
-                snap <- P.identifier command_lexer
+                snap <- expressionParser
                 addr <- P.integer command_lexer
                 return $ UITraceAddress snap $ fromInteger addr,
              do keyword "runm"
-                snap <- P.identifier command_lexer
+                snap <- expressionParser
                 t <- thread_id_parser
                 n <- P.integer command_lexer
                 return $ UIRunMemory snap t n,
@@ -82,9 +82,9 @@ assignmentParser :: Parser UIAssignment
 assignmentParser =
     tchoice [do var <- P.identifier command_lexer
                 P.reservedOp command_lexer "="
-                rhs <- functionParser
+                rhs <- expressionParser
                 return $ UIAssignment var rhs,
-             do rhs <- functionParser
+             do rhs <- expressionParser
                 return $ UIFunction rhs ]
 
 getCommand :: IO UIAssignment
@@ -97,20 +97,20 @@ getCommand =
                         getCommand
          Right v -> return v
 
-withSnapshot :: VariableName -> (History -> WorldMonad UIValue) -> WorldMonad UIValue
-withSnapshot name f =
-    do s <- lookupSnapshot name
+withSnapshot :: UIExpression -> (History -> WorldMonad UIValue) -> WorldMonad UIValue
+withSnapshot expr f =
+    do s <- evalExpression expr
        case s of
-         Nothing -> do liftIO $ putStrLn $ "Can't find snapshot " ++ name
-                       return UIValueNull
-         Just s' -> f s'
+         UIValueSnapshot s' -> f s'
+         _ -> do liftIO $ putStrLn $ "Needed a snapshot, got " ++ (show s)
+                 return UIValueNull
 
 maybeSnapshotToUIValue :: Maybe History -> UIValue
 maybeSnapshotToUIValue Nothing = UIValueNull
 maybeSnapshotToUIValue (Just s) = UIValueSnapshot s
 
-runFunction :: UIFunction -> WorldMonad UIValue
-runFunction f =
+evalExpression :: UIExpression -> WorldMonad UIValue
+evalExpression f =
     case f of
       UIDummyFunction -> return UIValueNull
       UIExit -> do exitWorld
@@ -124,11 +124,9 @@ runFunction f =
              liftIO $ mapM_ (print . fst) $ ws_bindings ws
              return UIValueNull
       UIPrint var ->
-          do r <- lookupVariable var
-             liftIO $ case r of
-                        Nothing -> putStrLn $ "no variable " ++ var
-                        Just v -> print v
-             return UIValueNull
+          do r <- evalExpression var
+             liftIO $ print r
+             return r
       UIRun name cntr ->
           withSnapshot name $ \s ->
               return $ maybeSnapshotToUIValue $ run s cntr
@@ -149,10 +147,10 @@ runAssignment :: UIAssignment -> WorldMonad ()
 runAssignment as =
     case as of
       UIAssignment var rhs ->
-          do res <- runFunction rhs
+          do res <- evalExpression rhs
              doAssignment var res
       UIFunction f ->
-          do res <- runFunction f
+          do res <- evalExpression f
              doAssignment "last" res
 
 commandLoop :: WorldMonad ()
