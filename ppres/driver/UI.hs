@@ -17,7 +17,6 @@ import UIValue
 
 data UICommand = UIExit
                | UIWhereAmI
-               | UIActivateSnapshot VariableName
                  deriving Show
 
 data UIFunction = UIDummyFunction
@@ -47,7 +46,6 @@ commandParser =
          "quit" -> return UIExit
          "loc" -> return UIWhereAmI
          "whereami" -> return UIWhereAmI
-         "activate" -> liftM UIActivateSnapshot (P.identifier command_lexer)
          _ -> unexpected ("keyword " ++ w)
 
 keyword :: String -> Parser String
@@ -114,13 +112,6 @@ runCommand UIExit =
     do ws <- get
        sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
                   liftIO $ exitWith ExitSuccess]
-runCommand (UIActivateSnapshot sid) =
-    do s <- lookupVariable sid
-       case s of
-         Nothing -> liftIO $ putStrLn ("Cannot find snapshot " ++ (show sid))
-         Just (UIValueSnapshot s') ->
-             modify $ \ws -> ws { ws_worker = s' }
-         _ -> liftIO $ putStrLn "Not a snapshot"
 
 runFunction :: UIFunction -> WorldMonad UIValue
 runFunction f =

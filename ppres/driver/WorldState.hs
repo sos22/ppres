@@ -12,8 +12,7 @@ initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
        let root_snap = Worker f
-       return $ WorldState { ws_worker = root_snap,
-                             ws_bindings = [("root", UIValueSnapshot root_snap)] }
+       return $ WorldState { ws_bindings = [("root", UIValueSnapshot root_snap)] }
 
 lookupVariable :: VariableName -> WorldMonad (Maybe UIValue)
 lookupVariable name =

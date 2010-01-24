@@ -1,5 +1,4 @@
-module Worker(withWorker,
-              killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
+module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
               takeSnapshot, runWorker, traceAddressWorker
              ) where
 
@@ -57,9 +56,6 @@ runMemoryWorker worker tid cntr =
        if ack /= 0
           then liftIO $ putStrLn "error running worker"
           else return ()
-
-withWorker :: (Worker -> WorldMonad ()) -> WorldMonad ()
-withWorker f = get >>= (f . ws_worker)
 
 takeSnapshot :: Worker -> WorldMonad (Maybe Worker)
 takeSnapshot worker =
