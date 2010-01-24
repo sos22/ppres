@@ -88,7 +88,6 @@ do_snapshot(int parent_fd)
 	long child;
 	int r;
 
-	VG_(printf)("Snapshoting worker.\n");
 	r = socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
 	if (r < 0)
 		VG_(tool_panic)((Char *)"error creating socket pair");

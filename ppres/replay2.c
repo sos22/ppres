@@ -274,8 +274,6 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer)
 	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
 	tl_assert(!rt->dead);
 
-	if (last_run != rt->id)
-		VG_(printf)("%d: Go to thread %d\n", record_nr, rt->id);
 	last_run = rt->id;
 	cer->type = EVENT_nothing;
 	current_thread = rt;
@@ -767,7 +765,6 @@ replay_syscall(const struct syscall_record *sr,
 		break;
 
 	case __NR_exit:
-		VG_(printf)("%d: Thread %d exits.\n", record_nr, rt->id);
 		rt->dead = True;
 		finish_this_record(logfile);
 		break;
@@ -839,10 +836,8 @@ replay_syscall(const struct syscall_record *sr,
 		/* Try to issue the syscall.  This gets caught in
 		   replay_clone_syscall() and turned into a coroutine
 		   create. */
-		if (!sr_isError(sr->syscall_res)) {
-			VG_(printf)("%d: Spawning a new thread.\n", record_nr);
+		if (!sr_isError(sr->syscall_res))
 			VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
-		}
 
 		state->guest_RAX = sysres_to_eax(sr->syscall_res);
 		finish_this_record(logfile);
@@ -964,8 +959,6 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_response(0);
 		my__exit(0);
 	case WORKER_RUN:
-		VG_(printf)("Run for %ld records (at %d)\n",
-			    cmd->u.run.nr, record_nr);
 		run_for_n_records(logfile, cmd->u.run.nr);
 		send_response(0);
 		break;
@@ -1009,8 +1002,6 @@ replay_machine_fn(void)
 	struct record_consumer logfile;
 	struct control_command cmd;
 
-	VG_(printf)("Replay machine starting.\n");
-
 	open_logfile(&logfile, (Char *)"logfile1");
 
 	while (1) {
@@ -1018,7 +1009,6 @@ replay_machine_fn(void)
 		run_control_command(&cmd, &logfile);
 	}
 
-	VG_(printf)("Hit end of log.\n");
 	my__exit(0);
 }
 
@@ -1032,7 +1022,6 @@ init(void)
 	head_thread->id = 1;
 	initialise_coroutine(&head_thread->coroutine, "head thread");
 
-	VG_(printf)("Running replay machine.\n");
 	run_coroutine(&head_thread->coroutine, &replay_machine,
 		      "start of day");
 
@@ -1051,22 +1040,16 @@ newly_spawning_thread;
 static void
 new_thread_starting(void)
 {
-	VG_(printf)("%d: In new thread\n", record_nr);
-	if (!creating_new_thread) {
-		VG_(printf)("Main thread\n");
+	if (!creating_new_thread)
 		return;
-	}
 
 	newly_spawning_thread->id = VG_(running_tid);
 	newly_spawning_thread->next = head_thread;
 	head_thread = newly_spawning_thread;
 
-	VG_(printf)("New thread is id %d, switching back to parent.\n",
-		    VG_(running_tid));
 	run_coroutine(&newly_spawning_thread->coroutine,
 		      &creating_thread_coroutine,
 		      "new_thread_starting");
-	VG_(printf)("New thread starts for real in %d\n", VG_(running_tid));
 }
 
 /* We tweak Valgrind to call this rather than the normal sys_clone()
@@ -1081,16 +1064,11 @@ replay_clone_syscall(Word (*fn)(void *),
 		     Long *parent_tid,
 		     vki_modify_ldt_t *modify_ldt)
 {
-	VG_(printf)("%d: Clone syscall\n", record_nr);
-
 	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
 	tl_assert(!creating_new_thread);
 	creating_new_thread = True;
 
 	initialise_coroutine(&creating_thread_coroutine, "creating thread coroutine");
-
-	VG_(printf)("Current thread %p, id %d\n", current_thread,
-		    VG_(running_tid));
 
 	newly_spawning_thread = VG_(malloc)("child thread",
 					    sizeof(struct replay_thread));
@@ -1110,8 +1088,6 @@ replay_clone_syscall(Word (*fn)(void *),
 
 	VG_(running_tid) = VG_INVALID_THREADID;
 
-	VG_(printf)("New thread spawned, my id now %d\n",
-		    VG_(running_tid));
 	tl_assert(creating_new_thread);
 	creating_new_thread = False;
 
@@ -1127,7 +1103,6 @@ fini(Int ignore)
 static Bool
 process_cmd_line(Char *argv)
 {
-	VG_(printf)("argv %s\n", argv);
 	if (!VG_(strcmp)(argv, (Char *)"--use-footsteps")) {
 		use_footsteps = True;
 		return True;
