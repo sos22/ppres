@@ -3,6 +3,7 @@ module Types where
 import Data.Word
 import Network.Socket
 import Control.Monad.State
+import Numeric
 
 type ThreadId = Integer
 type VariableName = String
@@ -18,7 +19,11 @@ data Worker = Worker { worker_fd :: Socket }
 
 data TraceLocation = TraceLocation { trc_record :: Integer,
                                      trc_access :: Integer,
-                                     trc_thread :: ThreadId } deriving Show
+                                     trc_thread :: ThreadId }
+
+instance Show TraceLocation where
+    show tl = (show $ trc_record tl) ++ ":" ++ (show $ trc_access tl) ++ ":" ++ (show $ trc_thread tl)
+
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
                                   trc_foot_rcx :: Word64,
@@ -36,10 +41,28 @@ data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                 | TraceCalling { trc_calling :: String }
                 | TraceCalled { trc_called :: String }
                 | TraceEnterMonitor
-                | TraceExitMonitor deriving Show
+                | TraceExitMonitor
+
+instance Show TraceEntry where
+    show (TraceFootstep rip _ _ _ ) = "footstep " ++ (showHex rip "")
+    show (TraceSyscall nr) = "syscall " ++ (show nr)
+    show (TraceRdtsc) = "rdtsc"
+    show (TraceLoad val _ ptr mon) =
+        "load " ++ (showHex ptr $ " -> " ++ (showHex val (if mon then " (monitor)"
+                                                          else "")))
+    show (TraceStore val _ ptr mon) =
+        "store " ++ (showHex ptr $ " -> " ++ (showHex val (if mon then " (monitor)"
+                                                           else "")))
+    show (TraceCalling c) = "calling " ++ c
+    show (TraceCalled c) = "called " ++ c
+    show TraceEnterMonitor = "enter monitor"
+    show TraceExitMonitor = "exit monitor"
 
 data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
-                                 trc_loc :: TraceLocation } deriving Show
+                                 trc_loc :: TraceLocation }
+
+instance Show TraceRecord where
+    show tr = (show $ trc_loc tr) ++ "\t" ++ (show $ trc_trc tr)
 
 data UIValue = UIValueNull
              | UIValueSnapshot History
