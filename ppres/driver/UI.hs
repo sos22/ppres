@@ -16,7 +16,6 @@ import WorldState
 import UIValue
 
 data UICommand = UIExit
-               | UIWhereAmI
                  deriving Show
 
 data UIFunction = UIDummyFunction
@@ -44,8 +43,6 @@ commandParser =
        case w of
          "exit" -> return UIExit
          "quit" -> return UIExit
-         "loc" -> return UIWhereAmI
-         "whereami" -> return UIWhereAmI
          _ -> unexpected ("keyword " ++ w)
 
 keyword :: String -> Parser String
