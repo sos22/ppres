@@ -47,8 +47,49 @@ killWorker worker =
 runWorker :: Worker -> Integer -> IO Bool
 runWorker worker = trivCommand worker . runPacket
 
-traceWorker :: Worker -> Integer -> IO Bool
-traceWorker worker = trivCommand worker . tracePacket
+ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
+ancillaryDataToTrace [] = []
+ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
+ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
+    let (loc', other_args) = splitAt 3 args
+        loc = TraceLocation { trc_record = toInteger $ loc'!!0,
+                              trc_access = toInteger $ loc'!!1,
+                              trc_thread = fromIntegral $ loc'!!2 }
+        (entry, rest) =
+            case code of
+              1 -> (TraceFootstep { trc_foot_rip = fromIntegral $ other_args!!0,
+                                    trc_foot_rdx = fromIntegral $ other_args!!1,
+                                    trc_foot_rcx = fromIntegral $ other_args!!2,
+                                    trc_foot_rax = fromIntegral $ other_args!!3 },
+                    rs)
+              2 -> (TraceSyscall { trc_sys_nr = fromIntegral $ other_args!!0 },
+                    rs)
+              3 -> (TraceRdtsc, rs)
+              4 -> (TraceLoad { trc_load_val = fromIntegral $ other_args!!0,
+                                trc_load_size = fromIntegral $ other_args!!1,
+                                trc_load_ptr = fromIntegral $ other_args!!2,
+                                trc_load_in_monitor = other_args!!3 /= 0 }, rs)
+              5 -> (TraceStore { trc_store_val = fromIntegral $ other_args!!0,
+                                 trc_store_size = fromIntegral $ other_args!!1,
+                                 trc_store_ptr = fromIntegral $ other_args!!2,
+                                 trc_store_in_monitor = other_args!!3 /= 0 }, rs)
+              6 -> (case head rs of
+                      ResponseDataString s -> TraceCalling s
+                      _ -> error "mangled trace", tail rs)
+              7 -> (case head rs of
+                      ResponseDataString s -> TraceCalled s
+                      _ -> error "mangled trace", tail rs)
+              8 -> (TraceEnterMonitor, rs)
+              9 -> (TraceExitMonitor, rs)
+              _ -> error $ "bad trace ancillary code " ++ (show code)
+    in (TraceRecord { trc_trc = entry, trc_loc = loc }):(ancillaryDataToTrace rest)
+         
+    
+traceWorker :: Worker -> Integer -> IO [TraceRecord]
+traceWorker worker cntr =
+    do (ResponsePacket s args) <- sendWorkerCommand worker $ tracePacket cntr
+       if s then return $ ancillaryDataToTrace args
+          else return []
 
 traceThreadWorker :: Worker -> ThreadId -> IO Bool
 traceThreadWorker worker = trivCommand worker . traceThreadPacket

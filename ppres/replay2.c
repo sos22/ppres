@@ -316,148 +316,6 @@ do {                                                              \
 	_client_event();                                          \
 } while (0)
 
-#define _TRACE(fmt, args...)                             \
-	VG_(printf)("%d:%d:%d: " fmt "\n",               \
-		    record_nr,                           \
-		    access_nr,                           \
-		    current_thread->id,			 \
-		    ## args)
-
-#define TRACE(fmt, args...)                              \
-do {                                                     \
-	if (trace_mode) _TRACE(fmt, ## args);		 \
-} while (0)
-
-/* The various events.  These are the bits which run in client
-   context. */
-static void
-footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
-{
-	if (!current_thread->in_monitor) {
-		TRACE("footstep(%lx, rcx = %lx)", rip, rcx);
-		if (use_footsteps)
-			event(EVENT_footstep, rip, rdx, rcx, rax);
-	}
-}
-
-static void
-syscall_event(VexGuestAMD64State *state)
-{
-	if (current_thread->in_monitor) {
-		VG_(client_syscall)(VG_(running_tid), VEX_TRC_JMP_SYS_SYSCALL);
-	} else {
-		TRACE("syscall(%lld)", state->guest_RAX);
-		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
-		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
-	}
-}
-
-static ULong
-rdtsc_event(void)
-{
-	if (current_thread->in_monitor) {
-		/* This is obviously non-deterministic.  We rely on
-		   the in-client monitor code to do the right
-		   thing. */
-		unsigned eax, edx;
-		__asm__ __volatile__("rdtsc" : "=a" (eax), "=d" (edx));
-		return (((ULong)edx) << 32) | ((ULong)eax);
-	} else {
-		TRACE("rdtsc");
-		event(EVENT_rdtsc);
-		return current_thread->rdtsc_result;
-	}
-}
-
-static void
-load_event(const void *ptr, unsigned size, void *read_bytes,
-	   unsigned long rsp)
-{
-	VG_(memcpy)(read_bytes, ptr, size);
-	if (IS_STACK(ptr, rsp))
-		return;
-	if ( (ptr <= (const void *)trace_address &&
-	      ptr + size > (const void *)trace_address) ||
-	    (trace_mode && !current_thread->in_monitor))
-		_TRACE("Load %lx(%d) from %p%s",
-		       size == 8 ?
-		       *(unsigned long *)read_bytes :
-		       *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
-		       size, ptr,
-		       current_thread->in_monitor ? " (monitor)" : "");
-	if (!current_thread->in_monitor) {
-		access_nr++;
-		event(EVENT_load, (unsigned long)ptr, size,
-		      (unsigned long)read_bytes);
-	}
-}
-
-static void
-store_event(void *ptr, unsigned size, const void *written_bytes,
-	    unsigned long rsp)
-{
-	VG_(memcpy)(ptr, written_bytes, size);
-	if (IS_STACK(ptr, rsp))
-		return;
-	if ( (ptr <= (const void *)trace_address &&
-	      ptr + size > (const void *)trace_address) ||
-	    (trace_mode && !current_thread->in_monitor))
-		_TRACE("Store %lx(%d) to %p%s",
-		       size == 8 ?
-		       *(unsigned long *)written_bytes :
-		       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
-		       size, ptr,
-		       current_thread->in_monitor ? " (monitor)" : "");
-	if (!current_thread->in_monitor) {
-		access_nr++;
-		event(EVENT_store, (unsigned long)ptr, size,
-		      (unsigned long)written_bytes);
-	}
-}
-
-static Bool
-client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
-{
-	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
-		/* We are in generated code here, despite what
-		   Valgrind might think about it. */
-		VG_(in_generated_code) = True;
-		TRACE("%s %s",
-		      arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY ?
-		      "call" : "called",
-		      (char *)arg_block[1]);
-		event(EVENT_client_request, arg_block[0], arg_block[1]);
-		VG_(in_generated_code) = False;
-		*ret = 0;
-		return True;
-	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
-		if ((arg_block[0] & 0xffff) == 0) {
-			TRACE("entering monitor");
-			current_thread->in_monitor = True;
-		} else {
-			TRACE("exiting monitor");
-			current_thread->in_monitor = False;
-		}
-		*ret = 0;
-		return True;
-	} else {
-		return False;
-	}
-}
-
-#define included_for_replay
-#include "transform_expr.c"
-
-
-static struct replay_thread *
-get_thread_by_id(ThreadId id)
-{
-	struct replay_thread *rt;
-	for (rt = head_thread; rt && rt->id != id; rt = rt->next)
-		;
-	return rt;
-}
-
 static void
 send_okay(void)
 {
@@ -543,6 +401,154 @@ get_control_command(struct control_command *cmd)
 		VG_(tool_panic)((Char *)"bad worker command");
 	}
 	return;
+}
+
+#define _TRACE(code, args...)                             \
+	send_ancillary(ANCILLARY_TRACE_ ## code,	  \
+		       record_nr,			  \
+		       access_nr,			  \
+		       current_thread->id,		  \
+		       ## args)
+
+#define TRACE(code, args...)				  \
+	do {						  \
+		if (trace_mode) _TRACE(code, ## args);	  \
+	} while (0)
+
+/* The various events.  These are the bits which run in client
+   context. */
+static void
+footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
+{
+	if (!current_thread->in_monitor) {
+		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
+		if (use_footsteps)
+			event(EVENT_footstep, rip, rdx, rcx, rax);
+	}
+}
+
+static void
+syscall_event(VexGuestAMD64State *state)
+{
+	if (current_thread->in_monitor) {
+		VG_(client_syscall)(VG_(running_tid), VEX_TRC_JMP_SYS_SYSCALL);
+	} else {
+		TRACE(SYSCALL, state->guest_RAX);
+		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
+		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
+	}
+}
+
+static ULong
+rdtsc_event(void)
+{
+	if (current_thread->in_monitor) {
+		/* This is obviously non-deterministic.  We rely on
+		   the in-client monitor code to do the right
+		   thing. */
+		unsigned eax, edx;
+		__asm__ __volatile__("rdtsc" : "=a" (eax), "=d" (edx));
+		return (((ULong)edx) << 32) | ((ULong)eax);
+	} else {
+		TRACE(RDTSC);
+		event(EVENT_rdtsc);
+		return current_thread->rdtsc_result;
+	}
+}
+
+static void
+load_event(const void *ptr, unsigned size, void *read_bytes,
+	   unsigned long rsp)
+{
+	VG_(memcpy)(read_bytes, ptr, size);
+	if (IS_STACK(ptr, rsp))
+		return;
+	if ( (ptr <= (const void *)trace_address &&
+	      ptr + size > (const void *)trace_address) ||
+	    (trace_mode && !current_thread->in_monitor))
+		_TRACE(LOAD,
+		       size == 8 ?
+		       *(unsigned long *)read_bytes :
+		       *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
+		       size,
+		       (unsigned long)ptr,
+		       current_thread->in_monitor);
+	if (!current_thread->in_monitor) {
+		access_nr++;
+		event(EVENT_load, (unsigned long)ptr, size,
+		      (unsigned long)read_bytes);
+	}
+}
+
+static void
+store_event(void *ptr, unsigned size, const void *written_bytes,
+	    unsigned long rsp)
+{
+	VG_(memcpy)(ptr, written_bytes, size);
+	if (IS_STACK(ptr, rsp))
+		return;
+	if ( (ptr <= (const void *)trace_address &&
+	      ptr + size > (const void *)trace_address) ||
+	    (trace_mode && !current_thread->in_monitor))
+		_TRACE(STORE,
+		       size == 8 ?
+		       *(unsigned long *)written_bytes :
+		       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
+		       size,
+		       (unsigned long)ptr,
+		       current_thread->in_monitor);
+	if (!current_thread->in_monitor) {
+		access_nr++;
+		event(EVENT_store, (unsigned long)ptr, size,
+		      (unsigned long)written_bytes);
+	}
+}
+
+static Bool
+client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
+{
+	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
+		/* We are in generated code here, despite what
+		   Valgrind might think about it. */
+		VG_(in_generated_code) = True;
+		if (trace_mode) {
+			if (arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY)
+				_TRACE(CALLING);
+			else
+				_TRACE(CALLED);
+			send_string(VG_(strlen)((Char *)arg_block[1]),
+				    (const char *)arg_block[1]);
+		}
+		event(EVENT_client_request, arg_block[0], arg_block[1]);
+		VG_(in_generated_code) = False;
+		*ret = 0;
+		return True;
+	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
+		if ((arg_block[0] & 0xffff) == 0) {
+			TRACE(ENTER_MONITOR);
+			current_thread->in_monitor = True;
+		} else {
+			TRACE(EXIT_MONITOR);
+			current_thread->in_monitor = False;
+		}
+		*ret = 0;
+		return True;
+	} else {
+		return False;
+	}
+}
+
+#define included_for_replay
+#include "transform_expr.c"
+
+
+static struct replay_thread *
+get_thread_by_id(ThreadId id)
+{
+	struct replay_thread *rt;
+	for (rt = head_thread; rt && rt->id != id; rt = rt->next)
+		;
+	return rt;
 }
 
 static void

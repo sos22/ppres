@@ -97,9 +97,13 @@ run :: History -> Integer -> Maybe History
 run start cntr =
     cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
 
-trace :: History -> Integer -> Maybe History
+trace :: History -> Integer -> (History, [TraceRecord])
 trace start cntr =
-    cmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
+    let newHist = appendHistory start (HistoryRun cntr)
+    in unsafePerformIO $ do worker <- getWorker start
+                            t <- traceWorker worker cntr
+                            registerWorker newHist worker
+                            return (newHist, t)
 
 traceThread :: History -> ThreadId -> Maybe History
 traceThread start thr =

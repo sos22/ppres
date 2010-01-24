@@ -149,7 +149,9 @@ evalExpression f =
               return $ maybeSnapshotToUIValue $ run s cntr
       UITrace name cntr ->
           withSnapshot name $ \s ->
-              return $ maybeSnapshotToUIValue $ trace s cntr
+              return $ let (hist, trc) = trace s cntr
+                       in UIValuePair (UIValueSnapshot hist)
+                              (UIValueList $ map UIValueTrace trc)
       UITraceThread name thr ->
           withSnapshot name $ \s ->
               return $ maybeSnapshotToUIValue $ traceThread s thr

@@ -1,4 +1,4 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ForeignFunctionInterface, ScopedTypeVariables #-}
 module Socket(sendSocketCommand, recvSocket, fdToSocket, recvStringBytes,
               ControlPacket(..), ResponsePacket(..), ResponseData(..))
     where
@@ -45,26 +45,23 @@ sendPacket handle (ControlPacket command args) =
                c_send (socketToFd handle) ptr (fromInteger $ toInteger packet_size) 0
     in allocaBytes (8 * (length args + 1)) send_packet >> return ()
 
-recvStringBytes :: Socket -> Int32 -> IO String
-recvStringBytes sock len =
-    let peekArray :: Storable a => Ptr a -> Int -> IO [a]
+recvArray :: Storable a => Int -> Socket -> Int -> IO [a]
+recvArray s sock nr_items =
+    let len = s * nr_items
+
         peekArray _ 0 = return []
         peekArray ptr count =
             do i <- peek ptr
-               let s = sizeOf i
-               if count < s
-                then error "weird: peeking array but size of array not multiple of size of element"
-                else do rest <- peekArray (ptr `plusPtr` s) (count - s)
-                        return $ i:rest
-                       
-        bufferToString :: Ptr Word8 -> Int -> IO String
-        bufferToString ptr l =
-            do bytes <- peekArray ptr l
-               return $ map (chr.fromIntegral) bytes
-    in
-      allocaBytes (fromIntegral len) $ \buffer ->
-        do (r, _) <- recvBufFrom sock buffer (fromIntegral len)
-           bufferToString buffer r
+               rest <- peekArray (ptr `plusPtr` s) (count - 1)
+               return $ i:rest
+    in allocaBytes len $ \ptr ->
+        do (r, _) <- recvBufFrom sock ptr len
+           peekArray ptr nr_items
+
+recvStringBytes :: Socket -> Int32 -> IO String
+recvStringBytes sock len =
+    do (bytes::[Word8]) <- recvArray 1 sock (fromIntegral len)
+       return $ map (chr.fromIntegral) bytes
 
 getResponse :: Socket -> IO ResponsePacket
 getResponse handle =
@@ -72,7 +69,11 @@ getResponse handle =
         getInt32 = allocaBytes 4 $ \ptr -> do recvBufFrom handle ptr 4
                                               peek ptr
         getAncillary :: IO ResponseData
-        getAncillary = error "Write me"
+        getAncillary =
+            do code <- getInt32
+               nr_args <- getInt32
+               args <- recvArray 8 handle (fromIntegral nr_args)
+               return $ ResponseDataAncillary (fromIntegral code) args
         getString :: IO ResponseData
         getString = do bytes <- getInt32
                        s <- recvStringBytes handle bytes

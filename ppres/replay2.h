@@ -33,6 +33,15 @@ struct response_message {
 	unsigned response;
 };
 
+#define ANCILLARY_TRACE_FOOTSTEP 1
+#define ANCILLARY_TRACE_SYSCALL 2
+#define ANCILLARY_TRACE_RDTSC 3
+#define ANCILLARY_TRACE_LOAD 4
+#define ANCILLARY_TRACE_STORE 5
+#define ANCILLARY_TRACE_CALLING 6
+#define ANCILLARY_TRACE_CALLED 7
+#define ANCILLARY_TRACE_ENTER_MONITOR 8
+#define ANCILLARY_TRACE_EXIT_MONITOR 9
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
