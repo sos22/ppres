@@ -7,3 +7,4 @@ instance Show UIValue where
     show (UIValueSnapshot s) = show s
     show (UIValuePair a b) = "(" ++ (show a) ++ ", " ++ (show b) ++ ")"
     show (UIValueString s) = s
+    show (UIValueError e) = "ERR " ++ e

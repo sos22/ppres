@@ -1,5 +1,5 @@
 module WorldState(initialWorldState, doAssignment, lookupVariable,
-                  lookupSnapshot, exitWorld) where
+                  exitWorld) where
 
 import System.Exit
 import Foreign.C.Types
@@ -17,18 +17,12 @@ initialWorldState fd =
        initWorkerCache root_snap
        return $ WorldState { ws_bindings = [("start", UIValueSnapshot emptyHistory)] }
 
-lookupVariable :: VariableName -> WorldMonad (Maybe UIValue)
+lookupVariable :: VariableName -> WorldMonad UIValue
 lookupVariable name =
     do s <- get
-       return $ lookup name $ ws_bindings s
-
-lookupSnapshot :: VariableName -> WorldMonad (Maybe History)
-lookupSnapshot name =
-    do s <- lookupVariable name
-       case s of
-         Just (UIValueSnapshot s') -> return $ Just s'
-         _ -> do liftIO $ putStrLn $ name ++ " is not a snapshot"
-                 return Nothing
+       return $ case lookup name $ ws_bindings s of
+                  Nothing -> UIValueError $ name ++ " not found"
+                  Just s' -> s'
 
 doAssignment :: VariableName -> UIValue -> WorldMonad ()
 doAssignment name val =

@@ -19,6 +19,7 @@ data UIValue = UIValueNull
              | UIValueSnapshot History
              | UIValuePair UIValue UIValue
              | UIValueString String
+             | UIValueError String
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }

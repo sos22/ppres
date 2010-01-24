@@ -113,8 +113,7 @@ withSnapshot expr f =
     do s <- evalExpression expr
        case s of
          UIValueSnapshot s' -> f s'
-         _ -> do liftIO $ putStrLn $ "Needed a snapshot, got " ++ (show s)
-                 return UIValueNull
+         _ -> return $ UIValueError $ "Needed a snapshot, got " ++ (show s)
 
 maybeSnapshotToUIValue :: Maybe History -> UIValue
 maybeSnapshotToUIValue Nothing = UIValueNull
@@ -126,10 +125,7 @@ evalExpression f =
       UIDummyFunction -> return UIValueNull
       UIExit -> do exitWorld
                    return UIValueNull
-      UIVarName name -> do r <- lookupVariable name
-                           return $ case r of
-                                      Nothing -> UIValueNull
-                                      Just x -> x
+      UIVarName name -> lookupVariable name
       UIPair a b ->
           do a' <- evalExpression a
              b' <- evalExpression b
