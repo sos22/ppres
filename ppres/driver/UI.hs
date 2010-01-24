@@ -26,7 +26,7 @@ data UICommand = UIExit
                  deriving Show
 
 data UIFunction = UIDummyFunction
-                | UISnapshot
+                | UISnapshot VariableName
 
 data UIAssignment = UICommand UICommand
                   | UIAssignment VariableName UIFunction
@@ -65,12 +65,10 @@ keyword x = do v <- P.identifier command_lexer
 
 functionParser :: Parser UIFunction
 functionParser =
-    let chooseKeyword ks =
-            choice $
-            map Text.Parsec.try [liftM (const cons) $ keyword key |
-                                 (cons, key) <- ks]
-    in chooseKeyword [(UIDummyFunction, "dummy"),
-                      (UISnapshot, "snapshot")]
+    let tchoice = choice . (map Text.Parsec.try)
+    in tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
+                do keyword "snapshot"
+                   liftM UISnapshot $ P.identifier command_lexer]
 
 assignmentParser :: Parser UIAssignment
 assignmentParser =
@@ -129,14 +127,21 @@ runFunction :: UIFunction -> WorldState -> IO (WorldState, UIValue)
 runFunction f ws =
     case f of
       UIDummyFunction -> return (ws, UIValueNull)
-      UISnapshot ->
-          do s <- takeSnapshot $ ws_worker ws
-             case s of
-               Nothing ->
-                   do putStrLn "cannot take snapshot"
-                      return (ws, UIValueNull)
-               Just s' ->
-                   return (ws, UIValueSnapshot s')
+      UISnapshot vname ->
+          let p = case lookupVariable vname ws of
+                     Just (UIValueSnapshot s) -> Just s
+                     _ -> Nothing
+          in case p of
+               Nothing -> do putStrLn "Can't find parent snapshot"
+                             return (ws, UIValueNull)
+               Just parent ->
+                   do s <- takeSnapshot parent
+                      case s of
+                        Nothing ->
+                            do putStrLn "cannot take snapshot"
+                               return (ws, UIValueNull)
+                        Just s' ->
+                            return (ws, UIValueSnapshot s')
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
