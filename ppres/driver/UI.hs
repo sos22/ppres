@@ -23,10 +23,10 @@ data UIFunction = UIDummyFunction
                 | UIRunMemory VariableName ThreadId Integer
                 | UIDir
                 | UIPrint VariableName
+                | UIVarName VariableName
 
 data UIAssignment = UIAssignment VariableName UIFunction
                   | UIFunction UIFunction
-                  | UIRename VariableName VariableName
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -73,7 +73,9 @@ functionParser =
                 snap <- P.identifier command_lexer
                 t <- thread_id_parser
                 n <- P.integer command_lexer
-                return $ UIRunMemory snap t n
+                return $ UIRunMemory snap t n,
+             do ident <- P.identifier command_lexer
+                return $ UIVarName ident
             ]
 
 assignmentParser :: Parser UIAssignment
@@ -83,11 +85,7 @@ assignmentParser =
                 rhs <- functionParser
                 return $ UIAssignment var rhs,
              do rhs <- functionParser
-                return $ UIFunction rhs,
-             do dest <- P.identifier command_lexer
-                P.reservedOp command_lexer "<-"
-                src <- P.identifier command_lexer
-                return $ UIRename dest src]
+                return $ UIFunction rhs ]
 
 getCommand :: IO UIAssignment
 getCommand =
@@ -117,6 +115,10 @@ runFunction f =
       UIDummyFunction -> return UIValueNull
       UIExit -> do exitWorld
                    return UIValueNull
+      UIVarName name -> do r <- lookupVariable name
+                           return $ case r of
+                                      Nothing -> UIValueNull
+                                      Just x -> x
       UIDir ->
           do ws <- get
              liftIO $ mapM_ (print . fst) $ ws_bindings ws
@@ -152,8 +154,6 @@ runAssignment as =
       UIFunction f ->
           do res <- runFunction f
              doAssignment "last" res
-      UIRename dest src ->
-          doRename dest src
 
 commandLoop :: WorldMonad ()
 commandLoop =
