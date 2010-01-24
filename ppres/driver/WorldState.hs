@@ -103,50 +103,34 @@ registerWorker hist worker =
        put $ ws { ws_workers = new_workers}
        mapM_ (killWorker . snd) dead_workers
 
+cmd :: HistoryEntry -> History -> (Worker -> WorldMonad a) -> WorldMonad (Maybe History)
+cmd he start w =
+    let newHist = appendHistory start he
+    in do worker <- getWorker start
+          w worker
+          registerWorker newHist worker
+          return $ Just newHist
+
 run :: History -> Integer -> WorldMonad (Maybe History)
 run start cntr =
-    let newHist = appendHistory start (HistoryRun cntr)
-    in
-    do worker <- getWorker start
-       runWorker worker cntr
-       registerWorker newHist worker
-       return $ Just newHist
+    cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
 
 trace :: History -> Integer -> WorldMonad (Maybe History)
 trace start cntr =
-    let newHist = appendHistory start (HistoryRun cntr)
-    in
-    do worker <- getWorker start
-       traceWorker worker cntr
-       registerWorker newHist worker
-       return $ Just newHist
+    cmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
 traceThread :: History -> ThreadId -> WorldMonad (Maybe History)
 traceThread start thr =
-    let newHist = appendHistory start (HistoryRunThread thr)
-    in
-    do worker <- getWorker start
-       traceThreadWorker worker thr
-       registerWorker newHist worker
-       return $ Just newHist
+    cmd (HistoryRunThread thr) start $ \worker -> traceThreadWorker worker thr
 
 traceAddress :: History -> Word64 -> WorldMonad (Maybe History)
 traceAddress start addr =
-    let newHist = appendHistory start (HistoryRun $ -1)
-    in
-    do worker <- getWorker start
-       traceAddressWorker worker addr
-       registerWorker newHist worker
-       return $ Just newHist
+    cmd (HistoryRun $ -1) start $ \worker -> traceAddressWorker worker addr
 
 runMemory :: History -> ThreadId -> Integer -> WorldMonad (Maybe History)
 runMemory start tid cntr =
-    let newHist = appendHistory start (HistoryRunMemory tid cntr)
-    in
-    do worker <- getWorker start
-       runMemoryWorker worker tid cntr
-       registerWorker newHist worker
-       return $ Just newHist
+    cmd (HistoryRunMemory tid cntr) start $
+            \worker -> runMemoryWorker worker tid cntr
 
 exitWorld :: WorldMonad ()
 exitWorld =
