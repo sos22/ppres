@@ -114,7 +114,7 @@ runMemory start tid cntr =
     cmd (HistoryRunMemory tid cntr) start $
             \worker -> runMemoryWorker worker tid cntr
 
-threadState :: History -> Maybe String
+threadState :: History -> Maybe [String]
 threadState hist =
     unsafePerformIO $ do worker <- getWorker hist
                          res <- threadStateWorker worker

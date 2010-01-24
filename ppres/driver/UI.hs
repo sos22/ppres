@@ -163,7 +163,7 @@ evalExpression f =
           withSnapshot name $ \s ->
               return $ case threadState s of
                          Nothing -> UIValueNull
-                         Just s' -> UIValueString s'
+                         Just s' -> UIValueList $ map UIValueString s'
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =

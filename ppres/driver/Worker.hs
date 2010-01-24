@@ -68,16 +68,12 @@ takeSnapshot worker =
                 return $ Just $ Worker {worker_fd = newFd }
         else return Nothing
 
-threadStateWorker :: Worker -> IO (Maybe String)
+threadStateWorker :: Worker -> IO (Maybe [String])
 threadStateWorker worker =
     do (ResponsePacket s params) <-
            sendWorkerCommand worker (ControlPacket 0x123b [])
        return $
               if s
-              then case filter (\x -> case x of
-                                        ResponseDataString _ -> True
-                                        _ -> False) params of
-                     [ResponseDataString x] -> Just x
-                     _ -> error $ "got back several strings, don't know what to do with them"
+              then Just [x | (ResponseDataString x) <- params]
               else Nothing
  

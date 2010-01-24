@@ -568,50 +568,17 @@ do_trace_thread_command(long thread)
 	send_okay();
 }
 
-struct string_acc_buffer {
-	char *buffer;
-	unsigned buffer_size;
-	unsigned buffer_used;
-};
-
-static void
-sab_printf(struct string_acc_buffer *sab,
-	   const char *fmt,
-	   ...)
-{
-	va_list args;
-	UInt ret;
-
-	while (1) {
-		va_start(args, fmt);
-		ret = VG_(vsnprintf)((Char *)(sab->buffer + sab->buffer_used),
-				     sab->buffer_size - sab->buffer_used,
-				     fmt,
-				     args);
-		va_end(args);
-		if (ret < sab->buffer_size - sab->buffer_used) {
-			sab->buffer_used += ret;
-			return;
-		}
-		sab->buffer_size += 128;
-		sab->buffer = VG_(realloc)("sab buffer",
-					   sab->buffer,
-					   sab->buffer_size);
-	}
-}
-
 static void
 do_thread_state_command(void)
 {
 	struct replay_thread *rt;
-	struct string_acc_buffer sab;
-	VG_(memset)(&sab, 0, sizeof(sab));
-	for (rt = head_thread; rt; rt = rt->next)
-		sab_printf(&sab, "%d: failed %d, dead %d\n",
-			   rt->id, rt->failed, rt->dead);
-	send_string(sab.buffer_used, sab.buffer);
+	char buf[128];
+	for (rt = head_thread; rt; rt = rt->next) {
+		VG_(sprintf)((Char *)buf, "%d: failed %d, dead %d",
+			     rt->id, rt->failed, rt->dead);
+		send_string(VG_(strlen)((Char *)buf), buf);
+	}
 	send_okay();
-	VG_(free)(sab.buffer);
 }
 
 static void
