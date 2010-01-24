@@ -25,7 +25,9 @@ data UIExpression = UIDummyFunction
                   | UIPair UIExpression UIExpression
                   | UIFirst UIExpression
                   | UISecond UIExpression
-                  | UIThreadState UIExpression deriving Show
+                  | UIThreadState UIExpression
+                  | UIRemoveFootsteps UIExpression
+                    deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
@@ -82,7 +84,8 @@ expressionParser =
                   b <- expressionParser
                   return $ UIPair a b,
                oneExprArgParser "first" UIFirst,
-               oneExprArgParser "second" UIFirst,
+               oneExprArgParser "second" UISecond,
+               oneExprArgParser "defootstep" UIRemoveFootsteps,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -168,7 +171,15 @@ evalExpression f =
               return $ case threadState s of
                          Nothing -> UIValueNull
                          Just s' -> UIValueList $ map UIValueString s'
-
+      UIRemoveFootsteps e ->
+          do e' <- evalExpression e
+             return $ case e' of
+                        UIValueList es ->
+                            let isFootstep (UIValueTrace (TraceRecord (TraceFootstep _ _ _ _) _)) = True
+                                isFootstep _ = False
+                            in UIValueList [trc | trc <- es, not $ isFootstep trc ]
+                        _ -> UIValueError $ "Can only remove footsteps from a list of records, not " ++ (show e')
+                   
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
