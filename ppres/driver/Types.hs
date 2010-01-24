@@ -26,4 +26,4 @@ data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
-type WorldMonad a = StateT WorldState IO a
+type WorldMonad a = State WorldState a

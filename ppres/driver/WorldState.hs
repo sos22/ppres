@@ -29,7 +29,6 @@ doAssignment name val =
     modify $ \ws -> ws { ws_bindings = (name, val):
                          [b | b <- (ws_bindings ws), fst b /= name]}
 
-exitWorld :: WorldMonad ()
-exitWorld =
-    liftIO $ do destroyWorkerCache
-                exitWith ExitSuccess
+exitWorld :: IO ()
+exitWorld = do destroyWorkerCache
+               exitWith ExitSuccess

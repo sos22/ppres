@@ -93,12 +93,12 @@ assignmentParser =
                 P.reservedOp command_lexer "="
                 rhs <- expressionParser
                 return $ UIAssignment var rhs,
-             do rhs <- expressionParser
-                return $ UIFunction rhs,
              do keyword "exit"
                 return UIExit,
              do keyword "quit"
-                return UIExit
+                return UIExit,
+             do rhs <- expressionParser
+                return $ UIFunction rhs
             ]
 
 getCommand :: IO UIAssignment
@@ -165,23 +165,22 @@ evalExpression f =
                          Nothing -> UIValueNull
                          Just s' -> UIValueString s'
 
-runAssignment :: UIAssignment -> WorldMonad ()
-runAssignment as =
+runAssignment :: UIAssignment -> WorldState -> IO WorldState
+runAssignment as ws =
     case as of
       UIAssignment var rhs ->
-          do res <- evalExpression rhs
-             doAssignment var res
+          return $ execState (evalExpression rhs >>= doAssignment var) ws
       UIFunction f ->
-          do res <- evalExpression f
-             doAssignment "last" res
-             liftIO $ print res
-      UIExit -> exitWorld
+          let (res, ws') =
+                  runState (evalExpression f >>= doAssignment "last") ws
+          in print res >> return ws'
+      UIExit -> exitWorld >> return ws
 
-commandLoop :: WorldMonad ()
-commandLoop =
-    do cmd <- liftIO $ getCommand
-       runAssignment cmd
-       commandLoop
+commandLoop :: WorldState -> IO ()
+commandLoop ws =
+    do cmd <- getCommand
+       ws' <- runAssignment cmd ws
+       commandLoop ws'
 
 main :: IO ()
 main = do args <- getArgs
@@ -189,4 +188,4 @@ main = do args <- getArgs
             [] -> error "need the file descriptor to communicate on"
             (_:_:_) -> error "Too many arguments"
             [fdString] -> do initState <- initialWorldState $ read fdString
-                             evalStateT commandLoop initState
+                             commandLoop initState
