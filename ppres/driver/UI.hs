@@ -8,7 +8,7 @@ import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (haskellDef)
 import IO
 import Data.Word
-import Control.Monad
+import Control.Monad.State
 
 import Types
 import Worker
@@ -95,72 +95,65 @@ getCommand =
                         getCommand
          Right v -> return v
 
-runCommand :: UICommand -> WorldState -> IO WorldState
-runCommand UIExit ws =
-    sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
-               exitWith ExitSuccess] >> return ws
-runCommand (UIActivateSnapshot sid) ws =
-    case lookupVariable sid ws of
-      Nothing -> do putStrLn ("Cannot find snapshot " ++ (show sid))
-                    return ws
-      Just (UIValueSnapshot s) ->
-          return $ ws { ws_worker = s } 
-      _ -> do putStrLn "Not a snapshot"
-              return ws
-runCommand (UIRun cntr) ws =
-    withWorker ws $ \w -> do runWorker w cntr
-                             return ws
-runCommand (UITrace cntr) ws =
-    withWorker ws $ \w -> do traceWorker w cntr
-                             return ws
-runCommand (UITraceThread ident) ws =
-    withWorker ws $ \w -> do traceThreadWorker w ident
-                             return ws
-runCommand (UITraceAddress addr) ws =
-    withWorker ws $ \w -> do traceAddressWorker w addr
-                             return ws
-runCommand (UIRunMemory tid cntr) ws =
-    withWorker ws $ \w -> do runMemoryWorker w tid cntr
-                             return ws
+runCommand :: UICommand -> WorldMonad ()
+runCommand UIExit =
+    do ws <- get
+       sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
+                  liftIO $ exitWith ExitSuccess]
+runCommand (UIActivateSnapshot sid) =
+    do s <- lookupVariable sid
+       case s of
+         Nothing -> liftIO $ putStrLn ("Cannot find snapshot " ++ (show sid))
+         Just (UIValueSnapshot s') ->
+             modify $ \ws -> ws { ws_worker = s' }
+         _ -> liftIO $ putStrLn "Not a snapshot"
+runCommand (UIRun cntr) =
+    withWorker $ \w -> runWorker w cntr
+runCommand (UITrace cntr) =
+    withWorker $ \w -> traceWorker w cntr
+runCommand (UITraceThread ident) =
+    withWorker $ \w -> traceThreadWorker w ident
+runCommand (UITraceAddress addr) =
+    withWorker $ \w -> traceAddressWorker w addr
+runCommand (UIRunMemory tid cntr) =
+    withWorker $ \w -> runMemoryWorker w tid cntr
 
-runFunction :: UIFunction -> WorldState -> IO (WorldState, UIValue)
-runFunction f ws =
+runFunction :: UIFunction -> WorldMonad UIValue
+runFunction f =
     case f of
-      UIDummyFunction -> return (ws, UIValueNull)
+      UIDummyFunction -> return UIValueNull
       UISnapshot vname ->
-          let p = case lookupVariable vname ws of
-                     Just (UIValueSnapshot s) -> Just s
-                     _ -> Nothing
-          in case p of
-               Nothing -> do putStrLn "Can't find parent snapshot"
-                             return (ws, UIValueNull)
+          do p <- lookupSnapshot vname
+             case p of
+               Nothing -> do liftIO $ putStrLn "Can't find parent snapshot"
+                             return UIValueNull
                Just parent ->
                    do s <- takeSnapshot parent
                       case s of
                         Nothing ->
-                            do putStrLn "cannot take snapshot"
-                               return (ws, UIValueNull)
+                            do liftIO $ putStrLn "cannot take snapshot"
+                               return UIValueNull
                         Just s' ->
-                            return (ws, UIValueSnapshot s')
+                            return $ UIValueSnapshot s'
 
-runAssignment :: UIAssignment -> WorldState -> IO WorldState
-runAssignment as ws =
+runAssignment :: UIAssignment -> WorldMonad ()
+runAssignment as =
     case as of
-      UICommand cmd -> runCommand cmd ws
+      UICommand cmd -> runCommand cmd
       UIAssignment var rhs ->
-          do (ws', res) <- runFunction rhs ws
-             doAssignment ws' var res
+          do res <- runFunction rhs
+             doAssignment var res
       UIFunction f ->
-          do (ws', res) <- runFunction f ws
-             doAssignment ws' "last" res
+          do res <- runFunction f
+             doAssignment "last" res
       UIRename dest src ->
-          doRename ws dest src
+          doRename dest src
 
-commandLoop :: WorldState -> IO ()
-commandLoop ws =
-    do cmd <- getCommand
-       ws' <- runAssignment cmd ws
-       commandLoop ws'
+commandLoop :: WorldMonad ()
+commandLoop =
+    do cmd <- liftIO $ getCommand
+       runAssignment cmd
+       commandLoop
 
 main :: IO ()
 main = do args <- getArgs
@@ -168,4 +161,4 @@ main = do args <- getArgs
             [] -> error "need the file descriptor to communicate on"
             (_:_:_) -> error "Too many arguments"
             [fdString] -> do initState <- initialWorldState $ read fdString
-                             commandLoop initState
+                             evalStateT commandLoop initState

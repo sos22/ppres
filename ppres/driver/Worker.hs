@@ -6,61 +6,62 @@ module Worker(withWorker,
 import Data.Word
 import Data.Int
 import Network.Socket
+import Control.Monad.State
 
 import Types
 import Socket
 
-sendWorkerCommand :: Worker -> Word32 -> [Word64] -> IO Int32
+sendWorkerCommand :: Worker -> Word32 -> [Word64] -> WorldMonad Int32
 sendWorkerCommand worker command args =
     sendSocketCommand (worker_fd worker) command args
 
-killWorker :: Worker -> IO Bool
+killWorker :: Worker -> WorldMonad Bool
 killWorker worker =
     do ack <- sendWorkerCommand worker 0x1235 []
        if ack == 0
-          then do sClose $ worker_fd worker
+          then do liftIO $ sClose $ worker_fd worker
                   return True
           else return False
 
-runWorker :: Worker -> Integer -> IO ()
+runWorker :: Worker -> Integer -> WorldMonad ()
 runWorker worker cntr =
     do ack <- sendWorkerCommand worker 0x1236 [fromInteger cntr]
        if ack /= 0
-          then putStrLn "error running worker"
+          then liftIO $ putStrLn "error running worker"
           else return ()
 
-traceWorker :: Worker -> Integer -> IO ()
+traceWorker :: Worker -> Integer -> WorldMonad ()
 traceWorker worker cntr =
     do ack <- sendWorkerCommand worker 0x1237 [fromInteger cntr]
        if ack /= 0
-          then putStrLn "error running worker"
+          then liftIO $ putStrLn "error running worker"
           else return ()
 
-traceThreadWorker :: Worker -> ThreadId -> IO ()
+traceThreadWorker :: Worker -> ThreadId -> WorldMonad ()
 traceThreadWorker worker tid =
     do ack <- sendWorkerCommand worker 0x1239 [fromInteger tid]
        if ack /= 0
-          then putStrLn "error running worker"
+          then liftIO $ putStrLn "error running worker"
           else return ()
 
-traceAddressWorker :: Worker -> Word64 -> IO ()
+traceAddressWorker :: Worker -> Word64 -> WorldMonad ()
 traceAddressWorker worker addr =
     do ack <- sendWorkerCommand worker 0x123a [addr]
        if ack /= 0
-          then putStrLn "error running worker"
+          then liftIO $ putStrLn "error running worker"
           else return ()
 
-runMemoryWorker :: Worker -> ThreadId -> Integer -> IO ()
+runMemoryWorker :: Worker -> ThreadId -> Integer -> WorldMonad ()
 runMemoryWorker worker tid cntr =
     do ack <- sendWorkerCommand worker 0x1238 [fromInteger $ tid, fromInteger $ cntr]
        if ack /= 0
-          then putStrLn "error running worker"
+          then liftIO $ putStrLn "error running worker"
           else return ()
 
-withWorker :: WorldState -> (Worker -> IO WorldState) -> IO WorldState
-withWorker ws f = f $ ws_worker ws
+withWorker :: (Worker -> WorldMonad ()) -> WorldMonad ()
+withWorker f = get >>= (f . ws_worker)
 
-takeSnapshot :: Worker -> IO (Maybe Worker)
+takeSnapshot :: Worker -> WorldMonad (Maybe Worker)
 takeSnapshot worker =
     do ack <- sendWorkerCommand worker 0x1234 []
        if ack < 0

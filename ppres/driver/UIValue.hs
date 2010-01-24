@@ -7,6 +7,6 @@ instance Show UIValue where
     show UIValueNull = "()"
     show (UIValueSnapshot _) = "<snapshot>"
 
-uiv_destruct :: UIValue -> IO ()
+uiv_destruct :: UIValue -> WorldMonad ()
 uiv_destruct UIValueNull = return ()
 uiv_destruct (UIValueSnapshot s) = killWorker s >> return ()
