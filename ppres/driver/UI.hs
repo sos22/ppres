@@ -148,7 +148,7 @@ evalExpression f =
                _ -> return UIValueNull
       UIDir ->
           do ws <- get
-             liftIO $ mapM_ (print . fst) $ ws_bindings ws
+             liftIO $ mapM_ (putStrLn . fst) $ ws_bindings ws
              return UIValueNull
       UIPrint var ->
           do r <- evalExpression var
