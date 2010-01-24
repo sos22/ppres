@@ -6,9 +6,9 @@ import Worker
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Bool
 doHistoryEntry w (HistoryRun cntr) = runWorker w cntr
-doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid
+doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return True
 doHistoryEntry w (HistoryRunMemory tid cntr) =
-    runMemoryWorker w tid cntr
+    runMemoryWorker w tid cntr >> return True
 
 stripSharedPrefix :: History -> History -> (History, History)
 stripSharedPrefix (History aa) (History bb) =

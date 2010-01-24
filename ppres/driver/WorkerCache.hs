@@ -93,29 +93,34 @@ cmd he start w =
                             registerWorker newHist worker
                             return $ Just newHist
 
+traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
+traceCmd he start w =
+    let newHist = appendHistory start he
+    in unsafePerformIO $ do worker <- getWorker start
+                            r <- w worker
+                            registerWorker newHist worker
+                            return (newHist, r)
+
 run :: History -> Integer -> Maybe History
 run start cntr =
     cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
 
+
 trace :: History -> Integer -> (History, [TraceRecord])
 trace start cntr =
-    let newHist = appendHistory start (HistoryRun cntr)
-    in unsafePerformIO $ do worker <- getWorker start
-                            t <- traceWorker worker cntr
-                            registerWorker newHist worker
-                            return (newHist, t)
+    traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
-traceThread :: History -> ThreadId -> Maybe History
+traceThread :: History -> ThreadId -> (History, [TraceRecord])
 traceThread start thr =
-    cmd (HistoryRunThread thr) start $ \worker -> traceThreadWorker worker thr
+    traceCmd (HistoryRunThread thr) start $ \worker -> traceThreadWorker worker thr
 
-traceAddress :: History -> Word64 -> Maybe History
+traceAddress :: History -> Word64 -> (History, [TraceRecord])
 traceAddress start addr =
-    cmd (HistoryRun $ -1) start $ \worker -> traceAddressWorker worker addr
+    traceCmd (HistoryRun $ -1) start $ \worker -> traceAddressWorker worker addr
 
-runMemory :: History -> ThreadId -> Integer -> Maybe History
+runMemory :: History -> ThreadId -> Integer -> (History, [TraceRecord])
 runMemory start tid cntr =
-    cmd (HistoryRunMemory tid cntr) start $
+    traceCmd (HistoryRunMemory tid cntr) start $
             \worker -> runMemoryWorker worker tid cntr
 
 threadState :: History -> Maybe [String]

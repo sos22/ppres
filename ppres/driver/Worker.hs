@@ -84,21 +84,25 @@ ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
               _ -> error $ "bad trace ancillary code " ++ (show code)
     in (TraceRecord { trc_trc = entry, trc_loc = loc }):(ancillaryDataToTrace rest)
          
-    
+
+traceCmd :: Worker -> ControlPacket -> IO [TraceRecord]
+traceCmd worker pkt =
+    do (ResponsePacket s args) <- sendWorkerCommand worker pkt
+       if s
+        then return $ ancillaryDataToTrace args
+        else return []
+
 traceWorker :: Worker -> Integer -> IO [TraceRecord]
-traceWorker worker cntr =
-    do (ResponsePacket s args) <- sendWorkerCommand worker $ tracePacket cntr
-       if s then return $ ancillaryDataToTrace args
-          else return []
+traceWorker worker cntr = traceCmd worker (tracePacket cntr)
 
-traceThreadWorker :: Worker -> ThreadId -> IO Bool
-traceThreadWorker worker = trivCommand worker . traceThreadPacket
+traceThreadWorker :: Worker -> ThreadId -> IO [TraceRecord]
+traceThreadWorker worker = traceCmd worker . traceThreadPacket
 
-traceAddressWorker :: Worker -> Word64 -> IO Bool
-traceAddressWorker worker = trivCommand worker . traceAddressPacket
+traceAddressWorker :: Worker -> Word64 -> IO [TraceRecord]
+traceAddressWorker worker = traceCmd worker . traceAddressPacket
 
-runMemoryWorker :: Worker -> ThreadId -> Integer -> IO Bool
-runMemoryWorker worker tid = trivCommand worker . runMemoryPacket tid
+runMemoryWorker :: Worker -> ThreadId -> Integer -> IO [TraceRecord]
+runMemoryWorker worker tid = traceCmd worker . runMemoryPacket tid
 
 takeSnapshot :: Worker -> IO (Maybe Worker)
 takeSnapshot worker =

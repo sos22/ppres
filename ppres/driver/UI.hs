@@ -122,6 +122,10 @@ maybeSnapshotToUIValue :: Maybe History -> UIValue
 maybeSnapshotToUIValue Nothing = UIValueNull
 maybeSnapshotToUIValue (Just s) = UIValueSnapshot s
 
+histTracePairToUIValue :: (History, [TraceRecord]) -> UIValue
+histTracePairToUIValue (hist, trc) =
+    UIValuePair (UIValueSnapshot hist) (UIValueList $ map UIValueTrace trc)
+
 evalExpression :: UIExpression -> WorldMonad UIValue
 evalExpression f =
     case f of
@@ -149,18 +153,16 @@ evalExpression f =
               return $ maybeSnapshotToUIValue $ run s cntr
       UITrace name cntr ->
           withSnapshot name $ \s ->
-              return $ let (hist, trc) = trace s cntr
-                       in UIValuePair (UIValueSnapshot hist)
-                              (UIValueList $ map UIValueTrace trc)
+              return $ histTracePairToUIValue $ trace s cntr
       UITraceThread name thr ->
           withSnapshot name $ \s ->
-              return $ maybeSnapshotToUIValue $ traceThread s thr
+              return $ histTracePairToUIValue $ traceThread s thr
       UITraceAddress name addr ->
           withSnapshot name $ \s ->
-              return $ maybeSnapshotToUIValue $ traceAddress s addr
+              return $ histTracePairToUIValue $ traceAddress s addr
       UIRunMemory name tid cntr ->
           withSnapshot name $ \s ->
-              return $ maybeSnapshotToUIValue $ runMemory s tid cntr
+              return $ histTracePairToUIValue $ runMemory s tid cntr
       UIThreadState name ->
           withSnapshot name $ \s ->
               return $ case threadState s of
