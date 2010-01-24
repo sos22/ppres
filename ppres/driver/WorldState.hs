@@ -23,10 +23,10 @@ lookupVariable ws name =
       Nothing -> UIValueError $ name ++ " not found"
       Just s' -> s'
 
-doAssignment :: VariableName -> UIValue -> WorldMonad ()
-doAssignment name val =
-    modify $ \ws -> ws { ws_bindings = (name, val):
-                         [b | b <- (ws_bindings ws), fst b /= name]}
+doAssignment :: WorldState -> VariableName -> UIValue -> WorldState
+doAssignment ws name val =
+    ws { ws_bindings = (name, val):
+         [b | b <- (ws_bindings ws), fst b /= name]}
 
 exitWorld :: IO ()
 exitWorld = do destroyWorkerCache

@@ -2,7 +2,6 @@ module Types where
 
 import Data.Word
 import Network.Socket
-import Control.Monad.State
 import Numeric
 
 type ThreadId = Integer
@@ -76,5 +75,3 @@ data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
-
-type WorldMonad a = State WorldState a

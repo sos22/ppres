@@ -178,10 +178,10 @@ runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
       UIAssignment var rhs ->
-          return $ execState (doAssignment var $ evalExpression ws rhs) ws
+          return $ doAssignment ws var $ evalExpression ws rhs
       UIFunction f ->
           let r = evalExpression ws f
-              ws' = execState (doAssignment "last" r) ws
+              ws' = doAssignment ws "last" r
           in print r >> return ws'
       UIExit -> exitWorld >> return ws
 
