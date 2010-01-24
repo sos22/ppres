@@ -12,6 +12,7 @@ import Control.Monad.State
 import Types
 import WorldState
 import WorkerCache
+import UIValue()
 
 data UIFunction = UIDummyFunction
                 | UIExit
