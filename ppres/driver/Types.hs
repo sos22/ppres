@@ -18,8 +18,9 @@ data Worker = Worker { worker_fd :: Socket }
 data UIValue = UIValueNull
              | UIValueSnapshot History
 
-data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)],
-                               ws_workers :: [(History, Worker)],
-                               ws_starting_worker :: Worker }
+data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
+                                 wc_start :: Worker }
+
+data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
 type WorldMonad a = StateT WorldState IO a

@@ -10,8 +10,6 @@ import Network.Socket
 import Foreign.C.Types
 import Control.Monad.State
 
-import Types
-
 foreign import ccall unsafe "send"
   c_send :: CInt -> Ptr a -> CSize -> CInt -> IO CInt
 
@@ -22,7 +20,7 @@ socketToFd (MkSocket x _ _ _ _) = x
 fdToSocket :: CInt -> IO Socket
 fdToSocket fd = mkSocket fd AF_UNIX Stream 0 Connected
 
-sendSocketCommand :: Socket -> Word32 -> [Word64] -> WorldMonad Int32
+sendSocketCommand :: Socket -> Word32 -> [Word64] -> IO Int32
 sendSocketCommand handle command args =
     let nr_args :: Word32
         nr_args = fromInteger $ toInteger $ length args
@@ -47,7 +45,7 @@ sendSocketCommand handle command args =
                    allocaBytes 4 get_response
 
 
-recvSocket :: Socket -> WorldMonad Socket
+recvSocket :: Socket -> IO Socket
 recvSocket parent =
     liftIO $ do newFd <- recvFd parent
                 mkSocket newFd AF_UNIX Stream 0 Connected

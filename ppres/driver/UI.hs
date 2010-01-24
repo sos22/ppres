@@ -11,6 +11,7 @@ import Control.Monad.State
 
 import Types
 import WorldState
+import WorkerCache
 
 data UIFunction = UIDummyFunction
                 | UIExit
@@ -115,19 +116,19 @@ runFunction f =
 
       UIRun name cntr ->
           withSnapshot name $ \s ->
-              liftM maybeSnapshotToUIValue $ run s cntr
+              return $ maybeSnapshotToUIValue $ run s cntr
       UITrace name cntr ->
           withSnapshot name $ \s ->
-              liftM maybeSnapshotToUIValue $ trace s cntr
+              return $ maybeSnapshotToUIValue $ trace s cntr
       UITraceThread name thr ->
           withSnapshot name $ \s ->
-              liftM maybeSnapshotToUIValue $ traceThread s thr
+              return $ maybeSnapshotToUIValue $ traceThread s thr
       UITraceAddress name addr ->
           withSnapshot name $ \s ->
-              liftM maybeSnapshotToUIValue $ traceAddress s addr
+              return $ maybeSnapshotToUIValue $ traceAddress s addr
       UIRunMemory name tid cntr ->
           withSnapshot name $ \s ->
-              liftM maybeSnapshotToUIValue $ runMemory s tid cntr
+              return $ maybeSnapshotToUIValue $ runMemory s tid cntr
 
 runAssignment :: UIAssignment -> WorldMonad ()
 runAssignment as =

@@ -4,7 +4,7 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
 import Types
 import Worker
 
-doHistoryEntry :: Worker -> HistoryEntry -> WorldMonad Bool
+doHistoryEntry :: Worker -> HistoryEntry -> IO Bool
 doHistoryEntry w (HistoryRun cntr) = runWorker w cntr
 doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid
 doHistoryEntry w (HistoryRunMemory tid cntr) =
@@ -46,7 +46,7 @@ emptyHistory = History []
    in a state represented by current, and get it into a state
    represented by desired.  current must be a prefix of desired.
    Returns True if we succeed or False if something goes wrong. -}
-fixupWorkerForHist :: Worker -> History -> History -> WorldMonad Bool
+fixupWorkerForHist :: Worker -> History -> History -> IO Bool
 fixupWorkerForHist w current desired =
     case stripSharedPrefix current desired of
       (History [], History todo) ->
