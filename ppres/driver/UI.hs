@@ -15,10 +15,8 @@ import Worker
 import WorldState
 import UIValue
 
-data UICommand = UIExit
-                 deriving Show
-
 data UIFunction = UIDummyFunction
+                | UIExit
                 | UISnapshot VariableName
                 | UIRun VariableName Integer
                 | UITrace VariableName Integer
@@ -26,8 +24,7 @@ data UIFunction = UIDummyFunction
                 | UITraceAddress VariableName Word64
                 | UIRunMemory VariableName ThreadId Integer
 
-data UIAssignment = UICommand UICommand
-                  | UIAssignment VariableName UIFunction
+data UIAssignment = UIAssignment VariableName UIFunction
                   | UIFunction UIFunction
                   | UIRename VariableName VariableName
 
@@ -37,13 +34,6 @@ command_lexer = P.makeTokenParser haskellDef
 thread_id_parser :: Parser ThreadId
 thread_id_parser = P.integer command_lexer
 
-commandParser :: Parser UICommand
-commandParser =
-    do w <- P.identifier command_lexer
-       case w of
-         "exit" -> return UIExit
-         "quit" -> return UIExit
-         _ -> unexpected ("keyword " ++ w)
 
 keyword :: String -> Parser String
 keyword x = do v <- P.identifier command_lexer
@@ -54,6 +44,8 @@ functionParser :: Parser UIFunction
 functionParser =
     let tchoice = choice . (map Text.Parsec.try)
     in tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
+                liftM (const UIExit) $ keyword "exit",
+                liftM (const UIExit) $ keyword "quit",
                 do keyword "snapshot"
                    liftM UISnapshot $ P.identifier command_lexer,
                 do keyword "run"
@@ -90,9 +82,7 @@ assignmentParser =
     (Text.Parsec.try $ do dest <- P.identifier command_lexer
                           P.reservedOp command_lexer "<-"
                           src <- P.identifier command_lexer
-                          return $ UIRename dest src) <|>
-    (do command <- commandParser
-        return $ UICommand command)
+                          return $ UIRename dest src)
 
 getCommand :: IO UIAssignment
 getCommand =
@@ -104,16 +94,15 @@ getCommand =
                         getCommand
          Right v -> return v
 
-runCommand :: UICommand -> WorldMonad ()
-runCommand UIExit =
-    do ws <- get
-       sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
-                  liftIO $ exitWith ExitSuccess]
-
 runFunction :: UIFunction -> WorldMonad UIValue
 runFunction f =
     case f of
       UIDummyFunction -> return UIValueNull
+      UIExit ->
+          do ws <- get
+             sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
+                        liftIO $ exitWith ExitSuccess]
+             return UIValueNull
       UISnapshot vname ->
           do p <- lookupSnapshot vname
              case p of
@@ -161,7 +150,6 @@ runFunction f =
 runAssignment :: UIAssignment -> WorldMonad ()
 runAssignment as =
     case as of
-      UICommand cmd -> runCommand cmd
       UIAssignment var rhs ->
           do res <- runFunction rhs
              doAssignment var res
