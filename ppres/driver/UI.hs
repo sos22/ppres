@@ -31,6 +31,7 @@ data UIFunction = UIDummyFunction
 data UIAssignment = UICommand UICommand
                   | UIAssignment VariableName UIFunction
                   | UIFunction UIFunction
+                  | UIRename VariableName VariableName
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -79,6 +80,10 @@ assignmentParser =
                           return $ UIAssignment var rhs) <|>
     (Text.Parsec.try $ do rhs <- functionParser
                           return $ UIFunction rhs) <|>
+    (Text.Parsec.try $ do dest <- P.identifier command_lexer
+                          P.reservedOp command_lexer "<-"
+                          src <- P.identifier command_lexer
+                          return $ UIRename dest src) <|>
     (do command <- commandParser
         return $ UICommand command)
 
@@ -143,6 +148,8 @@ runAssignment as ws =
       UIFunction f ->
           do (ws', res) <- runFunction f ws
              doAssignment ws' "last" res
+      UIRename dest src ->
+          doRename ws dest src
 
 commandLoop :: WorldState -> IO ()
 commandLoop ws =
