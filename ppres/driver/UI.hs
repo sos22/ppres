@@ -15,7 +15,6 @@ import WorkerCache
 import UIValue()
 
 data UIExpression = UIDummyFunction
-                  | UIExit
                   | UIRun UIExpression Integer
                   | UITrace UIExpression Integer
                   | UITraceThread UIExpression ThreadId
@@ -30,6 +29,7 @@ data UIExpression = UIDummyFunction
 
 data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
+                  | UIExit
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -54,8 +54,6 @@ expressionParser =
                liftM constructor $ expressionParser
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
-               liftM (const UIExit) $ keyword "exit",
-               liftM (const UIExit) $ keyword "quit",
                liftM (const UIDir) $ keyword "dir",
                oneExprArgParser "thread_state" UIThreadState,
                do keyword "run"
@@ -96,7 +94,12 @@ assignmentParser =
                 rhs <- expressionParser
                 return $ UIAssignment var rhs,
              do rhs <- expressionParser
-                return $ UIFunction rhs ]
+                return $ UIFunction rhs,
+             do keyword "exit"
+                return UIExit,
+             do keyword "quit"
+                return UIExit
+            ]
 
 getCommand :: IO UIAssignment
 getCommand =
@@ -123,8 +126,6 @@ evalExpression :: UIExpression -> WorldMonad UIValue
 evalExpression f =
     case f of
       UIDummyFunction -> return UIValueNull
-      UIExit -> do exitWorld
-                   return UIValueNull
       UIVarName name -> lookupVariable name
       UIPair a b ->
           do a' <- evalExpression a
@@ -174,6 +175,7 @@ runAssignment as =
           do res <- evalExpression f
              doAssignment "last" res
              liftIO $ print res
+      UIExit -> exitWorld
 
 commandLoop :: WorldMonad ()
 commandLoop =
