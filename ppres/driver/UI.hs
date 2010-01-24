@@ -21,6 +21,7 @@ data UIFunction = UIDummyFunction
                 | UITraceAddress VariableName Word64
                 | UIRunMemory VariableName ThreadId Integer
                 | UIDir
+                | UIPrint VariableName
 
 data UIAssignment = UIAssignment VariableName UIFunction
                   | UIFunction UIFunction
@@ -45,6 +46,9 @@ functionParser =
                 liftM (const UIExit) $ keyword "exit",
                 liftM (const UIExit) $ keyword "quit",
                 liftM (const UIDir) $ keyword "dir",
+                do keyword "print"
+                   var <- P.identifier command_lexer
+                   return $ UIPrint var,
                 do keyword "run"
                    snap <- P.identifier command_lexer
                    cntr <- option (-1) (P.integer command_lexer)
@@ -113,7 +117,12 @@ runFunction f =
           do ws <- get
              liftIO $ mapM_ (print . fst) $ ws_bindings ws
              return UIValueNull
-
+      UIPrint var ->
+          do r <- lookupVariable var
+             liftIO $ case r of
+                        Nothing -> putStrLn $ "no variable " ++ var
+                        Just v -> print v
+             return UIValueNull
       UIRun name cntr ->
           withSnapshot name $ \s ->
               return $ maybeSnapshotToUIValue $ run s cntr
