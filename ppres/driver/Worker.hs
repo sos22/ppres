@@ -87,10 +87,8 @@ ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
 
 traceCmd :: Worker -> ControlPacket -> IO [TraceRecord]
 traceCmd worker pkt =
-    do (ResponsePacket s args) <- sendWorkerCommand worker pkt
-       if s
-        then return $ ancillaryDataToTrace args
-        else return []
+    do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
+       return $ ancillaryDataToTrace args
 
 traceWorker :: Worker -> Integer -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)

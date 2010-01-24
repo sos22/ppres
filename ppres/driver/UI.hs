@@ -14,6 +14,7 @@ import Types
 import WorldState
 import WorkerCache
 import UIValue
+import Analysis
 
 data UIExpression = UIDummyFunction
                   | UIRun UIExpression Integer
@@ -28,6 +29,7 @@ data UIExpression = UIDummyFunction
                   | UISecond UIExpression
                   | UIThreadState UIExpression
                   | UIRemoveFootsteps UIExpression
+                  | UIFindCriticalAccesses UIExpression UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -84,6 +86,10 @@ expressionParser =
                   a <- expressionParser
                   b <- expressionParser
                   return $ UIPair a b,
+               do keyword "findcrit"
+                  a <- expressionParser
+                  b <- expressionParser
+                  return $ UIFindCriticalAccesses a b,
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
@@ -152,6 +158,10 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> runMemory s tid cntr
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
+      UIFindCriticalAccesses a b ->
+          toUI $ do a' <- fromUI $ evalExpression ws a
+                    b' <- fromUI $ evalExpression ws b
+                    return $ findCriticalAccesses a' b'
       UIRemoveFootsteps e ->
           case fromUI $ evalExpression ws e of
             Just es ->
