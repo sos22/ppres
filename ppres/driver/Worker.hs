@@ -1,6 +1,6 @@
 module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
-              takeSnapshot, runWorker, traceAddressWorker
-             ) where
+              takeSnapshot, runWorker, traceAddressWorker, threadStateWorker)
+    where
 
 import Data.Word
 import Data.Int
@@ -55,3 +55,10 @@ takeSnapshot worker =
           else do newFd <- recvSocket (worker_fd worker)
                   return $ Just $ Worker {worker_fd = newFd }
 
+
+threadStateWorker :: Worker -> IO (Maybe String)
+threadStateWorker worker =
+    do len <- sendWorkerCommand worker 0x123b []
+       if len < 0
+          then return Nothing
+          else liftM Just $ recvStringBytes (worker_fd worker) len

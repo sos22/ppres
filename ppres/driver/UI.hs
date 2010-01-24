@@ -27,6 +27,7 @@ data UIExpression = UIDummyFunction
                   | UIPair UIExpression UIExpression
                   | UIFirst UIExpression
                   | UISecond UIExpression
+                  | UIThreadState UIExpression
 
 data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
@@ -49,46 +50,45 @@ tchoice = choice . (map Text.Parsec.try)
 
 expressionParser :: Parser UIExpression
 expressionParser =
-    tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
-             liftM (const UIExit) $ keyword "exit",
-             liftM (const UIExit) $ keyword "quit",
-             liftM (const UIDir) $ keyword "dir",
-             do keyword "print"
-                var <- expressionParser
-                return $ UIPrint var,
-             do keyword "run"
-                snap <- expressionParser
-                cntr <- option (-1) (P.integer command_lexer)
-                return $ UIRun snap cntr,
-             do keyword "trace"
-                snap <- expressionParser
-                cntr <- option (-1) (P.integer command_lexer)
-                return $ UITrace snap cntr,
-             do keyword "tracet"
-                snap <- expressionParser
-                thr <- thread_id_parser
-                return $ UITraceThread snap thr,
-             do keyword "tracem"
-                snap <- expressionParser
-                addr <- P.integer command_lexer
-                return $ UITraceAddress snap $ fromInteger addr,
-             do keyword "runm"
-                snap <- expressionParser
-                t <- thread_id_parser
-                n <- P.integer command_lexer
-                return $ UIRunMemory snap t n,
-             do keyword "pair"
-                a <- expressionParser
-                b <- expressionParser
-                return $ UIPair a b,
-             do keyword "first"
-                a <- expressionParser
-                return $ UIFirst a,
-             do keyword "second"
-                a <- expressionParser
-                return $ UISecond a,
-             do ident <- P.identifier command_lexer
-                return $ UIVarName ident
+    let oneExprArgParser name constructor =
+            do keyword name
+               liftM constructor $ expressionParser
+    in
+      tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
+               liftM (const UIExit) $ keyword "exit",
+               liftM (const UIExit) $ keyword "quit",
+               liftM (const UIDir) $ keyword "dir",
+               oneExprArgParser "print" UIPrint,
+               oneExprArgParser "thread_state" UIThreadState,
+               do keyword "run"
+                  snap <- expressionParser
+                  cntr <- option (-1) (P.integer command_lexer)
+                  return $ UIRun snap cntr,
+               do keyword "trace"
+                  snap <- expressionParser
+                  cntr <- option (-1) (P.integer command_lexer)
+                  return $ UITrace snap cntr,
+               do keyword "tracet"
+                  snap <- expressionParser
+                  thr <- thread_id_parser
+                  return $ UITraceThread snap thr,
+               do keyword "tracem"
+                  snap <- expressionParser
+                  addr <- P.integer command_lexer
+                  return $ UITraceAddress snap $ fromInteger addr,
+               do keyword "runm"
+                  snap <- expressionParser
+                  t <- thread_id_parser
+                  n <- P.integer command_lexer
+                  return $ UIRunMemory snap t n,
+               do keyword "pair"
+                  a <- expressionParser
+                  b <- expressionParser
+                  return $ UIPair a b,
+               oneExprArgParser "first" UIFirst,
+               oneExprArgParser "second" UIFirst,
+               do ident <- P.identifier command_lexer
+                  return $ UIVarName ident
             ]
 
 assignmentParser :: Parser UIAssignment
@@ -169,6 +169,11 @@ evalExpression f =
       UIRunMemory name tid cntr ->
           withSnapshot name $ \s ->
               return $ maybeSnapshotToUIValue $ runMemory s tid cntr
+      UIThreadState name ->
+          withSnapshot name $ \s ->
+              return $ case threadState s of
+                         Nothing -> UIValueNull
+                         Just s' -> UIValueString s'
 
 runAssignment :: UIAssignment -> WorldMonad ()
 runAssignment as =

@@ -473,6 +473,7 @@ get_control_command(struct control_command *cmd)
 	switch (ch.command) {
 	case WORKER_SNAPSHOT:
 	case WORKER_KILL:
+	case WORKER_THREAD_STATE:
 		tl_assert(ch.nr_args == 0);
 		return;
 	case WORKER_RUN:
@@ -525,6 +526,52 @@ do_trace_thread_command(long thread)
 	send_response(0);
 }
 
+struct string_acc_buffer {
+	char *buffer;
+	unsigned buffer_size;
+	unsigned buffer_used;
+};
+
+static void
+sab_printf(struct string_acc_buffer *sab,
+	   const char *fmt,
+	   ...)
+{
+	va_list args;
+	UInt ret;
+
+	while (1) {
+		va_start(args, fmt);
+		ret = VG_(vsnprintf)((Char *)(sab->buffer + sab->buffer_used),
+				     sab->buffer_size - sab->buffer_used,
+				     fmt,
+				     args);
+		va_end(args);
+		if (ret < sab->buffer_size - sab->buffer_used) {
+			sab->buffer_used += ret;
+			return;
+		}
+		sab->buffer_size += 128;
+		sab->buffer = VG_(realloc)("sab buffer",
+					   sab->buffer,
+					   sab->buffer_size);
+	}
+}
+
+static void
+do_thread_state_command(void)
+{
+	struct replay_thread *rt;
+	struct string_acc_buffer sab;
+	VG_(memset)(&sab, 0, sizeof(sab));
+	for (rt = head_thread; rt; rt = rt->next)
+		sab_printf(&sab, "%d: failed %d, dead %d\n",
+			   rt->id, rt->failed, rt->dead);
+	send_response(sab.buffer_used);
+	safeish_write(control_process_socket, sab.buffer, sab.buffer_used);
+	VG_(free)(sab.buffer);
+}
+
 static void
 replay_failed(void)
 {
@@ -535,13 +582,16 @@ replay_failed(void)
 		get_control_command(&cmd);
 		switch (cmd.cmd) {
 		case WORKER_SNAPSHOT:
-		    control_process_socket = do_snapshot(control_process_socket);
-		    break;
+			control_process_socket = do_snapshot(control_process_socket);
+			break;
 		case WORKER_KILL:
 			send_response(0);
 			my__exit(0);
 		case WORKER_TRACE_THREAD:
 			do_trace_thread_command(cmd.u.trace_thread.thread);
+			break;
+		case WORKER_THREAD_STATE:
+			do_thread_state_command();
 			break;
 		default:
 		    VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
@@ -988,6 +1038,9 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		trace_address = cmd->u.trace_mem.address;
 		run_for_n_records(logfile, -1);
 		send_response(0);
+		break;
+	case WORKER_THREAD_STATE:
+		do_thread_state_command();
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");

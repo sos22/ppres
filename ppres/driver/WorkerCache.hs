@@ -4,7 +4,8 @@
    are responsible for mapping them into Workers as and when
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, run,
-                   trace, traceThread, traceAddress, runMemory) where
+                   trace, traceThread, traceAddress, runMemory,
+                   threadState) where
 
 import Data.Word
 import Control.Monad.State
@@ -112,3 +113,10 @@ runMemory :: History -> ThreadId -> Integer -> Maybe History
 runMemory start tid cntr =
     cmd (HistoryRunMemory tid cntr) start $
             \worker -> runMemoryWorker worker tid cntr
+
+threadState :: History -> Maybe String
+threadState hist =
+    unsafePerformIO $ do worker <- getWorker hist
+                         res <- threadStateWorker worker
+                         killWorker worker
+                         return res
