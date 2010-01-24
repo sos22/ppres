@@ -66,7 +66,7 @@ instance Show TraceRecord where
 data UIValue = UIValueNull
              | UIValueSnapshot History
              | UIValuePair UIValue UIValue
-             | UIValueString String
+             | UIValueChar Char
              | UIValueList [UIValue]
              | UIValueTrace TraceRecord
              | UIValueError String

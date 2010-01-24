@@ -12,7 +12,7 @@ import Control.Monad.State
 import Types
 import WorldState
 import WorkerCache
-import UIValue()
+import UIValue
 
 data UIExpression = UIDummyFunction
                   | UIRun UIExpression Integer
@@ -146,7 +146,7 @@ evalExpression ws f =
             UIValuePair _ a'' -> a''
             _ -> UIValueError "needed a pair for second"
       UIDir ->
-          UIValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
+          uiValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->
           withSnapshot ws name $ \s ->
               maybeSnapshotToUIValue $ run s cntr
@@ -165,7 +165,7 @@ evalExpression ws f =
       UIThreadState name ->
           withSnapshot ws name $ \s -> case threadState s of
                                          Nothing -> UIValueNull
-                                         Just s' -> UIValueList $ map UIValueString s'
+                                         Just s' -> UIValueList $ map uiValueString s'
       UIRemoveFootsteps e ->
           case evalExpression ws e of
             UIValueList es ->
