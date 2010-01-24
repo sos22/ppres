@@ -25,6 +25,12 @@ stripSharedPrefix (History aa) (History bb) =
                          if an < bn
                          then worker as ((HistoryRun $ bn - an):bs)
                          else worker ((HistoryRun $ an - bn):as) bs
+                     (HistoryRunMemory atid acntr,
+                      HistoryRunMemory btid bcntr) | atid == btid ->
+                         if acntr < bcntr
+                         then worker as ((HistoryRunMemory btid $ bcntr - acntr):bs)
+                         else worker ((HistoryRunMemory atid $ acntr - bcntr):as) bs
+
                      _ -> ((a:as), (b:bs))
 
 {- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
