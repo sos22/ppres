@@ -146,8 +146,7 @@ evalExpression f =
                _ -> return UIValueNull
       UIDir ->
           do ws <- get
-             liftIO $ mapM_ (putStrLn . fst) $ ws_bindings ws
-             return UIValueNull
+             return $ UIValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->
           withSnapshot name $ \s ->
               return $ maybeSnapshotToUIValue $ run s cntr
