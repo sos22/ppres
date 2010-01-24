@@ -1,3 +1,4 @@
+{-# LANGUAGE RelaxedPolyRec #-}
 module Main(main) where
 
 import System.Environment
@@ -114,19 +115,11 @@ getCommand =
                         getCommand
          Right v -> return v
 
-withSnapshot :: WorldState -> UIExpression -> (History -> UIValue) -> UIValue
+withSnapshot :: AvailInUI a => WorldState -> UIExpression -> (History -> a) -> UIValue
 withSnapshot ws expr f =
     case evalExpression ws expr of
-      UIValueSnapshot s' -> f s'
+      UIValueSnapshot s' -> toUI $ f s'
       s -> UIValueError $ "Needed a snapshot, got " ++ (show s)
-
-maybeSnapshotToUIValue :: Maybe History -> UIValue
-maybeSnapshotToUIValue Nothing = UIValueNull
-maybeSnapshotToUIValue (Just s) = UIValueSnapshot s
-
-histTracePairToUIValue :: (History, [TraceRecord]) -> UIValue
-histTracePairToUIValue (hist, trc) =
-    UIValuePair (UIValueSnapshot hist) (UIValueList $ map UIValueTrace trc)
 
 evalExpression :: WorldState -> UIExpression -> UIValue
 evalExpression ws f =
@@ -148,31 +141,24 @@ evalExpression ws f =
       UIDir ->
           uiValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->
-          withSnapshot ws name $ \s ->
-              maybeSnapshotToUIValue $ run s cntr
+          withSnapshot ws name $ \s -> run s cntr
       UITrace name cntr ->
-          withSnapshot ws name $ \s ->
-              histTracePairToUIValue $ trace s cntr
+          withSnapshot ws name $ \s -> trace s cntr
       UITraceThread name thr ->
-          withSnapshot ws name $ \s ->
-              histTracePairToUIValue $ traceThread s thr
+          withSnapshot ws name $ \s -> traceThread s thr
       UITraceAddress name addr ->
-          withSnapshot ws name $ \s ->
-              histTracePairToUIValue $ traceAddress s addr
+          withSnapshot ws name $ \s -> traceAddress s addr
       UIRunMemory name tid cntr ->
-          withSnapshot ws name $ \s ->
-              histTracePairToUIValue $ runMemory s tid cntr
+          withSnapshot ws name $ \s -> runMemory s tid cntr
       UIThreadState name ->
-          withSnapshot ws name $ \s -> case threadState s of
-                                         Nothing -> UIValueNull
-                                         Just s' -> UIValueList $ map uiValueString s'
+          withSnapshot ws name $ \s -> threadState s
       UIRemoveFootsteps e ->
-          case evalExpression ws e of
-            UIValueList es ->
-                let isFootstep (UIValueTrace (TraceRecord (TraceFootstep _ _ _ _) _)) = True
+          case fromUI $ evalExpression ws e of
+            Just es ->
+                let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
                     isFootstep _ = False
-                in UIValueList [trc | trc <- es, not $ isFootstep trc ]
-            e' -> UIValueError $ "Can only remove footsteps from a list of records, not " ++ (show e')
+                in toUI [trc | trc <- es, not $ isFootstep trc ]
+            Nothing -> UIValueError "Can only remove footsteps from a list of records"
                    
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
