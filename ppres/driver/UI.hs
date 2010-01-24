@@ -114,12 +114,12 @@ getCommand =
                         getCommand
          Right v -> return v
 
-withSnapshot :: UIExpression -> (History -> WorldMonad UIValue) -> WorldMonad UIValue
+withSnapshot :: UIExpression -> (History -> UIValue) -> WorldMonad UIValue
 withSnapshot expr f =
     do s <- evalExpression expr
-       case s of
-         UIValueSnapshot s' -> f s'
-         _ -> return $ UIValueError $ "Needed a snapshot, got " ++ (show s)
+       return $ case s of
+                  UIValueSnapshot s' -> f s'
+                  _ -> UIValueError $ "Needed a snapshot, got " ++ (show s)
 
 maybeSnapshotToUIValue :: Maybe History -> UIValue
 maybeSnapshotToUIValue Nothing = UIValueNull
@@ -153,24 +153,23 @@ evalExpression f =
              return $ UIValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->
           withSnapshot name $ \s ->
-              return $ maybeSnapshotToUIValue $ run s cntr
+              maybeSnapshotToUIValue $ run s cntr
       UITrace name cntr ->
           withSnapshot name $ \s ->
-              return $ histTracePairToUIValue $ trace s cntr
+              histTracePairToUIValue $ trace s cntr
       UITraceThread name thr ->
           withSnapshot name $ \s ->
-              return $ histTracePairToUIValue $ traceThread s thr
+              histTracePairToUIValue $ traceThread s thr
       UITraceAddress name addr ->
           withSnapshot name $ \s ->
-              return $ histTracePairToUIValue $ traceAddress s addr
+              histTracePairToUIValue $ traceAddress s addr
       UIRunMemory name tid cntr ->
           withSnapshot name $ \s ->
-              return $ histTracePairToUIValue $ runMemory s tid cntr
+              histTracePairToUIValue $ runMemory s tid cntr
       UIThreadState name ->
-          withSnapshot name $ \s ->
-              return $ case threadState s of
-                         Nothing -> UIValueNull
-                         Just s' -> UIValueList $ map UIValueString s'
+          withSnapshot name $ \s -> case threadState s of
+                                      Nothing -> UIValueNull
+                                      Just s' -> UIValueList $ map UIValueString s'
       UIRemoveFootsteps e ->
           do e' <- evalExpression e
              return $ case e' of
