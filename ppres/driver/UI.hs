@@ -40,51 +40,54 @@ keyword x = do v <- P.identifier command_lexer
                if v == x then return v
                 else unexpected (v ++ ", wanted " ++ x)
 
+{- try-choice.  Arbitrary choice with arbitrary lookahead. -}
+tchoice :: [Parser a] -> Parser a
+tchoice = choice . (map Text.Parsec.try)
+
 functionParser :: Parser UIFunction
 functionParser =
-    let tchoice = choice . (map Text.Parsec.try)
-    in tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
-                liftM (const UIExit) $ keyword "exit",
-                liftM (const UIExit) $ keyword "quit",
-                liftM (const UIDir) $ keyword "dir",
-                do keyword "print"
-                   var <- P.identifier command_lexer
-                   return $ UIPrint var,
-                do keyword "run"
-                   snap <- P.identifier command_lexer
-                   cntr <- option (-1) (P.integer command_lexer)
-                   return $ UIRun snap cntr,
-                do keyword "trace"
-                   snap <- P.identifier command_lexer
-                   cntr <- option (-1) (P.integer command_lexer)
-                   return $ UITrace snap cntr,
-                do keyword "tracet"
-                   snap <- P.identifier command_lexer
-                   thr <- thread_id_parser
-                   return $ UITraceThread snap thr,
-                do keyword "tracem"
-                   snap <- P.identifier command_lexer
-                   addr <- P.integer command_lexer
-                   return $ UITraceAddress snap $ fromInteger addr,
-                do keyword "runm"
-                   snap <- P.identifier command_lexer
-                   t <- thread_id_parser
-                   n <- P.integer command_lexer
-                   return $ UIRunMemory snap t n
-               ]
+    tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
+             liftM (const UIExit) $ keyword "exit",
+             liftM (const UIExit) $ keyword "quit",
+             liftM (const UIDir) $ keyword "dir",
+             do keyword "print"
+                var <- P.identifier command_lexer
+                return $ UIPrint var,
+             do keyword "run"
+                snap <- P.identifier command_lexer
+                cntr <- option (-1) (P.integer command_lexer)
+                return $ UIRun snap cntr,
+             do keyword "trace"
+                snap <- P.identifier command_lexer
+                cntr <- option (-1) (P.integer command_lexer)
+                return $ UITrace snap cntr,
+             do keyword "tracet"
+                snap <- P.identifier command_lexer
+                thr <- thread_id_parser
+                return $ UITraceThread snap thr,
+             do keyword "tracem"
+                snap <- P.identifier command_lexer
+                addr <- P.integer command_lexer
+                return $ UITraceAddress snap $ fromInteger addr,
+             do keyword "runm"
+                snap <- P.identifier command_lexer
+                t <- thread_id_parser
+                n <- P.integer command_lexer
+                return $ UIRunMemory snap t n
+            ]
 
 assignmentParser :: Parser UIAssignment
 assignmentParser =
-    (Text.Parsec.try $ do var <- P.identifier command_lexer
-                          P.reservedOp command_lexer "="
-                          rhs <- functionParser
-                          return $ UIAssignment var rhs) <|>
-    (Text.Parsec.try $ do rhs <- functionParser
-                          return $ UIFunction rhs) <|>
-    (Text.Parsec.try $ do dest <- P.identifier command_lexer
-                          P.reservedOp command_lexer "<-"
-                          src <- P.identifier command_lexer
-                          return $ UIRename dest src)
+    tchoice [do var <- P.identifier command_lexer
+                P.reservedOp command_lexer "="
+                rhs <- functionParser
+                return $ UIAssignment var rhs,
+             do rhs <- functionParser
+                return $ UIFunction rhs,
+             do dest <- P.identifier command_lexer
+                P.reservedOp command_lexer "<-"
+                src <- P.identifier command_lexer
+                return $ UIRename dest src]
 
 getCommand :: IO UIAssignment
 getCommand =
