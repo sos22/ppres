@@ -4,8 +4,6 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
 import Types
 import Worker
 
-import Debug.Trace
-
 doHistoryEntry :: Worker -> HistoryEntry -> WorldMonad Bool
 doHistoryEntry w (HistoryRun cntr) = runWorker w cntr
 doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid
@@ -37,11 +35,9 @@ stripSharedPrefix (History aa) (History bb) =
    when a and b are equal as a special case) -}
 historyPrefixOf :: History -> History -> Bool
 historyPrefixOf a b =
-    let r = stripSharedPrefix a b
-    in trace ("strip shared " ++ (show a) ++ " " ++ (show b) ++ " -> " ++ show r) $
-       case r of
-         (History [], _) -> True
-         _ -> False
+    case  stripSharedPrefix a b of
+      (History [], _) -> True
+      _ -> False
 
 emptyHistory :: History
 emptyHistory = History []

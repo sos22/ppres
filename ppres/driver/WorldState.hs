@@ -7,16 +7,11 @@ import Foreign.C.Types
 import Control.Monad.State
 import Data.Word
 
-import qualified Debug.Trace as DT
-
 import Socket
 import Types
 import UIValue
 import Worker
 import History
-
-t :: String -> a -> a
-t = DT.trace
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
@@ -67,7 +62,7 @@ doRename dest src =
 getWorker :: History -> WorldMonad Worker
 getWorker hist =
     do (best_hist, best_worker) <- findBestWorker 
-       new_worker <- t ("Chose " ++ (show best_hist) ++ " as best prefix of " ++ (show hist)) $ takeSnapshot best_worker
+       new_worker <- takeSnapshot best_worker
        let new_worker' = case new_worker of
                            Nothing ->
                                error $ "cannot snapshot " ++ (show best_hist)
