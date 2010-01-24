@@ -536,6 +536,9 @@ replay_failed(void)
 	while (1) {
 		get_control_command(&cmd);
 		switch (cmd.cmd) {
+		case WORKER_SNAPSHOT:
+		    control_process_socket = do_snapshot(control_process_socket);
+		    break;
 		case WORKER_KILL:
 			send_response(0);
 			my__exit(0);
@@ -543,7 +546,8 @@ replay_failed(void)
 			do_trace_thread_command(cmd.u.trace_thread.thread);
 			break;
 		default:
-			VG_(printf)("Only the kill and trace thread commands are valid after replay fails\n");
+		    VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
+				cmd.cmd);
 			send_response(1);
 			break;
 		}

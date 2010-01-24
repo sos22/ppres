@@ -108,55 +108,45 @@ run start cntr =
     let newHist = appendHistory start (HistoryRun cntr)
     in
     do worker <- getWorker start
-       r <- runWorker worker cntr
-       if r
-        then do registerWorker newHist worker
-                return $ Just newHist
-        else return Nothing
+       runWorker worker cntr
+       registerWorker newHist worker
+       return $ Just newHist
 
 trace :: History -> Integer -> WorldMonad (Maybe History)
 trace start cntr =
     let newHist = appendHistory start (HistoryRun cntr)
     in
     do worker <- getWorker start
-       r <- traceWorker worker cntr
-       if r
-        then do registerWorker newHist worker
-                return $ Just newHist
-        else return Nothing
+       traceWorker worker cntr
+       registerWorker newHist worker
+       return $ Just newHist
 
 traceThread :: History -> ThreadId -> WorldMonad (Maybe History)
 traceThread start thr =
     let newHist = appendHistory start (HistoryRunThread thr)
     in
     do worker <- getWorker start
-       r <- traceThreadWorker worker thr
-       if r
-        then do registerWorker newHist worker
-                return $ Just newHist
-        else return Nothing
+       traceThreadWorker worker thr
+       registerWorker newHist worker
+       return $ Just newHist
 
 traceAddress :: History -> Word64 -> WorldMonad (Maybe History)
 traceAddress start addr =
     let newHist = appendHistory start (HistoryRun $ -1)
     in
     do worker <- getWorker start
-       r <- traceAddressWorker worker addr
-       if r
-        then do registerWorker newHist worker
-                return $ Just newHist
-        else return Nothing
+       traceAddressWorker worker addr
+       registerWorker newHist worker
+       return $ Just newHist
 
 runMemory :: History -> ThreadId -> Integer -> WorldMonad (Maybe History)
 runMemory start tid cntr =
     let newHist = appendHistory start (HistoryRunMemory tid cntr)
     in
     do worker <- getWorker start
-       r <- runMemoryWorker worker tid cntr
-       if r
-        then do registerWorker newHist worker
-                return $ Just newHist
-        else return Nothing
+       runMemoryWorker worker tid cntr
+       registerWorker newHist worker
+       return $ Just newHist
 
 exitWorld :: WorldMonad ()
 exitWorld =
