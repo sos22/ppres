@@ -1,0 +1,62 @@
+module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
+               appendHistory) where
+
+import Types
+import Worker
+
+import Debug.Trace
+
+doHistoryEntry :: Worker -> HistoryEntry -> WorldMonad Bool
+doHistoryEntry w (HistoryRun cntr) = runWorker w cntr
+doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid
+doHistoryEntry w (HistoryRunMemory tid cntr) =
+    runMemoryWorker w tid cntr
+
+stripSharedPrefix :: History -> History -> (History, History)
+stripSharedPrefix (History aa) (History bb) =
+    case worker aa bb of
+      (a', b') -> (History a', History b')
+    where worker a [] = (a, [])
+          worker [] b = ([], b)
+          worker (a:as) (b:bs) =
+              if a == b then worker as bs
+              else case (a, b) of
+                     (HistoryRun an, HistoryRun bn) ->
+                         if an < bn
+                         then worker as ((HistoryRun $ bn - an):bs)
+                         else worker ((HistoryRun $ an - bn):as) bs
+                     _ -> ((a:as), (b:bs))
+
+{- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
+   when a and b are equal as a special case) -}
+historyPrefixOf :: History -> History -> Bool
+historyPrefixOf a b =
+    let r = stripSharedPrefix a b
+    in trace ("strip shared " ++ (show a) ++ " " ++ (show b) ++ " -> " ++ show r) $
+       case r of
+         (History [], _) -> True
+         _ -> False
+
+emptyHistory :: History
+emptyHistory = History []
+
+{- fixupWorkerForHist worker current desired -> assume that worker is
+   in a state represented by current, and get it into a state
+   represented by desired.  current must be a prefix of desired.
+   Returns True if we succeed or False if something goes wrong. -}
+fixupWorkerForHist :: Worker -> History -> History -> WorldMonad Bool
+fixupWorkerForHist w current desired =
+    case stripSharedPrefix current desired of
+      (History [], History todo) ->
+          worker todo
+      _ -> error ((show current) ++ " is not a prefix of " ++ (show desired))
+    where worker [] = return True
+          worker (d:ds) =
+              do r <- doHistoryEntry w d
+                 case r of
+                   False -> return r
+                   True -> worker ds
+
+appendHistory :: History -> HistoryEntry -> History
+appendHistory (History e) he =
+    History $ e ++ [he]

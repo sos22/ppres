@@ -1,7 +1,6 @@
 module Main(main) where
 
 import System.Environment
-import System.Exit
 import Text.Parsec
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
@@ -11,18 +10,16 @@ import Data.Word
 import Control.Monad.State
 
 import Types
-import Worker
 import WorldState
-import UIValue
 
 data UIFunction = UIDummyFunction
                 | UIExit
-                | UISnapshot VariableName
                 | UIRun VariableName Integer
                 | UITrace VariableName Integer
                 | UITraceThread VariableName ThreadId
                 | UITraceAddress VariableName Word64
                 | UIRunMemory VariableName ThreadId Integer
+                | UIDir
 
 data UIAssignment = UIAssignment VariableName UIFunction
                   | UIFunction UIFunction
@@ -46,8 +43,7 @@ functionParser =
     in tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                 liftM (const UIExit) $ keyword "exit",
                 liftM (const UIExit) $ keyword "quit",
-                do keyword "snapshot"
-                   liftM UISnapshot $ P.identifier command_lexer,
+                liftM (const UIDir) $ keyword "dir",
                 do keyword "run"
                    snap <- P.identifier command_lexer
                    cntr <- option (-1) (P.integer command_lexer)
@@ -94,58 +90,44 @@ getCommand =
                         getCommand
          Right v -> return v
 
+withSnapshot :: VariableName -> (History -> WorldMonad UIValue) -> WorldMonad UIValue
+withSnapshot name f =
+    do s <- lookupSnapshot name
+       case s of
+         Nothing -> do liftIO $ putStrLn $ "Can't find snapshot " ++ name
+                       return UIValueNull
+         Just s' -> f s'
+
+maybeSnapshotToUIValue :: Maybe History -> UIValue
+maybeSnapshotToUIValue Nothing = UIValueNull
+maybeSnapshotToUIValue (Just s) = UIValueSnapshot s
+
 runFunction :: UIFunction -> WorldMonad UIValue
 runFunction f =
     case f of
       UIDummyFunction -> return UIValueNull
-      UIExit ->
+      UIExit -> do exitWorld
+                   return UIValueNull
+      UIDir ->
           do ws <- get
-             sequence_ [mapM_ (uiv_destruct . snd) $ ws_bindings ws,
-                        liftIO $ exitWith ExitSuccess]
+             liftIO $ mapM_ (print . fst) $ ws_bindings ws
              return UIValueNull
-      UISnapshot vname ->
-          do p <- lookupSnapshot vname
-             case p of
-               Nothing -> do liftIO $ putStrLn "Can't find parent snapshot"
-                             return UIValueNull
-               Just parent ->
-                   do s <- takeSnapshot parent
-                      case s of
-                        Nothing ->
-                            do liftIO $ putStrLn "cannot take snapshot"
-                               return UIValueNull
-                        Just s' ->
-                            return $ UIValueSnapshot s'
+
       UIRun name cntr ->
-          do s <- lookupSnapshot name
-             case s of
-               Nothing -> liftIO $ putStrLn "Can't find snapshot"
-               Just s' -> runWorker s' cntr
-             return UIValueNull
+          withSnapshot name $ \s ->
+              liftM maybeSnapshotToUIValue $ run s cntr
       UITrace name cntr ->
-          do s <- lookupSnapshot name
-             case s of
-               Nothing -> liftIO $ putStrLn "Can't find snapshot"
-               Just s' -> traceWorker s' cntr
-             return UIValueNull
+          withSnapshot name $ \s ->
+              liftM maybeSnapshotToUIValue $ trace s cntr
       UITraceThread name thr ->
-          do s <- lookupSnapshot name
-             case s of
-               Nothing -> liftIO $ putStrLn "Can't find snapshot"
-               Just s' -> traceThreadWorker s' thr
-             return UIValueNull
+          withSnapshot name $ \s ->
+              liftM maybeSnapshotToUIValue $ traceThread s thr
       UITraceAddress name addr ->
-          do s <- lookupSnapshot name
-             case s of
-               Nothing -> liftIO $ putStrLn "Can't find snapshot"
-               Just s' -> traceAddressWorker s' addr
-             return UIValueNull
+          withSnapshot name $ \s ->
+              liftM maybeSnapshotToUIValue $ traceAddress s addr
       UIRunMemory name tid cntr ->
-          do s <- lookupSnapshot name
-             case s of
-               Nothing -> liftIO $ putStrLn "Can't find snapshot"
-               Just s' -> runMemoryWorker s' tid cntr
-             return UIValueNull
+          withSnapshot name $ \s ->
+              liftM maybeSnapshotToUIValue $ runMemory s tid cntr
 
 runAssignment :: UIAssignment -> WorldMonad ()
 runAssignment as =

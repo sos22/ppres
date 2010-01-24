@@ -22,40 +22,30 @@ killWorker worker =
                   return True
           else return False
 
-runWorker :: Worker -> Integer -> WorldMonad ()
+runWorker :: Worker -> Integer -> WorldMonad Bool
 runWorker worker cntr =
     do ack <- sendWorkerCommand worker 0x1236 [fromInteger cntr]
-       if ack /= 0
-          then liftIO $ putStrLn "error running worker"
-          else return ()
+       return $ ack == 0
 
-traceWorker :: Worker -> Integer -> WorldMonad ()
+traceWorker :: Worker -> Integer -> WorldMonad Bool
 traceWorker worker cntr =
     do ack <- sendWorkerCommand worker 0x1237 [fromInteger cntr]
-       if ack /= 0
-          then liftIO $ putStrLn "error running worker"
-          else return ()
+       return $ ack == 0
 
-traceThreadWorker :: Worker -> ThreadId -> WorldMonad ()
+traceThreadWorker :: Worker -> ThreadId -> WorldMonad Bool
 traceThreadWorker worker tid =
     do ack <- sendWorkerCommand worker 0x1239 [fromInteger tid]
-       if ack /= 0
-          then liftIO $ putStrLn "error running worker"
-          else return ()
+       return $ ack == 0
 
-traceAddressWorker :: Worker -> Word64 -> WorldMonad ()
+traceAddressWorker :: Worker -> Word64 -> WorldMonad Bool
 traceAddressWorker worker addr =
     do ack <- sendWorkerCommand worker 0x123a [addr]
-       if ack /= 0
-          then liftIO $ putStrLn "error running worker"
-          else return ()
+       return $ ack == 0
 
-runMemoryWorker :: Worker -> ThreadId -> Integer -> WorldMonad ()
+runMemoryWorker :: Worker -> ThreadId -> Integer -> WorldMonad Bool
 runMemoryWorker worker tid cntr =
     do ack <- sendWorkerCommand worker 0x1238 [fromInteger $ tid, fromInteger $ cntr]
-       if ack /= 0
-          then liftIO $ putStrLn "error running worker"
-          else return ()
+       return $ ack == 0
 
 takeSnapshot :: Worker -> WorldMonad (Maybe Worker)
 takeSnapshot worker =

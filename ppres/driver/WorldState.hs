@@ -1,30 +1,43 @@
 module WorldState(initialWorldState, doAssignment, lookupVariable,
-                  lookupSnapshot, doRename) where
+                  lookupSnapshot, doRename, run, trace, traceThread,
+                  traceAddress, runMemory, exitWorld) where
 
+import System.Exit
 import Foreign.C.Types
+import Control.Monad.State
+import Data.Word
+
+import qualified Debug.Trace as DT
 
 import Socket
 import Types
 import UIValue
-import Control.Monad.State
+import Worker
+import History
+
+t :: String -> a -> a
+t = DT.trace
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
        let root_snap = Worker f
-       return $ WorldState { ws_bindings = [("root", UIValueSnapshot root_snap)] }
+       return $ WorldState { ws_bindings = [("start", UIValueSnapshot emptyHistory)],
+                             ws_workers = [],
+                             ws_starting_worker = root_snap }
 
 lookupVariable :: VariableName -> WorldMonad (Maybe UIValue)
 lookupVariable name =
     do s <- get
        return $ lookup name $ ws_bindings s
 
-lookupSnapshot :: VariableName -> WorldMonad (Maybe Worker)
+lookupSnapshot :: VariableName -> WorldMonad (Maybe History)
 lookupSnapshot name =
     do s <- lookupVariable name
        case s of
          Just (UIValueSnapshot s') -> return $ Just s'
-         _ -> return Nothing
+         _ -> do liftIO $ putStrLn $ name ++ " is not a snapshot"
+                 return Nothing
 
 doAssignment :: VariableName -> UIValue -> WorldMonad ()
 doAssignment name val =
@@ -50,3 +63,105 @@ doRename dest src =
                 modify $ \ws -> ws { ws_bindings = (dest,s'):
                                     [(n, v) | (n, v) <- ws_bindings ws,
                                               n /= src && n/= dest] }
+
+getWorker :: History -> WorldMonad Worker
+getWorker hist =
+    do (best_hist, best_worker) <- findBestWorker 
+       new_worker <- t ("Chose " ++ (show best_hist) ++ " as best prefix of " ++ (show hist)) $ takeSnapshot best_worker
+       let new_worker' = case new_worker of
+                           Nothing ->
+                               error $ "cannot snapshot " ++ (show best_hist)
+                           Just new_worker'' -> new_worker''
+       r <- fixupWorkerForHist new_worker' best_hist hist
+       case r of
+         False -> error $ "failed to move worker from history " ++ (show best_hist) ++ " to " ++ (show hist)
+         True -> return ()
+       return new_worker'
+    where findBestWorker :: WorldMonad (History, Worker)
+          findBestWorker =
+              do ws <- get
+                 return $ foldr compareWorkers
+                            (emptyHistory, ws_starting_worker ws)
+                            (ws_workers ws)
+              where
+                {- Compare two entries in the worker list, and return
+                   whichever one is better suited to the target
+                   history -}
+                compareWorkers a@(hist1, _) b@(hist2, _) =
+                    if not $ hist1 `historyPrefixOf` hist
+                    then b
+                    else if hist1 `historyPrefixOf` hist2
+                         then b
+                         else a
+
+
+registerWorker :: History -> Worker -> WorldMonad ()
+registerWorker hist worker =
+    do ws <- get
+       let (new_workers, dead_workers) =
+               splitAt 100 ((hist, worker):(ws_workers ws))
+       put $ ws { ws_workers = new_workers}
+       mapM_ (killWorker . snd) dead_workers
+
+run :: History -> Integer -> WorldMonad (Maybe History)
+run start cntr =
+    let newHist = appendHistory start (HistoryRun cntr)
+    in
+    do worker <- getWorker start
+       r <- runWorker worker cntr
+       if r
+        then do registerWorker newHist worker
+                return $ Just newHist
+        else return Nothing
+
+trace :: History -> Integer -> WorldMonad (Maybe History)
+trace start cntr =
+    let newHist = appendHistory start (HistoryRun cntr)
+    in
+    do worker <- getWorker start
+       r <- traceWorker worker cntr
+       if r
+        then do registerWorker newHist worker
+                return $ Just newHist
+        else return Nothing
+
+traceThread :: History -> ThreadId -> WorldMonad (Maybe History)
+traceThread start thr =
+    let newHist = appendHistory start (HistoryRunThread thr)
+    in
+    do worker <- getWorker start
+       r <- traceThreadWorker worker thr
+       if r
+        then do registerWorker newHist worker
+                return $ Just newHist
+        else return Nothing
+
+traceAddress :: History -> Word64 -> WorldMonad (Maybe History)
+traceAddress start addr =
+    let newHist = appendHistory start (HistoryRun $ -1)
+    in
+    do worker <- getWorker start
+       r <- traceAddressWorker worker addr
+       if r
+        then do registerWorker newHist worker
+                return $ Just newHist
+        else return Nothing
+
+runMemory :: History -> ThreadId -> Integer -> WorldMonad (Maybe History)
+runMemory start tid cntr =
+    let newHist = appendHistory start (HistoryRunMemory tid cntr)
+    in
+    do worker <- getWorker start
+       r <- runMemoryWorker worker tid cntr
+       if r
+        then do registerWorker newHist worker
+                return $ Just newHist
+        else return Nothing
+
+exitWorld :: WorldMonad ()
+exitWorld =
+    do workers <- liftM ws_workers get
+       mapM_ (killWorker . snd) workers
+       start <- liftM ws_starting_worker get
+       killWorker start
+       liftIO $ exitWith ExitSuccess
