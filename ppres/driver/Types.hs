@@ -17,6 +17,7 @@ data Worker = Worker { worker_fd :: Socket }
 
 data UIValue = UIValueNull
              | UIValueSnapshot History
+             | UIValuePair UIValue UIValue
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }

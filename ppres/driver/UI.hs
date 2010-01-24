@@ -24,6 +24,9 @@ data UIExpression = UIDummyFunction
                   | UIDir
                   | UIPrint UIExpression
                   | UIVarName VariableName
+                  | UIPair UIExpression UIExpression
+                  | UIFirst UIExpression
+                  | UISecond UIExpression
 
 data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
@@ -74,6 +77,16 @@ expressionParser =
                 t <- thread_id_parser
                 n <- P.integer command_lexer
                 return $ UIRunMemory snap t n,
+             do keyword "pair"
+                a <- expressionParser
+                b <- expressionParser
+                return $ UIPair a b,
+             do keyword "first"
+                a <- expressionParser
+                return $ UIFirst a,
+             do keyword "second"
+                a <- expressionParser
+                return $ UISecond a,
              do ident <- P.identifier command_lexer
                 return $ UIVarName ident
             ]
@@ -119,6 +132,20 @@ evalExpression f =
                            return $ case r of
                                       Nothing -> UIValueNull
                                       Just x -> x
+      UIPair a b ->
+          do a' <- evalExpression a
+             b' <- evalExpression b
+             return $ UIValuePair a' b'
+      UIFirst a ->
+          do a' <- evalExpression a
+             case a' of
+               UIValuePair a'' _ -> return a''
+               _ -> return UIValueNull
+      UISecond a ->
+          do a' <- evalExpression a
+             case a' of
+               UIValuePair _ a'' -> return a''
+               _ -> return UIValueNull
       UIDir ->
           do ws <- get
              liftIO $ mapM_ (print . fst) $ ws_bindings ws
