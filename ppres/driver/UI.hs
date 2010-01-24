@@ -22,7 +22,6 @@ data UIExpression = UIDummyFunction
                   | UITraceAddress UIExpression Word64
                   | UIRunMemory UIExpression ThreadId Integer
                   | UIDir
-                  | UIPrint UIExpression
                   | UIVarName VariableName
                   | UIPair UIExpression UIExpression
                   | UIFirst UIExpression
@@ -58,7 +57,6 @@ expressionParser =
                liftM (const UIExit) $ keyword "exit",
                liftM (const UIExit) $ keyword "quit",
                liftM (const UIDir) $ keyword "dir",
-               oneExprArgParser "print" UIPrint,
                oneExprArgParser "thread_state" UIThreadState,
                do keyword "run"
                   snap <- expressionParser
@@ -150,10 +148,6 @@ evalExpression f =
           do ws <- get
              liftIO $ mapM_ (putStrLn . fst) $ ws_bindings ws
              return UIValueNull
-      UIPrint var ->
-          do r <- evalExpression var
-             liftIO $ print r
-             return r
       UIRun name cntr ->
           withSnapshot name $ \s ->
               return $ maybeSnapshotToUIValue $ run s cntr
