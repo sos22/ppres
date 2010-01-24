@@ -28,7 +28,9 @@ data UICommand = UIExit
 data UIFunction = UIDummyFunction
                 | UISnapshot
 
-data UIAssignment = UIAssignment (Either UICommand (Maybe VariableName, UIFunction))
+data UIAssignment = UICommand UICommand
+                  | UIAssignment VariableName UIFunction
+                  | UIFunction UIFunction
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -74,11 +76,11 @@ assignmentParser =
     (Text.Parsec.try $ do var <- P.identifier command_lexer
                           P.reservedOp command_lexer "="
                           rhs <- functionParser
-                          return $ UIAssignment $ Right (Just var, rhs)) <|>
+                          return $ UIAssignment var rhs) <|>
     (Text.Parsec.try $ do rhs <- functionParser
-                          return $ UIAssignment $ Right (Nothing, rhs)) <|>
+                          return $ UIFunction rhs) <|>
     (do command <- commandParser
-        return $ UIAssignment $ Left command)
+        return $ UICommand command)
 
 getCommand :: IO UIAssignment
 getCommand =
@@ -134,14 +136,14 @@ runFunction f ws =
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
-      UIAssignment (Left cmd) -> runCommand cmd ws
-      UIAssignment (Right (var, rhs)) ->
+      UICommand cmd -> runCommand cmd ws
+      UIAssignment var rhs ->
           do (ws', res) <- runFunction rhs ws
-             case var of
-               Nothing -> do print res
-                             doAssignment ws' "last" res
-               Just v -> doAssignment ws' v res
-      
+             doAssignment ws' var res
+      UIFunction f ->
+          do (ws', res) <- runFunction f ws
+             doAssignment ws' "last" res
+
 commandLoop :: WorldState -> IO ()
 commandLoop ws =
     do cmd <- getCommand
