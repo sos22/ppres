@@ -184,6 +184,7 @@ runAssignment as =
       UIFunction f ->
           do res <- evalExpression f
              doAssignment "last" res
+             liftIO $ print res
 
 commandLoop :: WorldMonad ()
 commandLoop =
