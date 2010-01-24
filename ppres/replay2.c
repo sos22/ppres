@@ -459,9 +459,51 @@ get_thread_by_id(ThreadId id)
 }
 
 static void
-send_response(int res)
+send_okay(void)
 {
-	safeish_write(control_process_socket, &res, sizeof(res));
+	struct response_message rsp;
+	rsp.response = RESPONSE_OKAY;
+	safeish_write(control_process_socket, &rsp, sizeof(rsp));
+}
+
+static void
+send_error(void)
+{
+	struct response_message rsp;
+	rsp.response = RESPONSE_ERR;
+	safeish_write(control_process_socket, &rsp, sizeof(rsp));
+}
+
+static void
+_send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args)
+{
+	struct response_message rsp;
+	struct response_ancillary anc;
+	rsp.response = RESPONSE_ANCILLARY;
+	anc.code = code;
+	anc.nr_args = nr_args;
+	safeish_write(control_process_socket, &rsp, sizeof(rsp));
+	safeish_write(control_process_socket, &anc, sizeof(anc));
+	safeish_write(control_process_socket, args, sizeof(args[0]) * nr_args);
+}
+#define send_ancillary(_code, ...)                         \
+do {						           \
+	const unsigned long args[] = {__VA_ARGS__};	   \
+	_send_ancillary((_code),			   \
+			sizeof(args)/sizeof(args[0]),	   \
+			args);				   \
+} while (0)
+
+static void
+send_string(unsigned size, const void *buf)
+{
+	struct response_message msg;
+	struct response_string rs;
+	msg.response = RESPONSE_STRING;
+	rs.len = size;
+	safeish_write(control_process_socket, &msg, sizeof(msg));
+	safeish_write(control_process_socket, &rs, sizeof(rs));
+	safeish_write(control_process_socket, buf, size);
 }
 
 static void
@@ -512,7 +554,7 @@ do_trace_thread_command(long thread)
 	rt = get_thread_by_id(thread);
 	if (!rt) {
 		VG_(printf)("Couldn't find thread %ld\n", thread);
-		send_response(1);
+		send_error();
 		return;
 	}
 	trace_mode = True;
@@ -523,7 +565,7 @@ do_trace_thread_command(long thread)
 		 cer.type == EVENT_load ||
 		 cer.type == EVENT_store);
 	trace_mode = False;
-	send_response(0);
+	send_okay();
 }
 
 struct string_acc_buffer {
@@ -567,8 +609,8 @@ do_thread_state_command(void)
 	for (rt = head_thread; rt; rt = rt->next)
 		sab_printf(&sab, "%d: failed %d, dead %d\n",
 			   rt->id, rt->failed, rt->dead);
-	send_response(sab.buffer_used);
-	safeish_write(control_process_socket, sab.buffer, sab.buffer_used);
+	send_string(sab.buffer_used, sab.buffer);
+	send_okay();
 	VG_(free)(sab.buffer);
 }
 
@@ -577,7 +619,7 @@ replay_failed(void)
 {
 	struct control_command cmd;
 
-	send_response(1);
+	send_error();
 	while (1) {
 		get_control_command(&cmd);
 		switch (cmd.cmd) {
@@ -585,7 +627,7 @@ replay_failed(void)
 			control_process_socket = do_snapshot(control_process_socket);
 			break;
 		case WORKER_KILL:
-			send_response(0);
+			send_okay();
 			my__exit(0);
 		case WORKER_TRACE_THREAD:
 			do_trace_thread_command(cmd.u.trace_thread.thread);
@@ -594,9 +636,9 @@ replay_failed(void)
 			do_thread_state_command();
 			break;
 		default:
-		    VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
+			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
 				cmd.cmd);
-			send_response(1);
+			send_error();
 			break;
 		}
 	}
@@ -1006,26 +1048,26 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 	logfile_reset_file_ptr(logfile);
 	switch (cmd->cmd) {
 	case WORKER_KILL:
-		send_response(0);
+		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
 		run_for_n_records(logfile, cmd->u.run.nr);
-		send_response(0);
+		send_okay();
 		break;
 	case WORKER_TRACE:
 		trace_mode = True;
 		run_for_n_records(logfile, cmd->u.trace.nr);
 		trace_mode = False;
-		send_response(0);
+		send_okay();
 		break;
 	case WORKER_RUNM:
 		rt = get_thread_by_id(cmd->u.runm.thread);
 		if (!rt) {
 			VG_(printf)("Cannot find thread %ld\n", cmd->u.runm.thread);
-			send_response(-1);
+			send_error();
 		} else {
 			run_for_n_mem_accesses(rt, cmd->u.runm.nr);
-			send_response(0);
+			send_okay();
 		}
 		break;
 	case WORKER_SNAPSHOT:
@@ -1037,7 +1079,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
 		run_for_n_records(logfile, -1);
-		send_response(0);
+		send_okay();
 		break;
 	case WORKER_THREAD_STATE:
 		do_thread_state_command();

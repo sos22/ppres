@@ -24,3 +24,20 @@ struct command_header {
 	unsigned command;
 	unsigned nr_args;
 };
+
+#define RESPONSE_OKAY 0
+#define RESPONSE_ERR 1
+#define RESPONSE_ANCILLARY 2
+#define RESPONSE_STRING 3
+struct response_message {
+	unsigned response;
+};
+
+struct response_ancillary {
+	unsigned code;
+	unsigned nr_args;
+};
+
+struct response_string {
+	unsigned len;
+};

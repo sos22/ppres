@@ -25,11 +25,11 @@ data UIExpression = UIDummyFunction
                   | UIPair UIExpression UIExpression
                   | UIFirst UIExpression
                   | UISecond UIExpression
-                  | UIThreadState UIExpression
+                  | UIThreadState UIExpression deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
-                  | UIExit
+                  | UIExit deriving Show
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -135,12 +135,12 @@ evalExpression f =
           do a' <- evalExpression a
              case a' of
                UIValuePair a'' _ -> return a''
-               _ -> return UIValueNull
+               _ -> return $ UIValueError "needed a pair for first"
       UISecond a ->
           do a' <- evalExpression a
              case a' of
                UIValuePair _ a'' -> return a''
-               _ -> return UIValueNull
+               _ -> return $ UIValueError "needed a pair for second"
       UIDir ->
           do ws <- get
              return $ UIValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
@@ -172,7 +172,9 @@ runAssignment as ws =
           return $ execState (evalExpression rhs >>= doAssignment var) ws
       UIFunction f ->
           let (res, ws') =
-                  runState (evalExpression f >>= doAssignment "last") ws
+                  runState (do r <- evalExpression f
+                               doAssignment "last" r
+                               return r) ws
           in print res >> return ws'
       UIExit -> exitWorld >> return ws
 

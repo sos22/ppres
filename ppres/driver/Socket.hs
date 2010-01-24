@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 module Socket(sendSocketCommand, recvSocket, fdToSocket, recvStringBytes,
-              ControlPacket(..))
+              ControlPacket(..), ResponsePacket(..), ResponseData(..))
     where
 
 import Data.Word
@@ -17,6 +17,9 @@ foreign import ccall unsafe "send"
   c_send :: CInt -> Ptr a -> CSize -> CInt -> IO CInt
 
 data ControlPacket = ControlPacket Word32 [Word64]
+data ResponseData = ResponseDataString String
+                  | ResponseDataAncillary Word32 [Word64]
+data ResponsePacket = ResponsePacket Bool [ResponseData]
 
 socketToFd :: Socket -> CInt
 socketToFd (MkSocket x _ _ _ _) = x
@@ -42,21 +45,6 @@ sendPacket handle (ControlPacket command args) =
                c_send (socketToFd handle) ptr (fromInteger $ toInteger packet_size) 0
     in allocaBytes (8 * (length args + 1)) send_packet >> return ()
 
-sendSocketCommand :: Socket -> ControlPacket -> IO Int32
-sendSocketCommand handle cp =
-    let get_response :: (Ptr Int32) -> IO Int32
-        get_response ptr =
-            do (r, _) <- recvBufFrom handle ptr 4
-               peek ptr
-    in do sendPacket handle cp
-          allocaBytes 4 get_response
-
-recvSocket :: Socket -> IO Socket
-recvSocket parent =
-    liftIO $ do newFd <- recvFd parent
-                mkSocket newFd AF_UNIX Stream 0 Connected
-
-
 recvStringBytes :: Socket -> Int32 -> IO String
 recvStringBytes sock len =
     let peekArray :: Storable a => Ptr a -> Int -> IO [a]
@@ -77,3 +65,37 @@ recvStringBytes sock len =
       allocaBytes (fromIntegral len) $ \buffer ->
         do (r, _) <- recvBufFrom sock buffer (fromIntegral len)
            bufferToString buffer r
+
+getResponse :: Socket -> IO ResponsePacket
+getResponse handle =
+    let getInt32 :: IO Int32
+        getInt32 = allocaBytes 4 $ \ptr -> do recvBufFrom handle ptr 4
+                                              peek ptr
+        getAncillary :: IO ResponseData
+        getAncillary = error "Write me"
+        getString :: IO ResponseData
+        getString = do bytes <- getInt32
+                       s <- recvStringBytes handle bytes
+                       return $ ResponseDataString s
+        worker :: [ResponseData] -> IO ResponsePacket
+        worker acc_data =
+            do rm <- getInt32
+               case rm of
+                 0 -> return $ ResponsePacket True (reverse acc_data)
+                 1 -> return $ ResponsePacket False (reverse acc_data)
+                 2 -> do anc <- getAncillary
+                         worker $ anc:acc_data
+                 3 -> do s <- getString
+                         worker $ s:acc_data
+                 _ -> error $ "strange response type " ++ (show rm)
+    in worker []
+
+sendSocketCommand :: Socket -> ControlPacket -> IO ResponsePacket
+sendSocketCommand handle cp =
+    sendPacket handle cp >> getResponse handle
+
+recvSocket :: Socket -> IO Socket
+recvSocket parent =
+    liftIO $ do newFd <- recvFd parent
+                mkSocket newFd AF_UNIX Stream 0 Connected
+

@@ -3,14 +3,13 @@ module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
     where
 
 import Data.Word
-import Data.Int
 import Network.Socket
 import Control.Monad.State
 
 import Types
 import Socket
 
-sendWorkerCommand :: Worker -> ControlPacket -> IO Int32
+sendWorkerCommand :: Worker -> ControlPacket -> IO ResponsePacket
 sendWorkerCommand worker cp =
     sendSocketCommand (worker_fd worker) cp
 
@@ -32,18 +31,18 @@ traceThreadPacket tid = ControlPacket 0x1239 [fromInteger tid]
 traceAddressPacket :: Word64 -> ControlPacket
 traceAddressPacket addr = ControlPacket 0x123a [addr]
 
-killWorker :: Worker -> IO Bool
-killWorker worker =
-    do ack <- sendWorkerCommand worker killPacket
-       if ack == 0
-          then do liftIO $ sClose $ worker_fd worker
-                  return True
-          else return False
-
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
-    do ack <- sendWorkerCommand worker cmd
-       return $ ack == 0
+    do (ResponsePacket s _) <- sendWorkerCommand worker cmd
+       return s
+
+killWorker :: Worker -> IO Bool
+killWorker worker =
+    do s <- trivCommand worker killPacket
+       if s
+          then liftIO $ sClose $ worker_fd worker
+          else return ()
+       return s
 
 runWorker :: Worker -> Integer -> IO Bool
 runWorker worker = trivCommand worker . runPacket
@@ -62,16 +61,23 @@ runMemoryWorker worker tid = trivCommand worker . runMemoryPacket tid
 
 takeSnapshot :: Worker -> IO (Maybe Worker)
 takeSnapshot worker =
-    do ack <- sendWorkerCommand worker (ControlPacket 0x1234 [])
-       if ack < 0
-          then return Nothing
-          else do newFd <- recvSocket (worker_fd worker)
-                  return $ Just $ Worker {worker_fd = newFd }
-
+    do (ResponsePacket s _) <-
+           sendWorkerCommand worker (ControlPacket 0x1234 [])
+       if s
+        then do newFd <- recvSocket (worker_fd worker)
+                return $ Just $ Worker {worker_fd = newFd }
+        else return Nothing
 
 threadStateWorker :: Worker -> IO (Maybe String)
 threadStateWorker worker =
-    do len <- sendWorkerCommand worker (ControlPacket 0x123b [])
-       if len < 0
-          then return Nothing
-          else liftM Just $ recvStringBytes (worker_fd worker) len
+    do (ResponsePacket s params) <-
+           sendWorkerCommand worker (ControlPacket 0x123b [])
+       return $
+              if s
+              then case filter (\x -> case x of
+                                        ResponseDataString _ -> True
+                                        _ -> False) params of
+                     [ResponseDataString x] -> Just x
+                     _ -> error $ "got back several strings, don't know what to do with them"
+              else Nothing
+ 
