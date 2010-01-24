@@ -17,12 +17,11 @@ initialWorldState fd =
        initWorkerCache root_snap
        return $ WorldState { ws_bindings = [("start", UIValueSnapshot emptyHistory)] }
 
-lookupVariable :: VariableName -> WorldMonad UIValue
-lookupVariable name =
-    do s <- get
-       return $ case lookup name $ ws_bindings s of
-                  Nothing -> UIValueError $ name ++ " not found"
-                  Just s' -> s'
+lookupVariable :: WorldState -> VariableName -> UIValue
+lookupVariable ws name =
+    case lookup name $ ws_bindings ws of
+      Nothing -> UIValueError $ name ++ " not found"
+      Just s' -> s'
 
 doAssignment :: VariableName -> UIValue -> WorldMonad ()
 doAssignment name val =

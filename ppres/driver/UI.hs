@@ -114,12 +114,11 @@ getCommand =
                         getCommand
          Right v -> return v
 
-withSnapshot :: UIExpression -> (History -> UIValue) -> WorldMonad UIValue
-withSnapshot expr f =
-    do s <- evalExpression expr
-       return $ case s of
-                  UIValueSnapshot s' -> f s'
-                  _ -> UIValueError $ "Needed a snapshot, got " ++ (show s)
+withSnapshot :: WorldState -> UIExpression -> (History -> UIValue) -> UIValue
+withSnapshot ws expr f =
+    case evalExpression ws expr of
+      UIValueSnapshot s' -> f s'
+      s -> UIValueError $ "Needed a snapshot, got " ++ (show s)
 
 maybeSnapshotToUIValue :: Maybe History -> UIValue
 maybeSnapshotToUIValue Nothing = UIValueNull
@@ -129,67 +128,61 @@ histTracePairToUIValue :: (History, [TraceRecord]) -> UIValue
 histTracePairToUIValue (hist, trc) =
     UIValuePair (UIValueSnapshot hist) (UIValueList $ map UIValueTrace trc)
 
-evalExpression :: UIExpression -> WorldMonad UIValue
-evalExpression f =
+evalExpression :: WorldState -> UIExpression -> UIValue
+evalExpression ws f =
     case f of
-      UIDummyFunction -> return UIValueNull
-      UIVarName name -> lookupVariable name
+      UIDummyFunction -> UIValueNull
+      UIVarName name -> lookupVariable ws name
       UIPair a b ->
-          do a' <- evalExpression a
-             b' <- evalExpression b
-             return $ UIValuePair a' b'
+          let a' = evalExpression ws a
+              b' = evalExpression ws b
+          in UIValuePair a' b'
       UIFirst a ->
-          do a' <- evalExpression a
-             case a' of
-               UIValuePair a'' _ -> return a''
-               _ -> return $ UIValueError "needed a pair for first"
+          case evalExpression ws a of
+            UIValuePair a'' _ -> a''
+            _ -> UIValueError "needed a pair for first"
       UISecond a ->
-          do a' <- evalExpression a
-             case a' of
-               UIValuePair _ a'' -> return a''
-               _ -> return $ UIValueError "needed a pair for second"
+          case evalExpression ws a of
+            UIValuePair _ a'' -> a''
+            _ -> UIValueError "needed a pair for second"
       UIDir ->
-          do ws <- get
-             return $ UIValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
+          UIValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->
-          withSnapshot name $ \s ->
+          withSnapshot ws name $ \s ->
               maybeSnapshotToUIValue $ run s cntr
       UITrace name cntr ->
-          withSnapshot name $ \s ->
+          withSnapshot ws name $ \s ->
               histTracePairToUIValue $ trace s cntr
       UITraceThread name thr ->
-          withSnapshot name $ \s ->
+          withSnapshot ws name $ \s ->
               histTracePairToUIValue $ traceThread s thr
       UITraceAddress name addr ->
-          withSnapshot name $ \s ->
+          withSnapshot ws name $ \s ->
               histTracePairToUIValue $ traceAddress s addr
       UIRunMemory name tid cntr ->
-          withSnapshot name $ \s ->
+          withSnapshot ws name $ \s ->
               histTracePairToUIValue $ runMemory s tid cntr
       UIThreadState name ->
-          withSnapshot name $ \s -> case threadState s of
-                                      Nothing -> UIValueNull
-                                      Just s' -> UIValueList $ map UIValueString s'
+          withSnapshot ws name $ \s -> case threadState s of
+                                         Nothing -> UIValueNull
+                                         Just s' -> UIValueList $ map UIValueString s'
       UIRemoveFootsteps e ->
-          do e' <- evalExpression e
-             return $ case e' of
-                        UIValueList es ->
-                            let isFootstep (UIValueTrace (TraceRecord (TraceFootstep _ _ _ _) _)) = True
-                                isFootstep _ = False
-                            in UIValueList [trc | trc <- es, not $ isFootstep trc ]
-                        _ -> UIValueError $ "Can only remove footsteps from a list of records, not " ++ (show e')
+          case evalExpression ws e of
+            UIValueList es ->
+                let isFootstep (UIValueTrace (TraceRecord (TraceFootstep _ _ _ _) _)) = True
+                    isFootstep _ = False
+                in UIValueList [trc | trc <- es, not $ isFootstep trc ]
+            e' -> UIValueError $ "Can only remove footsteps from a list of records, not " ++ (show e')
                    
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
       UIAssignment var rhs ->
-          return $ execState (evalExpression rhs >>= doAssignment var) ws
+          return $ execState (doAssignment var $ evalExpression ws rhs) ws
       UIFunction f ->
-          let (res, ws') =
-                  runState (do r <- evalExpression f
-                               doAssignment "last" r
-                               return r) ws
-          in print res >> return ws'
+          let r = evalExpression ws f
+              ws' = execState (doAssignment "last" r) ws
+          in print r >> return ws'
       UIExit -> exitWorld >> return ws
 
 commandLoop :: WorldState -> IO ()
