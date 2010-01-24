@@ -18,7 +18,6 @@ import UIValue
 data UICommand = UIExit
                | UIWhereAmI
                | UIActivateSnapshot VariableName
-               | UITraceThread ThreadId
                | UITraceAddress Word64
                | UIRunMemory ThreadId Integer
                  deriving Show
@@ -27,6 +26,7 @@ data UIFunction = UIDummyFunction
                 | UISnapshot VariableName
                 | UIRun VariableName Integer
                 | UITrace VariableName Integer
+                | UITraceThread VariableName ThreadId
 
 data UIAssignment = UICommand UICommand
                   | UIAssignment VariableName UIFunction
@@ -48,7 +48,6 @@ commandParser =
          "loc" -> return UIWhereAmI
          "whereami" -> return UIWhereAmI
          "activate" -> liftM UIActivateSnapshot (P.identifier command_lexer)
-         "tracet" -> liftM UITraceThread thread_id_parser
          "tracem" -> do addr <- P.integer command_lexer
                         return $ UITraceAddress $ fromInteger addr
          "runm" -> do t <- thread_id_parser
@@ -74,7 +73,11 @@ functionParser =
                 do keyword "trace"
                    snap <- P.identifier command_lexer
                    cntr <- option (-1) (P.integer command_lexer)
-                   return $ UIRun snap cntr
+                   return $ UITrace snap cntr,
+                do keyword "tracet"
+                   snap <- P.identifier command_lexer
+                   thr <- thread_id_parser
+                   return $ UITraceThread snap thr
                ]
 
 assignmentParser :: Parser UIAssignment
@@ -114,8 +117,6 @@ runCommand (UIActivateSnapshot sid) =
          Just (UIValueSnapshot s') ->
              modify $ \ws -> ws { ws_worker = s' }
          _ -> liftIO $ putStrLn "Not a snapshot"
-runCommand (UITraceThread ident) =
-    withWorker $ \w -> traceThreadWorker w ident
 runCommand (UITraceAddress addr) =
     withWorker $ \w -> traceAddressWorker w addr
 runCommand (UIRunMemory tid cntr) =
@@ -149,6 +150,12 @@ runFunction f =
              case s of
                Nothing -> liftIO $ putStrLn "Can't find snapshot"
                Just s' -> traceWorker s' cntr
+             return UIValueNull
+      UITraceThread name thr ->
+          do s <- lookupSnapshot name
+             case s of
+               Nothing -> liftIO $ putStrLn "Can't find snapshot"
+               Just s' -> traceThreadWorker s' thr
              return UIValueNull
 
 runAssignment :: UIAssignment -> WorldMonad ()
