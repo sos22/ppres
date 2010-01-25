@@ -102,12 +102,16 @@ assignmentParser =
     tchoice [do var <- P.identifier command_lexer
                 P.reservedOp command_lexer "="
                 rhs <- expressionParser
+                eof
                 return $ UIAssignment var rhs,
              do keyword "exit"
+                eof
                 return UIExit,
              do keyword "quit"
+                eof
                 return UIExit,
              do rhs <- expressionParser
+                eof
                 return $ UIFunction rhs
             ]
 
