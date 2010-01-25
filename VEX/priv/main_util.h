@@ -52,8 +52,9 @@
 
 /* Misc. */
 
+#ifndef NULL
 #define NULL ((void*)0)
-
+#endif
 
 /* Stuff for panicking and assertion. */
 

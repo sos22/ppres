@@ -63,6 +63,19 @@ data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
 instance Show TraceRecord where
     show tr = (show $ trc_loc tr) ++ "\t" ++ (show $ trc_trc tr)
 
+data RegisterName = REG_RAX
+                  | REG_RDX
+                  | REG_RCX
+                  | REG_RBX
+                  | REG_RSP
+                  | REG_RBP
+                  | REG_RSI
+                  | REG_RDI deriving Show
+
+data Expression = ExpressionRegister RegisterName
+                | ExpressionConst Word64
+                | ExpressionMem Int Expression deriving Show
+
 data ReplayFailureReason = FailureReasonControl deriving Show
 
 data ReplayState = ReplayStateOkay
@@ -76,6 +89,7 @@ data UIValue = UIValueNull
              | UIValueTrace TraceRecord
              | UIValueError String
              | UIValueReplayState ReplayState
+             | UIValueExpression Expression
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }
@@ -88,6 +102,3 @@ instance Monad (Either a) where
     (Right x) >>= f = f x
     (Left x) >>= _ = Left x
     
-instance Functor (Either a) where
-    fmap f (Right a) = Right $ f a
-    fmap _ (Left a) = Left a

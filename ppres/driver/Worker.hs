@@ -1,6 +1,6 @@
 module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
               takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
-              replayStateWorker)
+              replayStateWorker, controlTraceWorker)
     where
 
 import Data.Word
@@ -31,6 +31,9 @@ traceThreadPacket tid = ControlPacket 0x1239 [fromInteger tid]
 
 traceAddressPacket :: Word64 -> ControlPacket
 traceAddressPacket addr = ControlPacket 0x123a [addr]
+
+controlTracePacket :: Integer -> ControlPacket
+controlTracePacket cntr = ControlPacket 0x123d [fromInteger cntr]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -132,3 +135,69 @@ replayStateWorker worker =
     do (ResponsePacket _ params) <-
            sendWorkerCommand worker (ControlPacket 0x123c [])
        return $ parseReplayState params
+
+data ConsumerMonad a b = ConsumerMonad { runConsumer :: [a] -> (b, [a]) }
+
+instance Monad (ConsumerMonad a) where
+    return b = ConsumerMonad $  \r -> (b, r)
+    f >>= s =
+        ConsumerMonad $ \items ->
+            let (f_res, items') = runConsumer f items
+            in runConsumer (s f_res) items'
+
+consume :: ConsumerMonad a a
+consume = ConsumerMonad $ \(i:r) -> (i,r)
+
+hitEnd :: ConsumerMonad a Bool
+hitEnd = ConsumerMonad $ \i -> case i of
+                                 [] -> (True, i)
+                                 _ -> (False, i)
+
+consumeMany :: ConsumerMonad a b -> ConsumerMonad a [b]
+consumeMany what =
+    do e <- hitEnd
+       if e
+          then return []
+          else do i <- what
+                  rest <- consumeMany what
+                  return $ i:rest
+
+evalConsumer :: [a] -> ConsumerMonad a b -> b
+evalConsumer items monad =
+    case runConsumer monad items of
+      (x, []) -> x
+      _ -> error "Failed to consume all items"
+
+parseRegister :: Word64 -> RegisterName
+parseRegister 0 = REG_RAX
+parseRegister 1 = REG_RDX
+parseRegister 2 = REG_RCX
+parseRegister 3 = REG_RBX
+parseRegister 4 = REG_RSP
+parseRegister 5 = REG_RBP
+parseRegister 6 = REG_RSI
+parseRegister 7 = REG_RDI
+parseRegister r = error $ "bad register encoding " ++ (show r)
+
+parseExpression :: ConsumerMonad ResponseData Expression
+parseExpression =
+    do d <- consume
+       case d of
+         ResponseDataAncillary 0 [r] ->
+             return $ ExpressionRegister $ parseRegister r
+         ResponseDataAncillary 1 [val] ->
+             return $ ExpressionConst val
+         ResponseDataAncillary 2 [sz] ->
+             do addr <- parseExpression
+                return $ ExpressionMem (fromIntegral sz) addr
+         _ -> error "failed to parse an expression"
+
+parseExpressions :: [ResponseData] -> [Expression]
+parseExpressions items =
+    evalConsumer items $ consumeMany parseExpression
+
+controlTraceWorker :: Worker -> Integer -> IO [Expression]
+controlTraceWorker worker cntr =
+    do (ResponsePacket _ params) <-
+           sendWorkerCommand worker $ controlTracePacket cntr
+       return $ parseExpressions params

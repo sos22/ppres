@@ -1692,6 +1692,13 @@ void VG_(sanity_check_general) ( Bool force_expensive )
    }
 }
 
+UInt (*VG_(interpret))(VexGuestArchState *state);
+
+UInt VG_(do_interpret)(VexGuestArchState *state)
+{
+   return VG_(interpret)(state);
+}
+
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/
 /*--------------------------------------------------------------------*/

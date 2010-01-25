@@ -26,6 +26,14 @@
 #include "replay.h"
 #include "replay2.h"
 
+#include "../coregrind/pub_core_basics.h"
+#include "../coregrind/pub_core_machine.h"
+#include "../coregrind/pub_core_threadstate.h"
+#include "../coregrind/pub_core_dispatch_asm.h"
+#include "../VEX/priv/main_util.h"
+#include "../VEX/priv/guest_generic_bb_to_IR.h"
+#include "../VEX/priv/guest_amd64_defs.h"
+
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
 extern Bool VG_(tool_handles_synchronisation);
@@ -38,8 +46,11 @@ extern Long (*tool_provided_clone_syscall)(Word (*fn)(void *),
 					   Long *child_tid,
 					   Long *parent_tid,
 					   vki_modify_ldt_t *);
-extern void VG_(client_syscall) ( ThreadId tid, UInt trc );
+extern UInt (*VG_(interpret))(VexGuestArchState *state);
+extern void VG_(client_syscall)(ThreadId tid, UInt trc);
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
+extern void vexSetAllocModeTEMP_and_clear ( void );
+extern void VG_(init_vex)(void);
 
 /* ASSUME is like assert, in that it terminates if the argument is
    anything other than true, but it's supposed to be a hint that we're
@@ -64,6 +75,37 @@ struct client_event_record {
 	const unsigned long *args;
 };
 
+struct abstract_interpret_value {
+	unsigned long v1;
+	unsigned long v2;
+	struct expression *origin;
+};
+
+struct interpret_state {
+	struct abstract_interpret_value *temporaries;
+	/* Update commit_is_to_vex_state, initialise_is_for_vex_state,
+	   and get_aiv_for_offset when changing these. */
+	struct abstract_interpret_value rax;
+	struct abstract_interpret_value rcx;
+	struct abstract_interpret_value rdx;
+	struct abstract_interpret_value rbx;
+	struct abstract_interpret_value rsp;
+	struct abstract_interpret_value rbp;
+	struct abstract_interpret_value rdi;
+	struct abstract_interpret_value r8;
+	struct abstract_interpret_value r9;
+	struct abstract_interpret_value r10;
+	struct abstract_interpret_value r11;
+	struct abstract_interpret_value r12;
+	struct abstract_interpret_value r13;
+	struct abstract_interpret_value rip;
+
+	struct abstract_interpret_value cc_op;
+	struct abstract_interpret_value cc_dep1;
+	struct abstract_interpret_value cc_dep2;
+	struct abstract_interpret_value cc_ndep;
+};
+
 struct replay_thread {
 	struct replay_thread *next;
 	struct coroutine coroutine;
@@ -76,6 +118,8 @@ struct replay_thread {
 	unsigned last_record_nr;
 	Bool dead;
 	Bool in_monitor;
+
+	struct interpret_state interpret_state;
 };
 
 struct control_command {
@@ -87,6 +131,9 @@ struct control_command {
 		struct {
 			long nr;
 		} trace;
+		struct {
+			long nr;
+		} control_trace;
 		struct {
 			long thread;
 			long nr;
@@ -109,6 +156,10 @@ struct expression {
 			const void *ptr;
 			unsigned size;
 		} mem;
+		struct {
+			struct expression *arg1;
+			struct expression *arg2;
+		} binop;
 	} u;
 };
 
@@ -116,6 +167,13 @@ struct failure_reason {
 	unsigned reason;
 	struct expression *arg1;
 	struct expression *arg2;
+};
+
+struct interpret_mem_lookaside {
+	struct interpret_mem_lookaside *next;
+	Addr ptr;
+	unsigned size;
+	struct abstract_interpret_value aiv;
 };
 
 static Bool
@@ -150,6 +208,9 @@ trace_mode;
 
 static Addr
 trace_address;
+
+static struct interpret_mem_lookaside *
+head_interpret_mem_lookaside;
 
 static void
 my_mprotect(void *base, size_t len, int prot)
@@ -276,63 +337,218 @@ sysres_to_eax(SysRes sr)
 		return sr_Res(sr);
 }
 
-/* Bits for managing the transitions between client code and the
-   replay monitor. */
-
-/* Run the client thread until it generates an event, and figure out
-   what that event was. */
 static void
-run_thread(struct replay_thread *rt, struct client_event_record *cer)
+free_expression(const struct expression *e)
 {
-	static ThreadId last_run;
-
-	tl_assert(!VG_(in_generated_code));
-	tl_assert(client_event == NULL);
-	tl_assert(current_thread == NULL);
-	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
-	tl_assert(!rt->dead);
-
-	last_run = rt->id;
-	cer->type = EVENT_nothing;
-	current_thread = rt;
-	client_event = cer;
-	VG_(running_tid) = rt->id;
-
-	run_coroutine(&replay_machine,
-		      &rt->coroutine,
-		      "run_thread");
-
-	tl_assert(cer == client_event);
-	tl_assert(rt == current_thread);
-	client_event = NULL;
-	current_thread = NULL;
-	VG_(running_tid) = VG_INVALID_THREADID;
-
-	tl_assert(cer->type != EVENT_nothing);
-	tl_assert(!VG_(in_generated_code));
+	if (!e)
+		return;
+	switch (e->type) {
+	case EXPR_SUB:
+	case EXPR_ADD:
+	case EXPR_AND:
+	case EXPR_LE:
+	case EXPR_OR:
+	case EXPR_SHRL:
+	case EXPR_SHL:
+	case EXPR_COMBINE:
+		free_expression(e->u.binop.arg1);
+		free_expression(e->u.binop.arg2);
+		break;
+	case EXPR_MEM:
+		free_expression(e->u.mem.ptr);
+		break;
+	case EXPR_REG:
+	case EXPR_CONST:
+	case EXPR_IMPORTED:
+		break;
+	default:
+		VG_(tool_panic)((Char *)"free bad expression");
+	}
+	VG_(free)((void *)e);
 }
 
-/* Something happened in the client which requires the monitor to do
-   something. */
-static void
-_client_event(void)
+static struct expression *
+copy_expression(const struct expression *e)
 {
-	tl_assert(VG_(in_generated_code));
-	VG_(in_generated_code) = False;
-	run_coroutine(&current_thread->coroutine,
-		      &replay_machine,
-		      "_client_event");
-	tl_assert(VG_(running_tid) == current_thread->id);
-	VG_(in_generated_code) = True;
+	struct expression *work;
+	work = VG_(malloc)("expression", sizeof(*work));
+	*work = *e;
+	work->type = e->type;
+	switch (work->type) {
+	case EXPR_REG:
+	case EXPR_CONST:
+	case EXPR_IMPORTED:
+		break;
+	case EXPR_MEM:
+		work->u.mem.ptr = copy_expression(e->u.mem.ptr);
+		break;
+	case EXPR_SUB:
+	case EXPR_ADD:
+	case EXPR_AND:
+	case EXPR_SHRL:
+	case EXPR_SHL:
+	case EXPR_COMBINE:
+	case EXPR_OR:
+	case EXPR_LE:
+		work->u.binop.arg1 = copy_expression(e->u.binop.arg1);
+		work->u.binop.arg2 = copy_expression(e->u.binop.arg2);
+		break;
+	default:
+		VG_(tool_panic)((Char *)"Copy bad expression");
+	}
+	return work;
 }
-#define event(_code, ...)					  \
-do {                                                              \
-	unsigned long args[] = {__VA_ARGS__};			  \
-	client_event->type = (_code);                             \
-	client_event->nr_args = sizeof(args) / sizeof(args[0]);   \
-	client_event->args = args;                                \
-	_client_event();                                          \
-} while (0)
+
+static struct expression *
+expr_reg(unsigned reg)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_REG;
+	e->u.reg = reg;
+	return e;
+}
+
+static struct expression *
+expr_const(unsigned long c)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_CONST;
+	e->u.cnst = c;
+	return e;
+}
+
+static struct expression *
+expr_mem(void *ptr, unsigned size)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_MEM;
+	e->u.mem.size = size;
+	e->u.mem.ptr = ptr;
+	return e;
+}
+
+#define expr_mem1(p) expr_mem((p), 1)
+#define expr_mem2(p) expr_mem((p), 2)
+#define expr_mem4(p) expr_mem((p), 4)
+#define expr_mem8(p) expr_mem((p), 8)
+
+static struct expression *
+expr_imported(void)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_IMPORTED;
+	return e;
+}
+
+static struct expression *
+expr_sub(struct expression *e1, struct expression *e2)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_SUB;
+	e->u.binop.arg1 = e1;
+	e->u.binop.arg2 = e2;
+	return e;
+}
+
+static struct expression *
+expr_add(struct expression *e1, struct expression *e2)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_ADD;
+	e->u.binop.arg1 = e1;
+	e->u.binop.arg2 = e2;
+	return e;
+}
+
+static struct expression *
+expr_and(struct expression *e1, struct expression *e2)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_AND;
+	e->u.binop.arg1 = e1;
+	e->u.binop.arg2 = e2;
+	return e;
+}
+
+static struct expression *
+expr_or(struct expression *e1, struct expression *e2)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_OR;
+	e->u.binop.arg1 = e1;
+	e->u.binop.arg2 = e2;
+	return e;
+}
+
+static struct expression *
+expr_shrl(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_SHRL;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static struct expression *
+expr_shl(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_SHL;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static struct expression *
+expr_combine(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_COMBINE;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static struct expression *
+expr_le(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_LE;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static void
+send_expression(struct expression *e)
+{
+	VG_(printf)("WRITE ME %s\n", __func__);
+}
 
 static void
 send_okay(void)
@@ -403,6 +619,10 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.trace.nr, 8);
 		break;
+	case WORKER_CONTROL_TRACE:
+		tl_assert(ch.nr_args == 1);
+		safeish_read(control_process_socket, &cmd->u.control_trace.nr, 8);
+		break;
 	case WORKER_TRACE_THREAD:
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.trace_thread.thread, 8);
@@ -433,6 +653,623 @@ get_control_command(struct control_command *cmd)
 	do {						  \
 		if (trace_mode) _TRACE(code, ## args);	  \
 	} while (0)
+
+
+/* Bits for managing the transitions between client code and the
+   replay monitor. */
+
+static Bool
+chase_into_ok(void *ignore, Addr64 ignore2)
+{
+	return True;
+}
+
+/* Interpret the client, detecting control flow dependencies as we
+   go. */
+static struct abstract_interpret_value *
+get_aiv_for_offset(struct interpret_state *state, Int offset)
+{
+	switch (offset) {
+	case OFFSET_amd64_RAX:
+		return &state->rax;
+	case OFFSET_amd64_RCX:
+		return &state->rcx;
+	case OFFSET_amd64_RDX:
+		return &state->rdx;
+	case OFFSET_amd64_RBX:
+		return &state->rbx;
+	case OFFSET_amd64_RSP:
+		return &state->rsp;
+	case OFFSET_amd64_RBP:
+		return &state->rbp;
+	case OFFSET_amd64_RDI:
+		return &state->rdi;
+	case OFFSET_amd64_R8:
+		return &state->r8;
+	case OFFSET_amd64_R9:
+		return &state->r9;
+	case OFFSET_amd64_R10:
+		return &state->r10;
+	case OFFSET_amd64_R11:
+		return &state->r11;
+	case OFFSET_amd64_R12:
+		return &state->r12;
+	case OFFSET_amd64_R13:
+		return &state->r13;
+	case OFFSET_amd64_CC_OP:
+		return &state->cc_op;
+	case OFFSET_amd64_CC_DEP1:
+		return &state->cc_dep1;
+	case OFFSET_amd64_CC_DEP2:
+		return &state->cc_dep2;
+	case OFFSET_amd64_CC_NDEP:
+		return &state->cc_ndep;
+	case 168:
+		return &state->rip;
+	default:
+		VG_(printf)("Bad state offset %d\n", offset);
+		VG_(tool_panic)((Char *)"failed");
+		break;
+	}
+}
+
+static void
+copy_aiv(struct abstract_interpret_value *dest,
+	 const struct abstract_interpret_value *src)
+{
+	dest->v1 = src->v1;
+	dest->v2 = src->v2;
+	free_expression(dest->origin);
+	dest->origin = copy_expression(src->origin);
+}
+
+static void
+interpret_create_mem_lookaside(unsigned long ptr,
+			       unsigned size,
+			       struct abstract_interpret_value data)
+{
+	struct interpret_mem_lookaside *iml;
+	iml = VG_(malloc)("iml", sizeof(*iml));
+	iml->ptr = ptr;
+	iml->aiv = data;
+	iml->size = size;
+	iml->next = head_interpret_mem_lookaside;
+	head_interpret_mem_lookaside = iml;
+
+	VG_(memcpy)((void *)ptr, &data.v1, size);
+}
+
+static void
+interpreter_do_load(struct abstract_interpret_value *aiv,
+		    unsigned size,
+		    unsigned long addr)
+{
+	struct interpret_mem_lookaside *iml;
+
+	free_expression(aiv->origin);
+	VG_(memcpy)(&aiv->v1, (const void *)addr, size);
+	for (iml = head_interpret_mem_lookaside;
+	     iml;
+	     iml = iml->next) {
+		if (iml->ptr == addr && iml->size == size) {
+			aiv->origin = copy_expression(iml->aiv.origin);
+			return;
+		}
+		if (iml->ptr < addr + size &&
+		    iml->ptr + iml->size > addr) {
+			/* Don't want to deal with this yet. */
+			ASSUME(0);
+		}
+	}
+
+	aiv->origin = expr_imported();
+}
+
+static void
+eval_expression(struct interpret_state *state,
+		struct abstract_interpret_value *dest,
+		IRExpr *expr);
+
+/* generalised left-shifter */
+static inline Long lshift ( Long x, Int n )
+{
+   if (n >= 0)
+      return x << n;
+   else
+      return x >> (-n);
+}
+
+
+static void
+do_ccall(struct interpret_state *state,
+	 struct abstract_interpret_value *dest,
+	 IRCallee *cee,
+	 IRType retty,
+	 IRExpr **args)
+{
+	struct abstract_interpret_value condcode = {};
+	struct abstract_interpret_value op = {};
+	struct abstract_interpret_value dep1 = {};
+	struct abstract_interpret_value dep2 = {};
+	struct abstract_interpret_value ndep = {};
+
+	tl_assert(retty == Ity_I64);
+	tl_assert(cee->regparms == 0);
+	if (VG_(strcmp)((Char *)cee->name, (Char *)"amd64g_calculate_condition")) {
+		VG_(printf)("Strange clean callee %s\n",
+			    cee->name);
+		VG_(tool_panic)((Char *)"can't handle clean call");
+	}
+
+	eval_expression(state, &condcode, args[0]);
+	tl_assert(condcode.origin->type == EXPR_CONST);
+	free_expression(condcode.origin);
+
+	eval_expression(state, &op, args[1]);
+	tl_assert(op.origin->type == EXPR_CONST);
+	free_expression(op.origin);
+
+	eval_expression(state, &dep1, args[2]);
+	eval_expression(state, &dep2, args[3]);
+	eval_expression(state, &ndep, args[4]);
+	switch (condcode.v1) {
+	case AMD64CondZ:
+		switch (op.v1) {
+		case AMD64G_CC_OP_LOGICQ:
+			dest->v1 = dep1.v1 == 0;
+			free_expression(dest->origin);
+			dest->origin = copy_expression(dep1.origin);
+			break;
+		default:
+			VG_(printf)("Strange operation code %ld\n", op.v1);
+			VG_(tool_panic)((Char *)"failed");
+		}
+		break;
+	case AMD64CondLE:
+		switch (op.v1) {
+		case AMD64G_CC_OP_SUBQ:
+			dest->v1 = (long)dep1.v1 <= (long)dep2.v1;
+			free_expression(dest->origin);
+			VG_(printf)("%lx <= %lx -> %lx\n",
+				    dep1.v1, dep2.v1,
+				    dest->v1);
+			dest->origin = expr_le(copy_expression(dep1.origin),
+					       copy_expression(dep2.origin));
+			break;
+		default:
+			VG_(printf)("Strange operation code %ld for le\n", op.v1);
+			VG_(tool_panic)((Char *)"failed");
+		}
+		break;
+	default:
+		VG_(printf)("Strange cond code %ld\n", condcode.v1);
+		VG_(tool_panic)((Char *)"failed");
+	}
+	free_expression(dep1.origin);
+	free_expression(dep2.origin);
+	free_expression(ndep.origin);
+}
+
+static void
+eval_expression(struct interpret_state *state,
+		struct abstract_interpret_value *dest,
+		IRExpr *expr)
+{
+#define ORIGIN(x)				\
+	do {					\
+		struct expression *t;		\
+		t = dest->origin;		\
+		dest->origin = x;		\
+		free_expression(t);		\
+	} while (0)
+
+	tl_assert(expr != NULL);
+
+	switch (expr->tag) {
+	case Iex_Get: {
+		struct abstract_interpret_value *src;
+		src = get_aiv_for_offset(state, expr->Iex.Get.offset);
+		copy_aiv(dest, src);
+		break;
+	}
+
+	case Iex_RdTmp:
+		copy_aiv(dest, &state->temporaries[expr->Iex.RdTmp.tmp]);
+		break;
+
+	case Iex_Const: {
+		IRConst *cnst = expr->Iex.Const.con;
+		dest->v1 = cnst->Ico.U64;
+		ORIGIN(expr_const(cnst->Ico.U64));
+		break;
+	}
+
+	case Iex_Binop: {
+		struct abstract_interpret_value arg1 = {0};
+		struct abstract_interpret_value arg2 = {0};
+		eval_expression(state, &arg1, expr->Iex.Binop.arg1);
+		eval_expression(state, &arg2, expr->Iex.Binop.arg2);
+		switch (expr->Iex.Binop.op) {
+		case Iop_Sub64:
+		case Iop_Sub32:
+		case Iop_Sub8:
+			dest->v1 = arg1.v1 - arg2.v1;
+			ORIGIN(expr_sub(arg1.origin, arg2.origin));
+			break;
+		case Iop_Add64:
+			dest->v1 = arg1.v1 + arg2.v1;
+			ORIGIN(expr_add(arg1.origin, arg2.origin));
+			break;
+		case Iop_And64:
+		case Iop_And8:
+			dest->v1 = arg1.v1 & arg2.v1;
+			ORIGIN(expr_and(arg1.origin, arg2.origin));
+			break;
+		case Iop_Or64:
+			dest->v1 = arg1.v1 | arg2.v1;
+			ORIGIN(expr_or(arg1.origin, arg2.origin));
+			break;
+		case Iop_Shl64:
+			dest->v1 = arg1.v1 << arg2.v1;
+			ORIGIN(expr_shl(arg1.origin, arg2.origin));
+			break;
+		default:
+			VG_(tool_panic)((Char *)"bad binop");
+		}
+		break;
+	}
+
+	case Iex_Unop: {
+		struct abstract_interpret_value arg = {0};
+		eval_expression(state, &arg, expr->Iex.Unop.arg);
+		switch (expr->Iex.Unop.op) {
+		case Iop_64HIto32:
+			dest->v1 = arg.v1 >> 32;
+			ORIGIN(expr_shrl(arg.origin, expr_const(32)));
+			break;
+		case Iop_64to32:
+			dest->v1 = arg.v1 & 0xffffffff;
+			ORIGIN(expr_and(arg.origin, expr_const(0xfffffffful)));
+			break;
+		case Iop_64to1:
+			dest->v1 = arg.v1 & 1;
+			ORIGIN(expr_and(arg.origin, expr_const(1)));
+			break;
+		case Iop_32Uto64:
+			*dest = arg;
+			break;
+		default:
+			VG_(tool_panic)((Char *)"bad unop");
+		}
+		break;
+	}
+
+	case Iex_Load: {
+		struct abstract_interpret_value addr = {0};
+		struct abstract_interpret_value data = {0};
+		eval_expression(state, &addr, expr->Iex.Load.addr);
+		interpreter_do_load(&data,
+				    sizeofIRType(expr->Iex.Load.ty),
+				    addr.v1);
+		dest->v1 = data.v1;
+		ORIGIN(expr_combine(addr.origin, data.origin));
+		break;
+	}
+	case Iex_Mux0X: {
+		struct abstract_interpret_value cond = {0};
+		struct abstract_interpret_value res0 = {0};
+		struct abstract_interpret_value resX = {0};
+		eval_expression(state, &cond, expr->Iex.Mux0X.cond);
+		eval_expression(state, &res0, expr->Iex.Mux0X.expr0);
+		eval_expression(state, &resX, expr->Iex.Mux0X.exprX);
+		if (cond.v1 == 0) {
+			dest->v1 = res0.v1;
+			ORIGIN(expr_combine(cond.origin, res0.origin));
+			free_expression(resX.origin);
+		} else {
+			dest->v1 = resX.v1;
+			ORIGIN(expr_combine(cond.origin, resX.origin));
+			free_expression(res0.origin);
+		}
+		break;
+	}
+
+	case Iex_CCall: {
+		do_ccall(state, dest, expr->Iex.CCall.cee,
+			 expr->Iex.CCall.retty, expr->Iex.CCall.args);
+		break;
+	}
+
+	default:
+		VG_(printf)("Bad expression tag %x\n", expr->tag);
+		VG_(tool_panic)((Char *)"failed2");
+	}
+#undef ORIGIN
+}
+
+static void commit_interpreter_state(void);
+static void initialise_interpreter_state(void);
+
+/* XXX We don't track dependencies through dirty calls at all.  Oh
+ * well. */
+static void
+do_dirty_call(struct interpret_state *is,
+	      VexGuestArchState *state,
+	      IRSB *irsb,
+	      IRDirty *details)
+{
+	struct abstract_interpret_value guard = {0};
+	struct abstract_interpret_value arg = {0};
+	unsigned long args[6];
+	unsigned x;
+	unsigned long res;
+
+
+	VG_(printf)("Dirty call.\n");
+	if (details->guard) {
+		eval_expression(is, &guard, details->guard);
+		free_expression(guard.origin);
+		if (!guard.v1)
+			return;
+	}
+	for (x = 0; details->args[x]; x++) {
+		tl_assert(x < 6);
+		eval_expression(is, &arg, details->args[x]);
+		free_expression(arg.origin);
+		args[x] = arg.v1;
+	}
+	tl_assert(!details->cee->regparms);
+
+	commit_interpreter_state();
+
+	if (details->needsBBP) {
+		res = ((unsigned long (*)(VexGuestArchState *,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long))(details->cee->addr))
+			(state, args[0], args[1], args[2], args[3],
+			 args[4], args[5]);
+	} else {
+		res = ((unsigned long (*)(unsigned long,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long,
+					  unsigned long))(details->cee->addr))
+			(args[0], args[1], args[2], args[3],
+			 args[4], args[5]);
+	}
+
+	initialise_interpreter_state();
+
+	if (details->tmp != IRTemp_INVALID) {
+		is->temporaries[details->tmp].v1 = res;
+		free_expression(is->temporaries[details->tmp].origin);
+		is->temporaries[details->tmp].origin =
+			expr_imported();
+	}
+}
+
+static void initialise_is_for_vex_state(struct interpret_state *is,
+					const VexGuestArchState *state);
+
+static UInt
+interpret_log_control_flow(VexGuestArchState *state)
+{
+	struct interpret_state *istate = &current_thread->interpret_state;
+	VexGuestExtents vge;
+	VexArch vex_arch;
+	VexArchInfo vex_archinfo;
+	VexAbiInfo vex_abiinfo;
+	Addr64 addr;
+	IRSB *irsb;
+	IRStmt *stmt;
+	unsigned stmt_nr;
+	unsigned x;
+
+	addr = istate->rip.v1;
+	if (addr == 0) {
+		/* Hackity hackity hack: at the start of day, RIP in
+		   the interpreter state is wrong.  Fix it up a
+		   bit. */
+		initialise_is_for_vex_state(istate, state);
+		addr = state->guest_RIP;
+	}
+	VG_(printf)("Interpreting from rip %llx\n", addr);
+
+	/* This is all ripped from VG_(translate) and
+	 * LibVEX_Translate(). */
+
+	VG_(init_vex)();
+
+	VG_(machine_get_VexArchInfo)(&vex_arch, &vex_archinfo);
+	LibVEX_default_VexAbiInfo(&vex_abiinfo);
+	vex_abiinfo.guest_stack_redzone_size = VG_STACK_REDZONE_SZB;
+	vex_abiinfo.guest_amd64_assume_fs_is_zero  = True;
+
+	vexSetAllocModeTEMP_and_clear();
+
+	irsb = bb_to_IR ( &vge,
+			  NULL,
+			  disInstr_AMD64,
+			  ULong_to_Ptr(addr),
+			  (Addr64)addr,
+			  chase_into_ok,
+			  False,
+			  vex_arch,
+			  &vex_archinfo,
+			  &vex_abiinfo,
+			  Ity_I64,
+			  0,
+			  NULL,
+			  offsetof(VexGuestAMD64State, guest_TISTART),
+			  offsetof(VexGuestAMD64State, guest_TILEN) );
+
+	ppIRSB(irsb);
+
+	tl_assert(istate->temporaries == NULL);
+	istate->temporaries = VG_(malloc)("interpreter temporaries",
+					  sizeof(istate->temporaries[0]) *
+					  irsb->tyenv->types_used);
+	VG_(memset)(istate->temporaries,
+		    0,
+		    sizeof(istate->temporaries[0]) *
+		    irsb->tyenv->types_used);
+	for (stmt_nr = 0; stmt_nr < irsb->stmts_used; stmt_nr++) {
+		stmt = irsb->stmts[stmt_nr];
+		VG_(printf)("Interpreting ");
+		ppIRStmt(stmt);
+		VG_(printf)("\n");
+		switch (stmt->tag) {
+		case Ist_NoOp:
+		case Ist_IMark:
+		case Ist_AbiHint:
+			break;
+		case Ist_WrTmp:
+			eval_expression(istate,
+					&istate->temporaries[stmt->Ist.WrTmp.tmp],
+					stmt->Ist.WrTmp.data);
+			break;
+		case Ist_Put: {
+			struct abstract_interpret_value *dest =
+				get_aiv_for_offset(istate, stmt->Ist.Put.offset);
+			eval_expression(istate, dest, stmt->Ist.Put.data);
+			break;
+		}
+		case Ist_Store: {
+			/* In principle, we should probably make
+			   everything depend on addr on at this point,
+			   because the write could clobber almost
+			   anything.  We don't because that's not
+			   usually useful, and it tends to hide lots
+			   of more interesting dependencies. */
+			struct abstract_interpret_value addr = {0};
+			struct abstract_interpret_value data = {0};
+			eval_expression(istate, &addr, stmt->Ist.Store.addr);
+			eval_expression(istate, &data, stmt->Ist.Store.data);
+			interpret_create_mem_lookaside(
+				addr.v1,
+				sizeofIRType(
+					typeOfIRExpr(irsb->tyenv,
+						      stmt->Ist.Store.data)),
+				data);
+			free_expression(addr.origin);
+			break;
+		}
+
+		case Ist_Dirty: {
+			do_dirty_call(istate, state, irsb, stmt->Ist.Dirty.details);
+			break;
+		}
+
+		case Ist_Exit: {
+			struct abstract_interpret_value guard = {0};
+			if (stmt->Ist.Exit.guard) {
+				eval_expression(istate, &guard, stmt->Ist.Exit.guard);
+				send_expression(guard.origin);
+				free_expression(guard.origin);
+				if (!guard.v1)
+					break;
+			}
+			tl_assert(stmt->Ist.Exit.jk == Ijk_Boring);
+			tl_assert(stmt->Ist.Exit.dst->tag == Ico_U64);
+			istate->rip.v1 = stmt->Ist.Exit.dst->Ico.U64;
+			goto finished_block;
+		}
+
+		default:
+			VG_(printf)("Don't know how to interpret statement\n");
+			ppIRStmt(stmt);
+			break;
+		}
+	}
+
+	tl_assert(irsb->jumpkind == Ijk_Boring);
+
+	{
+		struct abstract_interpret_value next_addr = {0};
+		eval_expression(istate, &next_addr, irsb->next);
+		send_expression(next_addr.origin);
+		free_expression(next_addr.origin);
+		istate->rip.v1 = next_addr.v1;
+	}
+
+finished_block:
+	VG_(printf)("Returning from interpreter.\n");
+	for (x = 0; x < irsb->tyenv->types_used; x++) {
+		free_expression(istate->temporaries[x].origin);
+	}
+	VG_(free)(istate->temporaries);
+	istate->temporaries = NULL;
+
+	state->guest_RIP = istate->rip.v1;
+
+	return VG_TRC_BORING;
+}
+
+/* Run the client thread until it generates an event, and figure out
+   what that event was. */
+static void
+run_thread(struct replay_thread *rt, struct client_event_record *cer,
+	   Bool trace_control)
+{
+	static ThreadId last_run;
+
+	tl_assert(!VG_(in_generated_code));
+	tl_assert(client_event == NULL);
+	tl_assert(current_thread == NULL);
+	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
+	tl_assert(!rt->dead);
+
+	last_run = rt->id;
+	cer->type = EVENT_nothing;
+	current_thread = rt;
+	client_event = cer;
+	VG_(running_tid) = rt->id;
+
+	if (trace_control) {
+		VG_(interpret) = interpret_log_control_flow;
+	} else {
+		VG_(interpret) = NULL;
+	}
+	run_coroutine(&replay_machine,
+		      &rt->coroutine,
+		      "run_thread");
+
+	tl_assert(cer == client_event);
+	tl_assert(rt == current_thread);
+	client_event = NULL;
+	current_thread = NULL;
+	VG_(running_tid) = VG_INVALID_THREADID;
+
+	tl_assert(cer->type != EVENT_nothing);
+	tl_assert(!VG_(in_generated_code));
+}
+
+/* Something happened in the client which requires the monitor to do
+   something. */
+static void
+_client_event(void)
+{
+	tl_assert(VG_(in_generated_code));
+	VG_(in_generated_code) = False;
+	run_coroutine(&current_thread->coroutine,
+		      &replay_machine,
+		      "_client_event");
+	tl_assert(VG_(running_tid) == current_thread->id);
+	VG_(in_generated_code) = True;
+}
+#define event(_code, ...)					  \
+do {                                                              \
+	unsigned long args[] = {__VA_ARGS__};			  \
+	client_event->type = (_code);                             \
+	client_event->nr_args = sizeof(args) / sizeof(args[0]);   \
+	client_event->args = args;                                \
+	_client_event();                                          \
+} while (0)
 
 /* The various events.  These are the bits which run in client
    context. */
@@ -585,7 +1422,7 @@ do_trace_thread_command(long thread)
 	trace_mode = True;
 	access_nr = 0;
 	do {
-		run_thread(rt, &cer);
+		run_thread(rt, &cer, False);
 	} while (cer.type == EVENT_footstep ||
 		 cer.type == EVENT_load ||
 		 cer.type == EVENT_store);
@@ -628,12 +1465,6 @@ my_vasprintf(const char *fmt, va_list args)
 	}
 }
 
-static void
-send_expression(struct expression *e)
-{
-	VG_(printf)("WRITE ME %s\n", __func__);
-}
-
 static struct failure_reason *
 reason_control(void)
 {
@@ -665,45 +1496,6 @@ reason_other(void)
 	fr->reason = REASON_OTHER;
 	return fr;
 }
-
-static struct expression *
-expr_reg(unsigned reg)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_REG;
-	e->u.reg = reg;
-	return e;
-}
-
-static struct expression *
-expr_const(unsigned long c)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_CONST;
-	e->u.cnst = c;
-	return e;
-}
-
-static struct expression *
-expr_mem(void *ptr, unsigned size)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_MEM;
-	e->u.mem.size = size;
-	e->u.mem.ptr = ptr;
-	return e;
-}
-
-#define expr_mem1(p) expr_mem((p), 1)
-#define expr_mem2(p) expr_mem((p), 2)
-#define expr_mem4(p) expr_mem((p), 4)
-#define expr_mem8(p) expr_mem((p), 8)
 
 static void
 replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
@@ -1119,7 +1911,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 	trace_mode = True;
 	access_nr = 0;
 	while (access_nr < nr_accesses) {
-		run_thread(thr, &cer);
+		run_thread(thr, &cer, False);
 		if (cer.type == EVENT_footstep)
 			continue;
 		if (cer.type != EVENT_load &&
@@ -1135,7 +1927,8 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 
 static void
 run_for_n_records(struct record_consumer *logfile,
-		  unsigned nr_records)
+		  unsigned nr_records,
+		  Bool trace_control)
 {
 	const struct record_header *rec;
 	struct replay_thread *thr;
@@ -1166,7 +1959,7 @@ run_for_n_records(struct record_consumer *logfile,
 		tl_assert(thr != NULL);
 
 		do {
-			run_thread(thr, &thread_event);
+			run_thread(thr, &thread_event, trace_control);
 		} while (!(use_memory ||
 			   (thread_event.type != EVENT_load &&
 			    thread_event.type != EVENT_store)));
@@ -1183,6 +1976,119 @@ run_for_n_records(struct record_consumer *logfile,
 }
 
 static void
+init_register(struct abstract_interpret_value *aiv,
+	      unsigned long value)
+{
+	aiv->v1 = value;
+	aiv->v2 = 0;
+	free_expression(aiv->origin);
+	aiv->origin = expr_imported();
+}
+
+static void
+initialise_is_for_vex_state(struct interpret_state *is,
+			    const VexGuestArchState *state)
+{
+	init_register(&is->rax, state->guest_RAX);
+	init_register(&is->rcx, state->guest_RCX);
+	init_register(&is->rdx, state->guest_RDX);
+	init_register(&is->rbx, state->guest_RBX);
+	init_register(&is->rsp, state->guest_RSP);
+	init_register(&is->rbp, state->guest_RBP);
+	init_register(&is->rdi, state->guest_RDI);
+	init_register(&is->r8, state->guest_R8);
+	init_register(&is->r9, state->guest_R9);
+	init_register(&is->r10, state->guest_R10);
+	init_register(&is->r11, state->guest_R11);
+	init_register(&is->r12, state->guest_R12);
+	init_register(&is->r13, state->guest_R13);
+	init_register(&is->rip, state->guest_RIP);
+
+	init_register(&is->cc_op, state->guest_CC_OP);
+	init_register(&is->cc_dep1, state->guest_CC_DEP1);
+	init_register(&is->cc_dep2, state->guest_CC_DEP2);
+	init_register(&is->cc_ndep, state->guest_CC_NDEP);
+}
+
+static void
+initialise_interpreter_state(void)
+{
+	struct replay_thread *rt;
+	ThreadState *ts;
+
+	tl_assert(head_interpret_mem_lookaside == NULL);
+	for (rt = head_thread; rt; rt = rt->next) {
+		if (rt->dead)
+			continue;
+		ts = VG_(get_ThreadState)(rt->id);
+		initialise_is_for_vex_state(&rt->interpret_state,
+					    &ts->arch.vex);
+	}
+}
+
+static unsigned long
+commit_register(struct abstract_interpret_value *aiv)
+{
+	free_expression(aiv->origin);
+	aiv->origin = NULL;
+	return aiv->v1;
+}
+
+static void
+commit_is_to_vex_state(struct interpret_state *is,
+		       VexGuestArchState *state)
+{
+	state->guest_RAX = commit_register(&is->rax);
+	state->guest_RCX = commit_register(&is->rcx);
+	state->guest_RDX = commit_register(&is->rdx);
+	state->guest_RBX = commit_register(&is->rbx);
+	state->guest_RSP = commit_register(&is->rsp);
+	state->guest_RBP = commit_register(&is->rbp);
+	state->guest_RDI = commit_register(&is->rdi);
+	state->guest_R8 = commit_register(&is->r8);
+	state->guest_R9 = commit_register(&is->r9);
+	state->guest_R10 = commit_register(&is->r10);
+	state->guest_R11 = commit_register(&is->r11);
+	state->guest_R12 = commit_register(&is->r12);
+	state->guest_R13 = commit_register(&is->r13);
+	state->guest_RIP = commit_register(&is->rip);
+
+	state->guest_CC_OP = commit_register(&is->cc_op);
+	state->guest_CC_DEP1 = commit_register(&is->cc_dep1);
+	state->guest_CC_DEP2 = commit_register(&is->cc_dep2);
+	state->guest_CC_NDEP = commit_register(&is->cc_ndep);
+}
+
+static void
+commit_interpreter_state(void)
+{
+	struct replay_thread *rt;
+	ThreadState *ts;
+	struct interpret_mem_lookaside *iml, *next;
+
+	for (rt = head_thread; rt; rt = rt->next) {
+		if (rt->dead)
+			continue;
+		ts = VG_(get_ThreadState)(rt->id);
+		commit_is_to_vex_state(&rt->interpret_state,
+				       &ts->arch.vex);
+	}
+	VG_(printf)("Committing interpreter memory...\n");
+	for (iml = head_interpret_mem_lookaside;
+	     iml != NULL;
+	     iml = next) {
+		next = iml->next;
+		VG_(memcpy)((void *)iml->ptr,
+			    &iml->aiv.v1,
+			    iml->size);
+		free_expression(iml->aiv.origin);
+		VG_(free)(iml);
+	}
+	head_interpret_mem_lookaside = NULL;
+	VG_(printf)("Done commit.\n");
+}
+
+static void
 run_control_command(struct control_command *cmd, struct record_consumer *logfile)
 {
 	struct replay_thread *rt;
@@ -1193,13 +2099,19 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
-		run_for_n_records(logfile, cmd->u.run.nr);
+		run_for_n_records(logfile, cmd->u.run.nr, False);
 		send_okay();
 		break;
 	case WORKER_TRACE:
 		trace_mode = True;
-		run_for_n_records(logfile, cmd->u.trace.nr);
+		run_for_n_records(logfile, cmd->u.trace.nr, False);
 		trace_mode = False;
+		send_okay();
+		break;
+	case WORKER_CONTROL_TRACE:
+		initialise_interpreter_state();
+		run_for_n_records(logfile, cmd->u.control_trace.nr, True);
+		commit_interpreter_state();
 		send_okay();
 		break;
 	case WORKER_RUNM:
@@ -1220,7 +2132,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
-		run_for_n_records(logfile, -1);
+		run_for_n_records(logfile, -1, False);
 		send_okay();
 		break;
 	case WORKER_THREAD_STATE:

@@ -1253,6 +1253,19 @@ typedef
    TID is the identity of the thread requesting this translation.
 */
 
+void VG_(init_vex)(void)
+{
+   static Bool vex_init_done = False;
+
+   if (!vex_init_done) {
+      LibVEX_Init ( &failure_exit, &log_bytes, 
+                    1,     /* debug_paranoia */ 
+                    False, /* valgrind support */
+                    &VG_(clo_vex_control) );
+      vex_init_done = True;
+   }
+}
+
 Bool VG_(translate) ( ThreadId tid, 
                       Addr64   nraddr,
                       Bool     debugging_translation,
@@ -1274,17 +1287,7 @@ Bool VG_(translate) ( ThreadId tid,
    VexTranslateResult tres;
    VgCallbackClosure  closure;
 
-   /* Make sure Vex is initialised right. */
-
-   static Bool vex_init_done = False;
-
-   if (!vex_init_done) {
-      LibVEX_Init ( &failure_exit, &log_bytes, 
-                    1,     /* debug_paranoia */ 
-                    False, /* valgrind support */
-                    &VG_(clo_vex_control) );
-      vex_init_done = True;
-   }
+   VG_(init_vex)();
 
    /* Establish the translation kind and actual guest address to
       start from.  Sets (addr,kind). */

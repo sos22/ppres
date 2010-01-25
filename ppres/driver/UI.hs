@@ -31,6 +31,7 @@ data UIExpression = UIDummyFunction
                   | UIRemoveFootsteps UIExpression
                   | UIFindCriticalAccesses UIExpression UIExpression
                   | UIReplayState UIExpression
+                  | UIControlTrace UIExpression Integer
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -70,6 +71,10 @@ expressionParser =
                   snap <- expressionParser
                   cntr <- option (-1) (P.integer command_lexer)
                   return $ UITrace snap cntr,
+               do keyword "control_trace"
+                  snap <- expressionParser
+                  cntr <- option (-1) (P.integer command_lexer)
+                  return $ UIControlTrace snap cntr,
                do keyword "tracet"
                   snap <- expressionParser
                   thr <- thread_id_parser
@@ -165,6 +170,7 @@ evalExpression ws f =
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
       UIReplayState name -> withSnapshot ws name $ \s -> replayState s
+      UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
       UIFindCriticalAccesses a b ->
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b

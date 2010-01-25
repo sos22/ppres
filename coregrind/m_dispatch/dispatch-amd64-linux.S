@@ -139,6 +139,9 @@ VG_(run_innerloop__dispatch_unprofiled):
 	cmpl    $0, VG_(run_natively)
 	jne     run_natively
 	
+	cmpq    $0, VG_(interpret)
+	jne     interpret
+	
 	/* try a fast lookup in the translation cache */
 	movq	%rax, %rbx		/* next guest addr */
 	andq	$VG_TT_FAST_MASK, %rbx	/* entry# */
@@ -324,6 +327,12 @@ run_innerloop_exit_REALLY:
 	ret	
 .size VG_(run_innerloop), .-VG_(run_innerloop)
 
+
+interpret:
+	movq %rbp, %rdi
+	call VG_(do_interpret)
+	
+	jmp run_innerloop_exit
 	
 /*------------------------------------------------------------*/
 /*---                                                      ---*/

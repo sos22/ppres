@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 module UIValue(uiValueString, AvailInUI(..)) where
 
+import Control.Monad.Instances
+
 import Types
 import ReplayState()
 
@@ -20,6 +22,7 @@ instance Show UIValue where
     show (UIValueError e) = "ERR " ++ e
     show (UIValueTrace t) = "TRC " ++ show t
     show (UIValueReplayState rs) = "RS " ++ show rs
+    show (UIValueExpression e) = "EXPR " ++ (show e)
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
@@ -80,3 +83,8 @@ instance AvailInUI ReplayState where
     toUI = UIValueReplayState
     fromUI (UIValueReplayState s) = Right s
     fromUI e = coerceError "replay state" e
+
+instance AvailInUI Expression where
+    toUI = UIValueExpression
+    fromUI (UIValueExpression e) = Right e
+    fromUI e = coerceError "expression" e

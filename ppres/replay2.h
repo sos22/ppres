@@ -20,6 +20,7 @@ size_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
 #define WORKER_TRACE_ADDRESS 0x123a
 #define WORKER_THREAD_STATE 0x123b
 #define WORKER_REPLAY_STATE 0x123c
+#define WORKER_CONTROL_TRACE 0x123d
 
 struct command_header {
 	unsigned command;
@@ -30,7 +31,6 @@ struct command_header {
 #define RESPONSE_ERR 1
 #define RESPONSE_ANCILLARY 2
 #define RESPONSE_STRING 3
-#define RESPONSE_EXPRESSION 4
 struct response_message {
 	unsigned response;
 };
@@ -71,3 +71,13 @@ struct response_string {
 #define EXPR_REG 0
 #define EXPR_CONST 1
 #define EXPR_MEM 2
+#define EXPR_IMPORTED 3
+#define EXPR_SUB 4
+#define EXPR_SHRL 5
+#define EXPR_AND 6
+#define EXPR_SHL 7
+#define EXPR_COMBINE 8
+#define EXPR_OR 9
+#define EXPR_ADD 10
+#define EXPR_LE 11
+
