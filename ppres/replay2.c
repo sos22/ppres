@@ -73,6 +73,7 @@ struct replay_thread {
 	 * what we return. */
 	ULong rdtsc_result;
 
+	unsigned last_record_nr;
 	Bool dead;
 	Bool in_monitor;
 };
@@ -580,8 +581,8 @@ do_thread_state_command(void)
 	struct replay_thread *rt;
 	char buf[128];
 	for (rt = head_thread; rt; rt = rt->next) {
-		VG_(sprintf)((Char *)buf, "%d: dead %d",
-			     rt->id, rt->dead);
+		VG_(sprintf)((Char *)buf, "%d: dead %d, last record %d",
+			     rt->id, rt->dead, rt->last_record_nr);
 		send_string(VG_(strlen)((Char *)buf), buf);
 	}
 	send_okay();
@@ -1040,6 +1041,8 @@ run_for_n_records(struct record_consumer *logfile,
 		validate_event(rec, &thread_event);
 
 		replay_record(rec, thr, &thread_event, logfile); /* Finishes the record */
+
+		thr->last_record_nr = record_nr;
 	}
 }
 
