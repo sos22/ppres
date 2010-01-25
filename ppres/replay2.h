@@ -30,6 +30,7 @@ struct command_header {
 #define RESPONSE_ERR 1
 #define RESPONSE_ANCILLARY 2
 #define RESPONSE_STRING 3
+#define RESPONSE_EXPRESSION 4
 struct response_message {
 	unsigned response;
 };
@@ -53,3 +54,20 @@ struct response_ancillary {
 struct response_string {
 	unsigned len;
 };
+
+#define REASON_CONTROL 0
+#define REASON_DATA 1
+#define REASON_OTHER 2
+
+#define REG_RAX 0
+#define REG_RDX 1
+#define REG_RCX 2
+#define REG_RBX 3
+#define REG_RSP 4
+#define REG_RBP 5
+#define REG_RSI 6
+#define REG_RDI 7
+
+#define EXPR_REG 0
+#define EXPR_CONST 1
+#define EXPR_MEM 2

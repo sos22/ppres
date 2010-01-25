@@ -4,4 +4,4 @@ import Types
 
 instance Show ReplayState where
     show ReplayStateOkay = "okay"
-    show (ReplayStateFailed s) = "failed: " ++ s
+    show (ReplayStateFailed s r) = "failed: " ++ s ++ " (" ++ (show r) ++ ")"

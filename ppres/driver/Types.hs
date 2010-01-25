@@ -63,8 +63,10 @@ data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
 instance Show TraceRecord where
     show tr = (show $ trc_loc tr) ++ "\t" ++ (show $ trc_trc tr)
 
+data ReplayFailureReason = FailureReasonControl deriving Show
+
 data ReplayState = ReplayStateOkay
-                 | ReplayStateFailed String
+                 | ReplayStateFailed String ReplayFailureReason
 
 data UIValue = UIValueNull
              | UIValueSnapshot History

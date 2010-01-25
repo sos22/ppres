@@ -100,6 +100,24 @@ struct control_command {
 	} u;
 };
 
+struct expression {
+	unsigned type;
+	union {
+		unsigned reg;
+		unsigned long cnst;
+		struct {
+			const void *ptr;
+			unsigned size;
+		} mem;
+	} u;
+};
+
+struct failure_reason {
+	unsigned reason;
+	struct expression *arg1;
+	struct expression *arg2;
+};
+
 static Bool
 use_footsteps;
 
@@ -611,14 +629,91 @@ my_vasprintf(const char *fmt, va_list args)
 }
 
 static void
-replay_failed(const char *fmt, ...)
+send_expression(struct expression *e)
+{
+	VG_(printf)("WRITE ME %s\n", __func__);
+}
+
+static struct failure_reason *
+reason_control(void)
+{
+	struct failure_reason *fr;
+	fr = VG_(malloc)("reason_control", sizeof(*fr));
+	VG_(memset)(fr, 0, sizeof(*fr));
+	fr->reason = REASON_CONTROL;
+	return fr;
+}
+
+static struct failure_reason *
+reason_data(struct expression *e1, struct expression *e2)
+{
+	struct failure_reason *fr;
+	fr = VG_(malloc)("reason_data", sizeof(*fr));
+	VG_(memset)(fr, 0, sizeof(*fr));
+	fr->reason = REASON_DATA;
+	fr->arg1 = e1;
+	fr->arg2 = e2;
+	return fr;
+}
+
+static struct failure_reason *
+reason_other(void)
+{
+	struct failure_reason *fr;
+	fr = VG_(malloc)("reason_other", sizeof(*fr));
+	VG_(memset)(fr, 0, sizeof(*fr));
+	fr->reason = REASON_OTHER;
+	return fr;
+}
+
+static struct expression *
+expr_reg(unsigned reg)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_REG;
+	e->u.reg = reg;
+	return e;
+}
+
+static struct expression *
+expr_const(unsigned long c)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_CONST;
+	e->u.cnst = c;
+	return e;
+}
+
+static struct expression *
+expr_mem(void *ptr, unsigned size)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_MEM;
+	e->u.mem.size = size;
+	e->u.mem.ptr = ptr;
+	return e;
+}
+
+#define expr_mem1(p) expr_mem((p), 1)
+#define expr_mem2(p) expr_mem((p), 2)
+#define expr_mem4(p) expr_mem((p), 4)
+#define expr_mem8(p) expr_mem((p), 8)
+
+static void
+replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 {
 	va_list args;
 	struct control_command cmd;
-	char *failure_reason;
+	char *msg;
 
 	va_start(args, fmt);
-	failure_reason = my_vasprintf(fmt, args);
+	msg = my_vasprintf(fmt, args);
 	va_end(args);
 
 	send_error();
@@ -638,9 +733,12 @@ replay_failed(const char *fmt, ...)
 			do_thread_state_command();
 			break;
 		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED);
-			send_string(VG_(strlen)((Char *)failure_reason),
-				    failure_reason);
+			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason);
+			if (failure_reason->arg1)
+				send_expression(failure_reason->arg1);
+			if (failure_reason->arg2)
+				send_expression(failure_reason->arg2);
+			send_string(VG_(strlen)((Char *)msg), msg);
 			send_okay();
 			break;
 		default:
@@ -652,18 +750,20 @@ replay_failed(const char *fmt, ...)
 	}
 }
 
-#define replay_assert_eq(a, b)						\
+#define replay_assert_eq(reason, a, b)					\
 	do {								\
 		if ((a) != (b)) {					\
-		replay_failed("%d: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
-			      record_nr,				\
-			      __LINE__,					\
-			      #a,					\
-			      (unsigned long)(a),			\
-			      #b,					\
-			      (unsigned long)(b));			\
+			replay_failed(reason,				\
+				      "%d: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
+				      record_nr,			\
+				      __LINE__,				\
+				      #a,				\
+				      (unsigned long)(a),		\
+				      #b,				\
+				      (unsigned long)(b));		\
 		}							\
 	} while (0)
+
 
 static void
 validate_event(const struct record_header *rec,
@@ -675,53 +775,81 @@ validate_event(const struct record_header *rec,
 	switch (event->type) {
 	case EVENT_footstep: {
 		const struct footstep_record *fr = payload;
-		replay_assert_eq(rec->cls, RECORD_footstep);
-		replay_assert_eq(fr->rip, args[0]);
-		replay_assert_eq(fr->rdx, args[1]);
-		replay_assert_eq(fr->rcx, args[2]);
-		replay_assert_eq(fr->rax, args[3]);
+		replay_assert_eq(reason_control(), rec->cls, RECORD_footstep);
+		replay_assert_eq(reason_control(), fr->rip, args[0]);
+		replay_assert_eq(reason_data(expr_reg(REG_RDX),
+					     expr_const(fr->rdx)),
+				 fr->rdx, args[1]);
+		replay_assert_eq(reason_data(expr_reg(REG_RCX),
+					     expr_const(fr->rcx)),
+				 fr->rcx, args[2]);
+		replay_assert_eq(reason_data(expr_reg(REG_RAX),
+					     expr_const(fr->rax)),
+				 fr->rax, args[3]);
 		return;
 	}
 	case EVENT_syscall: {
 		const struct syscall_record *sr = payload;
-		replay_assert_eq(rec->cls, RECORD_syscall);
-		replay_assert_eq(sr->syscall_nr, args[0]);
-		replay_assert_eq(sr->arg1, args[1]);
-		replay_assert_eq(sr->arg2, args[2]);
-		replay_assert_eq(sr->arg3, args[3]);
+		replay_assert_eq(reason_control(), rec->cls, RECORD_syscall);
+		replay_assert_eq(reason_data(expr_reg(REG_RAX),
+					     expr_const(sr->syscall_nr)),
+				 sr->syscall_nr, args[0]);
+		replay_assert_eq(reason_data(expr_reg(REG_RDI),
+					     expr_const(sr->arg1)),
+				 sr->arg1, args[1]);
+		replay_assert_eq(reason_data(expr_reg(REG_RSI),
+					     expr_const(sr->arg2)),
+				 sr->arg2, args[2]);
+		replay_assert_eq(reason_data(expr_reg(REG_RDX),
+					     expr_const(sr->arg3)),
+				 sr->arg3, args[3]);
 		return;
 	}
 	case EVENT_rdtsc: {
-		replay_assert_eq(rec->cls, RECORD_rdtsc);
+		replay_assert_eq(reason_control(), rec->cls, RECORD_rdtsc);
 		return;
 	}
 	case EVENT_load: {
 		const struct mem_read_record *mrr = payload;
-		replay_assert_eq(rec->cls, RECORD_mem_read);
-		replay_assert_eq(mrr->ptr, (void *)args[0]);
-		replay_assert_eq(rec->size - sizeof(*rec) - sizeof(*mrr),
+		const void *mp = mrr + 1;
+		replay_assert_eq(reason_control(), rec->cls, RECORD_mem_read);
+		replay_assert_eq(reason_other(), mrr->ptr, (void *)args[0]);
+		replay_assert_eq(reason_control(),
+				 rec->size - sizeof(*rec) - sizeof(*mrr),
 				 args[1]);
 		switch (args[1]) {
 		case 1:
-			replay_assert_eq(*(unsigned char *)(mrr + 1),
+			replay_assert_eq(reason_data(expr_mem1(mrr->ptr),
+						     expr_const(*(unsigned char *)mp)),
+					 *(unsigned char *)mp,
 					 *(unsigned char *)args[2]);
 			break;
 		case 2:
-			replay_assert_eq(*(unsigned short *)(mrr + 1),
+			replay_assert_eq(reason_data(expr_mem2(mrr->ptr),
+						     expr_const(*(unsigned short *)mp)),
+					 *(unsigned short *)mp,
 					 *(unsigned short *)args[2]);
 			break;
 		case 4:
-			replay_assert_eq(*(unsigned *)(mrr + 1),
+			replay_assert_eq(reason_data(expr_mem4(mrr->ptr),
+						     expr_const(*(unsigned *)mp)),
+					 *(unsigned *)mp,
 					 *(unsigned *)args[2]);
 			break;
 		case 8:
-			replay_assert_eq(*(unsigned long *)(mrr + 1),
+			replay_assert_eq(reason_data(expr_mem8(mrr->ptr),
+						     expr_const(*(unsigned long *)mp)),
+					 *(unsigned long *)mp,
 					 *(unsigned long *)args[2]);
 			break;
 		case 16:
-			replay_assert_eq(((unsigned long *)(mrr + 1))[0],
+			replay_assert_eq(reason_data(expr_mem8(mrr->ptr),
+						     expr_const(((unsigned long *)mp)[0])),
+					 ((unsigned long *)mp)[0],
 					 ((unsigned long *)args[2])[0]);
-			replay_assert_eq(((unsigned long *)(mrr + 1))[1],
+			replay_assert_eq(reason_data(expr_mem8(mrr->ptr + 1),
+						     expr_const(((unsigned long *)mp)[1])),
+					 ((unsigned long *)mp)[1],
 					 ((unsigned long *)args[2])[1]);
 			break;
 		default:
@@ -731,31 +859,38 @@ validate_event(const struct record_header *rec,
 	}
 	case EVENT_store: {
 		const struct mem_read_record *mwr = payload;
-		replay_assert_eq(rec->cls, RECORD_mem_write);
-		replay_assert_eq(mwr->ptr, (void *)args[0]);
-		replay_assert_eq(rec->size - sizeof(*rec) - sizeof(*mwr),
+		replay_assert_eq(reason_control(), rec->cls, RECORD_mem_write);
+		replay_assert_eq(reason_other(), mwr->ptr, (void *)args[0]);
+		replay_assert_eq(reason_control(),
+				 rec->size - sizeof(*rec) - sizeof(*mwr),
 				 args[1]);
 		switch (args[1]) {
 		case 1:
-			replay_assert_eq(*(unsigned char *)(mwr + 1),
+			replay_assert_eq(reason_other(),
+					 *(unsigned char *)(mwr + 1),
 					 *(unsigned char *)args[2]);
 			break;
 		case 2:
-			replay_assert_eq(*(unsigned short *)(mwr + 1),
+			replay_assert_eq(reason_other(),
+					 *(unsigned short *)(mwr + 1),
 					 *(unsigned short *)args[2]);
 			break;
 		case 4:
-			replay_assert_eq(*(unsigned *)(mwr + 1),
+			replay_assert_eq(reason_other(),
+					 *(unsigned *)(mwr + 1),
 					 *(unsigned *)args[2]);
 			break;
 		case 8:
-			replay_assert_eq(*(unsigned long *)(mwr + 1),
+			replay_assert_eq(reason_other(),
+					 *(unsigned long *)(mwr + 1),
 					 *(unsigned long *)args[2]);
 			break;
 		case 16:
-			replay_assert_eq(((unsigned long *)(mwr + 1))[0],
+			replay_assert_eq(reason_other(),
+					 ((unsigned long *)(mwr + 1))[0],
 					 ((unsigned long *)args[2])[0]);
-			replay_assert_eq(((unsigned long *)(mwr + 1))[1],
+			replay_assert_eq(reason_other(),
+					 ((unsigned long *)(mwr + 1))[1],
 					 ((unsigned long *)args[2])[1]);
 			break;
 		default:
@@ -765,8 +900,8 @@ validate_event(const struct record_header *rec,
 	}
 	case EVENT_client_request: {
 		const struct client_req_record *crr = payload;
-		replay_assert_eq(rec->cls, RECORD_client);
-		replay_assert_eq(args[0], crr->flavour);
+		replay_assert_eq(reason_control(), rec->cls, RECORD_client);
+		replay_assert_eq(reason_control(), args[0], crr->flavour);
 		return;
 	}
 	case EVENT_resched_candidate:
@@ -989,7 +1124,8 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 			continue;
 		if (cer.type != EVENT_load &&
 		    cer.type != EVENT_store) {
-			replay_failed("%d: Client made unexpected event %x\n",
+			replay_failed(reason_other(),
+				      "%d: Client made unexpected event %x\n",
 				      record_nr,
 				      cer.type);
 		}
