@@ -73,7 +73,6 @@ struct replay_thread {
 	 * what we return. */
 	ULong rdtsc_result;
 
-	Bool failed;
 	Bool dead;
 	Bool in_monitor;
 };
@@ -581,8 +580,8 @@ do_thread_state_command(void)
 	struct replay_thread *rt;
 	char buf[128];
 	for (rt = head_thread; rt; rt = rt->next) {
-		VG_(sprintf)((Char *)buf, "%d: failed %d, dead %d",
-			     rt->id, rt->failed, rt->dead);
+		VG_(sprintf)((Char *)buf, "%d: dead %d",
+			     rt->id, rt->dead);
 		send_string(VG_(strlen)((Char *)buf), buf);
 	}
 	send_okay();
@@ -1028,8 +1027,6 @@ run_for_n_records(struct record_consumer *logfile,
 
 		thr = get_thread_by_id(rec->tid);
 		tl_assert(thr != NULL);
-
-		ASSUME(!thr->failed);
 
 		do {
 			run_thread(thr, &thread_event);
