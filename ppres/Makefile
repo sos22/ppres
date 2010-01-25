@@ -1,4 +1,4 @@
-CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_x86=1 -DVGO_linux=1 -DVGP_x86_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef
+CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef
 
 all: ppres_record ppres_replay2 ppres_audit.so driver/UI
 
