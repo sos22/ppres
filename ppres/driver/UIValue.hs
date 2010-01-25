@@ -2,6 +2,7 @@
 module UIValue(uiValueString, AvailInUI(..)) where
 
 import Types
+import ReplayState()
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -18,6 +19,7 @@ instance Show UIValue where
     show (UIValueChar c) = c:[]
     show (UIValueError e) = "ERR " ++ e
     show (UIValueTrace t) = "TRC " ++ show t
+    show (UIValueReplayState rs) = "RS " ++ show rs
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
@@ -73,3 +75,8 @@ instance AvailInUI Char where
     toUI = UIValueChar
     fromUI (UIValueChar c) = Right c
     fromUI e = coerceError "char" e
+
+instance AvailInUI ReplayState where
+    toUI = UIValueReplayState
+    fromUI (UIValueReplayState s) = Right s
+    fromUI e = coerceError "replay state" e

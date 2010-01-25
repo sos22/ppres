@@ -30,6 +30,7 @@ data UIExpression = UIDummyFunction
                   | UIThreadState UIExpression
                   | UIRemoveFootsteps UIExpression
                   | UIFindCriticalAccesses UIExpression UIExpression
+                  | UIReplayState UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -93,6 +94,7 @@ expressionParser =
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
+               oneExprArgParser "replay_state" UIReplayState,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -162,6 +164,7 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> runMemory s tid cntr
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
+      UIReplayState name -> withSnapshot ws name $ \s -> replayState s
       UIFindCriticalAccesses a b ->
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b

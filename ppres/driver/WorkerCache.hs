@@ -5,7 +5,7 @@
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    trace, traceThread, traceAddress, runMemory,
-                   threadState) where
+                   threadState, replayState) where
 
 import Data.Word
 import Control.Monad.State
@@ -127,5 +127,12 @@ threadState :: History -> Maybe [String]
 threadState hist =
     unsafePerformIO $ do worker <- getWorker hist
                          res <- threadStateWorker worker
+                         killWorker worker
+                         return res
+
+replayState :: History -> ReplayState
+replayState hist =
+    unsafePerformIO $ do worker <- getWorker hist
+                         res <- replayStateWorker worker
                          killWorker worker
                          return res

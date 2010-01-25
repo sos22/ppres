@@ -19,6 +19,7 @@ foreign import ccall unsafe "send"
 data ControlPacket = ControlPacket Word32 [Word64]
 data ResponseData = ResponseDataString String
                   | ResponseDataAncillary Word32 [Word64]
+                    deriving Show
 data ResponsePacket = ResponsePacket Bool [ResponseData]
 
 socketToFd :: Socket -> CInt
@@ -47,16 +48,16 @@ sendPacket handle (ControlPacket command args) =
 
 recvArray :: Storable a => Int -> Socket -> Int -> IO [a]
 recvArray s sock nr_items =
-    let len = s * nr_items
-
-        peekArray _ 0 = return []
-        peekArray ptr count =
-            do i <- peek ptr
-               rest <- peekArray (ptr `plusPtr` s) (count - 1)
-               return $ i:rest
-    in allocaBytes len $ \ptr ->
-        do (r, _) <- recvBufFrom sock ptr len
-           peekArray ptr nr_items
+    if nr_items == 0 then return []
+    else let len = s * nr_items
+             peekArray _ 0 = return []
+             peekArray ptr count =
+                 do i <- peek ptr
+                    rest <- peekArray (ptr `plusPtr` s) (count - 1)
+                    return $ i:rest
+         in allocaBytes len $ \ptr ->
+             do (r, _) <- recvBufFrom sock ptr len
+                peekArray ptr nr_items
 
 recvStringBytes :: Socket -> Int32 -> IO String
 recvStringBytes sock len =

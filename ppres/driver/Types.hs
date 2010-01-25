@@ -63,6 +63,9 @@ data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
 instance Show TraceRecord where
     show tr = (show $ trc_loc tr) ++ "\t" ++ (show $ trc_trc tr)
 
+data ReplayState = ReplayStateOkay
+                 | ReplayStateFailed String
+
 data UIValue = UIValueNull
              | UIValueSnapshot History
              | UIValuePair UIValue UIValue
@@ -70,6 +73,7 @@ data UIValue = UIValueNull
              | UIValueList [UIValue]
              | UIValueTrace TraceRecord
              | UIValueError String
+             | UIValueReplayState ReplayState
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }

@@ -1,5 +1,6 @@
 module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
-              takeSnapshot, runWorker, traceAddressWorker, threadStateWorker)
+              takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
+              replayStateWorker)
     where
 
 import Data.Word
@@ -120,3 +121,14 @@ threadStateWorker worker =
               then Just [x | (ResponseDataString x) <- params]
               else Nothing
  
+parseReplayState :: [ResponseData] -> ReplayState
+parseReplayState [ResponseDataAncillary 10 []] = ReplayStateOkay
+parseReplayState [ResponseDataAncillary 11 [], ResponseDataString s] =
+    ReplayStateFailed s
+parseReplayState x = error $ "bad replay state " ++ (show x)
+
+replayStateWorker :: Worker -> IO ReplayState
+replayStateWorker worker =
+    do (ResponsePacket _ params) <-
+           sendWorkerCommand worker (ControlPacket 0x123c [])
+       return $ parseReplayState params

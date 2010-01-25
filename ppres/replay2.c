@@ -374,6 +374,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_SNAPSHOT:
 	case WORKER_KILL:
 	case WORKER_THREAD_STATE:
+	case WORKER_REPLAY_STATE:
 		tl_assert(ch.nr_args == 0);
 		return;
 	case WORKER_RUN:
@@ -587,10 +588,38 @@ do_thread_state_command(void)
 	send_okay();
 }
 
-static void
-replay_failed(void)
+static char *
+my_vasprintf(const char *fmt, va_list args)
 {
+	char *buffer;
+	unsigned buffer_size;
+	va_list a;
+	UInt res;
+
+	buffer_size = 128;
+	while (1) {
+		buffer = VG_(malloc)("vasprintf", buffer_size);
+		va_copy(a, args);
+		res = VG_(vsnprintf)((Char *)buffer, buffer_size, fmt,
+				     a);
+		va_end(a);
+		if (res < buffer_size && res != 0)
+			return buffer;
+		VG_(free)(buffer);
+		buffer_size *= 2;
+	}
+}
+
+static void
+replay_failed(const char *fmt, ...)
+{
+	va_list args;
 	struct control_command cmd;
+	char *failure_reason;
+
+	va_start(args, fmt);
+	failure_reason = my_vasprintf(fmt, args);
+	va_end(args);
 
 	send_error();
 	while (1) {
@@ -608,6 +637,12 @@ replay_failed(void)
 		case WORKER_THREAD_STATE:
 			do_thread_state_command();
 			break;
+		case WORKER_REPLAY_STATE:
+			send_ancillary(ANCILLARY_REPLAY_FAILED);
+			send_string(VG_(strlen)((Char *)failure_reason),
+				    failure_reason);
+			send_okay();
+			break;
 		default:
 			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
 				cmd.cmd);
@@ -617,19 +652,18 @@ replay_failed(void)
 	}
 }
 
-#define replay_assert_eq(a, b)                                             \
-do {                                                                       \
-	if ((a) != (b)) {                                                  \
-		VG_(printf)("%d: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
-	                    record_nr,                                     \
-			    __LINE__,                                      \
-                            #a,                                            \
-			    (unsigned long)(a),				   \
-			    #b,                                            \
-			    (unsigned long)(b));			   \
-		replay_failed();                                           \
-	}                                                                  \
-} while (0)
+#define replay_assert_eq(a, b)						\
+	do {								\
+		if ((a) != (b)) {					\
+		replay_failed("%d: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
+			      record_nr,				\
+			      __LINE__,					\
+			      #a,					\
+			      (unsigned long)(a),			\
+			      #b,					\
+			      (unsigned long)(b));			\
+		}							\
+	} while (0)
 
 static void
 validate_event(const struct record_header *rec,
@@ -955,10 +989,9 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 			continue;
 		if (cer.type != EVENT_load &&
 		    cer.type != EVENT_store) {
-			VG_(printf)("%d: Client made unexpected event %x\n",
-				    record_nr,
-				    cer.type);
-			replay_failed();
+			replay_failed("%d: Client made unexpected event %x\n",
+				      record_nr,
+				      cer.type);
 		}
 	}
 	trace_mode = False;
@@ -1056,6 +1089,10 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_THREAD_STATE:
 		do_thread_state_command();
+		break;
+	case WORKER_REPLAY_STATE:
+		send_ancillary(ANCILLARY_REPLAY_SUCCESS);
+		send_okay();
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");

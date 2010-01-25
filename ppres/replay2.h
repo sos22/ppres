@@ -19,6 +19,7 @@ size_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
 #define WORKER_TRACE_THREAD 0x1239
 #define WORKER_TRACE_ADDRESS 0x123a
 #define WORKER_THREAD_STATE 0x123b
+#define WORKER_REPLAY_STATE 0x123c
 
 struct command_header {
 	unsigned command;
@@ -42,6 +43,8 @@ struct response_message {
 #define ANCILLARY_TRACE_CALLED 7
 #define ANCILLARY_TRACE_ENTER_MONITOR 8
 #define ANCILLARY_TRACE_EXIT_MONITOR 9
+#define ANCILLARY_REPLAY_SUCCESS 10
+#define ANCILLARY_REPLAY_FAILED 11
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
