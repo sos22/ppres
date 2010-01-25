@@ -75,3 +75,13 @@ data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
+
+
+instance Monad (Either a) where
+    return x = Right x
+    (Right x) >>= f = f x
+    (Left x) >>= _ = Left x
+    
+instance Functor (Either a) where
+    fmap f (Right a) = Right $ f a
+    fmap _ (Left a) = Left a

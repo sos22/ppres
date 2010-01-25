@@ -1,4 +1,4 @@
-{-# LANGUAGE RelaxedPolyRec #-}
+{-# LANGUAGE RelaxedPolyRec, ScopedTypeVariables #-}
 module Main(main) where
 
 import System.Environment
@@ -163,12 +163,10 @@ evalExpression ws f =
                     b' <- fromUI $ evalExpression ws b
                     return $ findCriticalAccesses a' b'
       UIRemoveFootsteps e ->
-          case fromUI $ evalExpression ws e of
-            Just es ->
-                let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
-                    isFootstep _ = False
-                in toUI [trc | trc <- es, not $ isFootstep trc ]
-            Nothing -> UIValueError "Can only remove footsteps from a list of records"
+          toUI $ do es <- fromUI $ evalExpression ws e
+                    let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
+                        isFootstep _ = False
+                    return [trc | trc <- es, not $ isFootstep trc ]
                    
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =

@@ -24,17 +24,20 @@ uiValueString s = UIValueList $ map UIValueChar s
 
 class AvailInUI a where
     toUI :: a -> UIValue
-    fromUI :: UIValue -> Maybe a
+    fromUI :: UIValue -> Either String a
+
+coerceError :: String -> UIValue -> Either String a
+coerceError wanted got = Left $ "Type error: wanted " ++ wanted ++ ", got " ++ (show got)
 
 instance AvailInUI () where
     toUI () = UIValueNull
-    fromUI UIValueNull = Just ()
-    fromUI _ = Nothing
+    fromUI UIValueNull = Right ()
+    fromUI e = coerceError "()" e
 
 instance AvailInUI History where
     toUI = UIValueSnapshot
-    fromUI (UIValueSnapshot x) = Just x
-    fromUI _ = Nothing
+    fromUI (UIValueSnapshot x) = Right x
+    fromUI x = coerceError "snapshot" x
 
 instance (AvailInUI a, AvailInUI b) => AvailInUI (a, b) where
     toUI (a, b) = UIValuePair (toUI a) (toUI b)
@@ -42,31 +45,31 @@ instance (AvailInUI a, AvailInUI b) => AvailInUI (a, b) where
         do a' <- fromUI a
            b' <- fromUI b
            return $ (a', b')
-    fromUI _ = Nothing
+    fromUI e = coerceError "pair" e
 
 instance AvailInUI TraceRecord where
     toUI = UIValueTrace
-    fromUI (UIValueTrace t) = Just t
-    fromUI _ = Nothing
+    fromUI (UIValueTrace t) = Right t
+    fromUI e = coerceError "trace record" e
 
 instance AvailInUI a => AvailInUI [a] where
     toUI = UIValueList . (map toUI)
     fromUI (UIValueList t) = mapM fromUI t
-    fromUI _ = Nothing
+    fromUI e = coerceError "list" e
 
 instance AvailInUI a => AvailInUI (Either String a) where
     toUI (Left err) = UIValueError err
     toUI (Right x) = toUI x
-    fromUI (UIValueError e) = Just $ Left e
+    fromUI (UIValueError e) = Right $ Left e
     fromUI x = fmap Right $ fromUI x
 
 instance AvailInUI a => AvailInUI (Maybe a) where
     toUI Nothing = UIValueNull
     toUI (Just x) = toUI x
-    fromUI (UIValueNull) = Just Nothing
+    fromUI (UIValueNull) = Right Nothing
     fromUI x = fmap Just $ fromUI x
 
 instance AvailInUI Char where
     toUI = UIValueChar
-    fromUI (UIValueChar c) = Just c
-    fromUI _ = Nothing
+    fromUI (UIValueChar c) = Right c
+    fromUI e = coerceError "char" e
