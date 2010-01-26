@@ -1528,9 +1528,29 @@ interpret_log_control_flow(VexGuestArchState *state)
 					stmt->Ist.WrTmp.data);
 			break;
 		case Ist_Put: {
+			unsigned byte_offset = stmt->Ist.Put.offset & 7;
 			struct abstract_interpret_value *dest =
-				get_aiv_for_offset(istate, stmt->Ist.Put.offset);
-			eval_expression(istate, dest, stmt->Ist.Put.data);
+				get_aiv_for_offset(istate,
+						   stmt->Ist.Put.offset - byte_offset);
+			struct abstract_interpret_value tmp = {0};
+			switch (typeOfIRExpr(irsb->tyenv, stmt->Ist.Put.data)) {
+			case Ity_I8:
+				eval_expression(istate, &tmp, stmt->Ist.Put.data);
+				dest->v1 &= ~(0xFF << (byte_offset * 8));
+				dest->v1 |= tmp.v1 << (byte_offset * 8);
+				dest->origin =
+					expr_or( expr_shl(tmp.origin,
+							  expr_const(byte_offset * 8)),
+						 expr_and(dest->origin,
+							  expr_const(~(0xFF << (byte_offset * 8)))));
+				break;
+			case Ity_I64:
+				tl_assert(byte_offset == 0);
+				eval_expression(istate, dest, stmt->Ist.Put.data);
+				break;
+			default:
+				VG_(tool_panic)((Char *)"put to strange-sized location");
+			}
 			break;
 		}
 		case Ist_Store: {
