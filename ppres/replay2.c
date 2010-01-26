@@ -1277,6 +1277,10 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg1.v1 ^ arg2.v1;
 			ORIGIN(expr_xor(arg1.origin, arg2.origin));
 			break;
+		case Iop_CmpNE8:
+			dest->v1 = arg1.v1 != arg2.v1;
+			ORIGIN(expr_not(expr_eq(arg1.origin, arg2.origin)));
+			break;
 		case Iop_CmpEQ8:
 		case Iop_CmpEQ64:
 			dest->v1 = arg1.v1 == arg2.v1;
