@@ -111,6 +111,7 @@ struct interpret_state {
 	struct abstract_interpret_value cc_ndep;
 
 	struct abstract_interpret_value d_flag;
+	struct abstract_interpret_value fs_zero;
 
 	struct abstract_interpret_value xmm0;
 	struct abstract_interpret_value xmm1;
@@ -801,6 +802,8 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 		return &state->d_flag;
 	case 168:
 		return &state->rip;
+	case 184:
+		return &state->fs_zero;
 	case 200:
 		return &state->xmm0;
 	case 216:
@@ -2581,6 +2584,7 @@ initialise_is_for_vex_state(struct interpret_state *is,
 	init_register(&is->cc_ndep, state->guest_CC_NDEP);
 
 	init_register(&is->d_flag, state->guest_DFLAG);
+	init_register(&is->fs_zero, state->guest_FS_ZERO);
 
 	init_register_xmm(&is->xmm0, &state->guest_XMM0);
 	init_register_xmm(&is->xmm1, &state->guest_XMM1);
@@ -2646,6 +2650,7 @@ commit_is_to_vex_state(struct interpret_state *is,
 	state->guest_CC_NDEP = commit_register(&is->cc_ndep);
 
 	state->guest_DFLAG = commit_register(&is->d_flag);
+	state->guest_FS_ZERO = commit_register(&is->fs_zero);
 
 	commit_register_xmm(&state->guest_XMM0, &is->xmm0);
 	commit_register_xmm(&state->guest_XMM1, &is->xmm1);
