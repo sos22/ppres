@@ -1028,6 +1028,12 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->origin = expr_shrl(copy_expression(dep1.origin),
 						 expr_const(31));
 			break;
+		case AMD64G_CC_OP_LOGICQ:
+			dest->v1 = dep1.v1 >> 63;
+			free_expression(dest->origin);
+			dest->origin = expr_shrl(copy_expression(dep1.origin),
+						 expr_const(63));
+			break;
 		default:
 			VG_(printf)("Strange operation code %ld for s\n", op.v1);
 			VG_(tool_panic)((Char *)"failed");
