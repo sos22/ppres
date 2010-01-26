@@ -80,4 +80,8 @@ struct response_string {
 #define EXPR_OR 9
 #define EXPR_ADD 10
 #define EXPR_LE 11
+#define EXPR_BE 12
+#define EXPR_SHRA 13
+#define EXPR_EQ 14
+#define EXPR_XOR 15
 

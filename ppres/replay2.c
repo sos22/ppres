@@ -91,6 +91,7 @@ struct interpret_state {
 	struct abstract_interpret_value rbx;
 	struct abstract_interpret_value rsp;
 	struct abstract_interpret_value rbp;
+	struct abstract_interpret_value rsi;
 	struct abstract_interpret_value rdi;
 	struct abstract_interpret_value r8;
 	struct abstract_interpret_value r9;
@@ -346,9 +347,13 @@ free_expression(const struct expression *e)
 	case EXPR_SUB:
 	case EXPR_ADD:
 	case EXPR_AND:
+	case EXPR_XOR:
+	case EXPR_EQ:
 	case EXPR_LE:
+	case EXPR_BE:
 	case EXPR_OR:
 	case EXPR_SHRL:
+	case EXPR_SHRA:
 	case EXPR_SHL:
 	case EXPR_COMBINE:
 		free_expression(e->u.binop.arg1);
@@ -385,11 +390,15 @@ copy_expression(const struct expression *e)
 	case EXPR_SUB:
 	case EXPR_ADD:
 	case EXPR_AND:
+	case EXPR_XOR:
 	case EXPR_SHRL:
+	case EXPR_SHRA:
 	case EXPR_SHL:
 	case EXPR_COMBINE:
 	case EXPR_OR:
 	case EXPR_LE:
+	case EXPR_BE:
+	case EXPR_EQ:
 		work->u.binop.arg1 = copy_expression(e->u.binop.arg1);
 		work->u.binop.arg2 = copy_expression(e->u.binop.arg2);
 		break;
@@ -497,12 +506,36 @@ expr_or(struct expression *e1, struct expression *e2)
 }
 
 static struct expression *
+expr_xor(struct expression *e1, struct expression *e2)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_XOR;
+	e->u.binop.arg1 = e1;
+	e->u.binop.arg2 = e2;
+	return e;
+}
+
+static struct expression *
 expr_shrl(struct expression *val, struct expression *amt)
 {
 	struct expression *e;
 	e = VG_(malloc)("expression", sizeof(*e));
 	VG_(memset)(e, 0, sizeof(*e));
 	e->type = EXPR_SHRL;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static struct expression *
+expr_shra(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_SHRA;
 	e->u.binop.arg1 = val;
 	e->u.binop.arg2 = amt;
 	return e;
@@ -539,6 +572,30 @@ expr_le(struct expression *val, struct expression *amt)
 	e = VG_(malloc)("expression", sizeof(*e));
 	VG_(memset)(e, 0, sizeof(*e));
 	e->type = EXPR_LE;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static struct expression *
+expr_eq(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_EQ;
+	e->u.binop.arg1 = val;
+	e->u.binop.arg2 = amt;
+	return e;
+}
+
+static struct expression *
+expr_be(struct expression *val, struct expression *amt)
+{
+	struct expression *e;
+	e = VG_(malloc)("expression", sizeof(*e));
+	VG_(memset)(e, 0, sizeof(*e));
+	e->type = EXPR_BE;
 	e->u.binop.arg1 = val;
 	e->u.binop.arg2 = amt;
 	return e;
@@ -682,6 +739,8 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 		return &state->rsp;
 	case OFFSET_amd64_RBP:
 		return &state->rbp;
+	case OFFSET_amd64_RSI:
+		return &state->rsi;
 	case OFFSET_amd64_RDI:
 		return &state->rdi;
 	case OFFSET_amd64_R8:
@@ -820,6 +879,12 @@ do_ccall(struct interpret_state *state,
 			free_expression(dest->origin);
 			dest->origin = copy_expression(dep1.origin);
 			break;
+		case AMD64G_CC_OP_SUBQ:
+			dest->v1 = dep1.v1 == dep2.v1;
+			free_expression(dest->origin);
+			dest->origin = expr_eq(copy_expression(dep1.origin),
+					       copy_expression(dep2.origin));
+			break;
 		default:
 			VG_(printf)("Strange operation code %ld\n", op.v1);
 			VG_(tool_panic)((Char *)"failed");
@@ -830,9 +895,6 @@ do_ccall(struct interpret_state *state,
 		case AMD64G_CC_OP_SUBQ:
 			dest->v1 = (long)dep1.v1 <= (long)dep2.v1;
 			free_expression(dest->origin);
-			VG_(printf)("%lx <= %lx -> %lx\n",
-				    dep1.v1, dep2.v1,
-				    dest->v1);
 			dest->origin = expr_le(copy_expression(dep1.origin),
 					       copy_expression(dep2.origin));
 			break;
@@ -841,8 +903,21 @@ do_ccall(struct interpret_state *state,
 			VG_(tool_panic)((Char *)"failed");
 		}
 		break;
+	case AMD64CondBE:
+		switch (op.v1) {
+		case AMD64G_CC_OP_SUBL:
+			dest->v1 = (unsigned)dep1.v1 <= (unsigned)dep2.v1;
+			free_expression(dest->origin);
+			dest->origin = expr_be(copy_expression(dep1.origin),
+					       copy_expression(dep2.origin));
+			break;
+		default:
+			VG_(printf)("Strange operation code %ld for be\n", op.v1);
+			VG_(tool_panic)((Char *)"failed");
+		}
+		break;
 	default:
-		VG_(printf)("Strange cond code %ld\n", condcode.v1);
+		VG_(printf)("Strange cond code %ld (op %ld)\n", condcode.v1, op.v1);
 		VG_(tool_panic)((Char *)"failed");
 	}
 	free_expression(dep1.origin);
@@ -891,10 +966,18 @@ eval_expression(struct interpret_state *state,
 		eval_expression(state, &arg2, expr->Iex.Binop.arg2);
 		switch (expr->Iex.Binop.op) {
 		case Iop_Sub64:
-		case Iop_Sub32:
-		case Iop_Sub8:
 			dest->v1 = arg1.v1 - arg2.v1;
 			ORIGIN(expr_sub(arg1.origin, arg2.origin));
+			break;
+		case Iop_Sub32:
+			dest->v1 = (arg1.v1 - arg2.v1) & 0xffffffff;
+			ORIGIN(expr_and(expr_sub(arg1.origin, arg2.origin),
+					expr_const(0xffffffff)));
+			break;
+		case Iop_Sub8:
+			dest->v1 = (arg1.v1 - arg2.v1) & 0xff;
+			ORIGIN(expr_and(expr_sub(arg1.origin, arg2.origin),
+					expr_const(0xff)));
 			break;
 		case Iop_Add64:
 			dest->v1 = arg1.v1 + arg2.v1;
@@ -912,6 +995,14 @@ eval_expression(struct interpret_state *state,
 		case Iop_Shl64:
 			dest->v1 = arg1.v1 << arg2.v1;
 			ORIGIN(expr_shl(arg1.origin, arg2.origin));
+			break;
+		case Iop_Sar64:
+			dest->v1 = (long)arg1.v1 >> arg2.v1;
+			ORIGIN(expr_shra(arg1.origin, arg2.origin));
+			break;
+		case Iop_Xor32:
+			dest->v1 = arg1.v1 ^ arg2.v1;
+			ORIGIN(expr_xor(arg1.origin, arg2.origin));
 			break;
 		default:
 			VG_(tool_panic)((Char *)"bad binop");
@@ -937,6 +1028,12 @@ eval_expression(struct interpret_state *state,
 			break;
 		case Iop_32Uto64:
 			*dest = arg;
+			break;
+		case Iop_32Sto64:
+			dest->v1 = (long)(int)arg.v1;
+			ORIGIN(expr_shra(expr_shl(arg.origin,
+						  expr_const(32)),
+					 expr_const(32)));
 			break;
 		default:
 			VG_(tool_panic)((Char *)"bad unop");
@@ -1996,6 +2093,7 @@ initialise_is_for_vex_state(struct interpret_state *is,
 	init_register(&is->rsp, state->guest_RSP);
 	init_register(&is->rbp, state->guest_RBP);
 	init_register(&is->rdi, state->guest_RDI);
+	init_register(&is->rsi, state->guest_RSI);
 	init_register(&is->r8, state->guest_R8);
 	init_register(&is->r9, state->guest_R9);
 	init_register(&is->r10, state->guest_R10);
@@ -2044,6 +2142,7 @@ commit_is_to_vex_state(struct interpret_state *is,
 	state->guest_RBX = commit_register(&is->rbx);
 	state->guest_RSP = commit_register(&is->rsp);
 	state->guest_RBP = commit_register(&is->rbp);
+	state->guest_RSI = commit_register(&is->rsi);
 	state->guest_RDI = commit_register(&is->rdi);
 	state->guest_R8 = commit_register(&is->r8);
 	state->guest_R9 = commit_register(&is->r9);
