@@ -1067,6 +1067,8 @@ do_ccall(struct interpret_state *state,
 	}
 }
 
+static void load_event(const void *ptr, unsigned size, void *read_bytes,
+		       unsigned long rsp);
 static void
 eval_expression(struct interpret_state *state,
 		struct abstract_interpret_value *dest,
@@ -1301,12 +1303,19 @@ eval_expression(struct interpret_state *state,
 	case Iex_Load: {
 		struct abstract_interpret_value addr = {0};
 		struct abstract_interpret_value data = {0};
+		unsigned char dummy_buf[16];
+
 		eval_expression(state, &addr, expr->Iex.Load.addr);
 		interpreter_do_load(&data,
 				    sizeofIRType(expr->Iex.Load.ty),
 				    addr.v1);
 		dest->v1 = data.v1;
 		ORIGIN(expr_combine(addr.origin, data.origin));
+
+		load_event((const void *)addr.v1,
+			   sizeofIRType(expr->Iex.Load.ty),
+			   dummy_buf,
+			   state->rsp.v1);
 		break;
 	}
 	case Iex_Mux0X: {
@@ -1409,6 +1418,8 @@ static void initialise_is_for_vex_state(struct interpret_state *is,
 					const VexGuestArchState *state);
 static void syscall_event(VexGuestAMD64State *state);
 static void footstep_event(Addr rip, Word rdx, Word rcx, Word rax);
+static void store_event(void *ptr, unsigned size, const void *written_bytes,
+			unsigned long rsp);
 
 static UInt
 interpret_log_control_flow(VexGuestArchState *state)
@@ -1516,9 +1527,15 @@ interpret_log_control_flow(VexGuestArchState *state)
 				addr.v1,
 				sizeofIRType(
 					typeOfIRExpr(irsb->tyenv,
-						      stmt->Ist.Store.data)),
+						     stmt->Ist.Store.data)),
 				data);
 			free_expression(addr.origin);
+
+			store_event((void *)addr.v1,
+				    sizeofIRType(typeOfIRExpr(irsb->tyenv,
+							      stmt->Ist.Store.data)),
+				    &data.v1,
+				    istate->rsp.v1);
 			break;
 		}
 
