@@ -853,6 +853,18 @@ interpreter_do_load(struct abstract_interpret_value *aiv,
 			aiv->origin = copy_expression(iml->aiv.origin);
 			return;
 		}
+		if (iml->ptr == addr && iml->size > size) {
+			unsigned long mask;
+			switch (size) {
+			case 1: mask = 0xff; break;
+			case 2: mask = 0xffff; break;
+			case 4: mask = 0xffffffff; break;
+			default: ASSUME(0);
+			}
+			aiv->origin = expr_and(copy_expression(iml->aiv.origin),
+					       expr_const(mask));
+			return;
+		}
 		if (iml->ptr < addr + size &&
 		    iml->ptr + iml->size > addr) {
 			/* Don't want to deal with this yet. */
