@@ -1109,6 +1109,31 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 }
 
 static void
+do_ccall_generic(struct interpret_state *state, struct abstract_interpret_value *dest,
+		 IRCallee *cee, IRType retty, IRExpr **args)
+{
+	struct abstract_interpret_value rargs[6];
+	unsigned x;
+
+	tl_assert(cee->regparms == 0);
+	for (x = 0; args[x]; x++) {
+		tl_assert(x < 6);
+		eval_expression(state, &rargs[x], args[x]);
+	}
+	dest->v1 = ((unsigned long (*)(unsigned long, unsigned long, unsigned long,
+				       unsigned long, unsigned long, unsigned long))cee->addr)
+		(rargs[0].v1, rargs[1].v1, rargs[2].v1, rargs[3].v1, rargs[4].v1,
+		 rargs[5].v1);
+	dest->v2 = 0;
+	free_expression(dest->origin);
+	free_expression(dest->origin2);
+	dest->origin2 = NULL;
+	dest->origin = rargs[0].origin;
+	for (x = 1; args[x]; x++)
+		dest->origin = expr_combine(dest->origin, rargs[x].origin);
+}
+
+static void
 do_ccall(struct interpret_state *state,
 	 struct abstract_interpret_value *dest,
 	 IRCallee *cee,
@@ -1120,9 +1145,7 @@ do_ccall(struct interpret_state *state,
 	} else if (!VG_(strcmp)((Char *)cee->name, (Char *)"amd64g_calculate_rflags_c")) {
 		do_ccall_calculate_rflags_c(state, dest, cee, retty, args);
 	} else {
-		VG_(printf)("Strange clean callee %s\n",
-			    cee->name);
-		VG_(tool_panic)((Char *)"can't handle clean call");
+		do_ccall_generic(state, dest, cee, retty, args);
 	}
 }
 
