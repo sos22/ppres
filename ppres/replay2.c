@@ -994,6 +994,21 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			VG_(tool_panic)((Char *)"failed");
 		}
 		break;
+
+	case AMD64CondS:
+		switch (op.v1) {
+		case AMD64G_CC_OP_LOGICL:
+			dest->v1 = dep1.v1 >> 31;
+			free_expression(dest->origin);
+			dest->origin = expr_shrl(copy_expression(dep1.origin),
+						 expr_const(31));
+			break;
+		default:
+			VG_(printf)("Strange operation code %ld for s\n", op.v1);
+			VG_(tool_panic)((Char *)"failed");
+		}
+		break;
+
 	default:
 		VG_(printf)("Strange cond code %ld (op %ld)\n", condcode.v1, op.v1);
 		VG_(tool_panic)((Char *)"failed");
