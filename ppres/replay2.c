@@ -494,7 +494,7 @@ binop_commutes(unsigned op)
 {
 	switch (op) {
 	case EXPR_AND: case EXPR_OR: case EXPR_EQ: case EXPR_XOR:
-	case EXPR_MUL: case EXPR_MUL_HI:
+	case EXPR_MUL: case EXPR_MUL_HI: case EXPR_COMBINE:
 		return True;
 	default:
 		return False;
