@@ -1335,6 +1335,12 @@ eval_expression(struct interpret_state *state,
 			free_expression(t2);
 			break;
 		}
+		case Iop_32HLto64:
+			dest->v1 = (arg1.v1 << 32) | arg1.v2;
+			ORIGIN(expr_or(expr_shl(arg1.origin,
+						expr_const(32)),
+				       arg2.origin));
+			break;
 
 		default:
 			VG_(tool_panic)((Char *)"bad binop");
