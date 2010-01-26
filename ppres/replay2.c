@@ -33,6 +33,7 @@
 #include "../VEX/priv/main_util.h"
 #include "../VEX/priv/guest_generic_bb_to_IR.h"
 #include "../VEX/priv/guest_amd64_defs.h"
+#include "../VEX/priv/ir_opt.h"
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -1004,6 +1005,14 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg1.v1 ^ arg2.v1;
 			ORIGIN(expr_xor(arg1.origin, arg2.origin));
 			break;
+		case Iop_CmpEQ64:
+			dest->v1 = arg1.v1 == arg2.v1;
+			ORIGIN(expr_eq(arg1.origin, arg2.origin));
+			break;
+		case Iop_CmpLE64U:
+			dest->v1 = arg1.v1 < arg2.v1;
+			ORIGIN(expr_be(arg1.origin, arg2.origin));
+			break;
 		default:
 			VG_(tool_panic)((Char *)"bad binop");
 		}
@@ -1027,6 +1036,7 @@ eval_expression(struct interpret_state *state,
 			ORIGIN(expr_and(arg.origin, expr_const(1)));
 			break;
 		case Iop_32Uto64:
+		case Iop_1Uto64:
 			*dest = arg;
 			break;
 		case Iop_32Sto64:
@@ -1204,6 +1214,10 @@ interpret_log_control_flow(VexGuestArchState *state)
 			  NULL,
 			  offsetof(VexGuestAMD64State, guest_TISTART),
 			  offsetof(VexGuestAMD64State, guest_TILEN) );
+
+	irsb = do_iropt_BB (irsb, guest_amd64_spechelper,
+			    guest_amd64_state_requires_precise_mem_exns,
+			    addr );
 
 	ppIRSB(irsb);
 
