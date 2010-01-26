@@ -959,6 +959,7 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		break;
 	case AMD64CondB:
 		switch (op.v1) {
+		case AMD64G_CC_OP_SUBB:
 		case AMD64G_CC_OP_SUBL:
 		case AMD64G_CC_OP_SUBQ:
 			dest->v1 = dep1.v1 < dep2.v1;
