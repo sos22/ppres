@@ -113,6 +113,7 @@ struct interpret_state {
 	struct abstract_interpret_value d_flag;
 
 	struct abstract_interpret_value xmm0;
+	struct abstract_interpret_value xmm1;
 };
 
 struct replay_thread {
@@ -802,6 +803,8 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 		return &state->rip;
 	case 200:
 		return &state->xmm0;
+	case 216:
+		return &state->xmm1;
 	default:
 		VG_(printf)("Bad state offset %d\n", offset);
 		VG_(tool_panic)((Char *)"failed");
@@ -2547,6 +2550,7 @@ initialise_is_for_vex_state(struct interpret_state *is,
 	init_register(&is->d_flag, state->guest_DFLAG);
 
 	init_register_xmm(&is->xmm0, &state->guest_XMM0);
+	init_register_xmm(&is->xmm1, &state->guest_XMM1);
 }
 
 static void
@@ -2611,6 +2615,7 @@ commit_is_to_vex_state(struct interpret_state *is,
 	state->guest_DFLAG = commit_register(&is->d_flag);
 
 	commit_register_xmm(&state->guest_XMM0, &is->xmm0);
+	commit_register_xmm(&state->guest_XMM1, &is->xmm1);
 }
 
 static void
