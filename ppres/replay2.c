@@ -526,24 +526,73 @@ binop_rident_0(unsigned op)
 	}
 }
 
+/* Can a {op} (b {op} c) be safely rewritten to (a {op} b) {op} c? */
+static Bool
+binop_associates(unsigned op)
+{
+	switch (op) {
+	case EXPR_AND: case EXPR_COMBINE: case EXPR_OR: case EXPR_ADD:
+	case EXPR_XOR:
+		return True;
+	default:
+		return False;
+	}
+}
+
 static struct expression *
-expr_binop(struct expression *e1, struct expression *e2, unsigned type)
+expr_binop(struct expression *e1, struct expression *e2, unsigned op)
 {
 	struct expression *e;
 
-	if (binop_commutes(type) &&
+	if (e1->type == EXPR_CONST && e2->type == EXPR_CONST) {
+		/* Try to do some constant folding.  We only do this
+		   for a few special cases. */
+		e = NULL;
+		switch (op) {
+		case EXPR_ADD:
+			e = expr_const(e1->u.cnst + e2->u.cnst);
+			break;
+		default:
+			break;
+		}
+		if (e) {
+			free_expression(e1);
+			free_expression(e2);
+			return e;
+		}
+	}
+
+	/* Do some basic canonicalisations first: if the operation is
+	   commutative, the thing on the left always has a lower code
+	   than the thing on the right. */
+	if (binop_commutes(op) &&
 	    e1->type > e2->type) {
 		e = e1;
 		e1 = e2;
 		e2 = e;
 	}
-	if (binop_lident_0(type) &&
+	/* Try to get things with lower codes to the bottom-left of
+	   the expression tree (assuming the operation associates).
+	   This means rewriting a + (b + c) to (a + b) + c if a's type
+	   is less than +'s.  Since we've already arranged that b's
+	   type is less than c's (assuming it commutes), this means
+	   that types ascend left-to-right and top-to-bottom. */
+	if (binop_associates(op) &&
+	    e1->type < op &&
+	    e2->type == op) {
+		e1 = expr_binop(e1, e2->u.binop.arg1, op);
+		e = e2;
+		e2 = e2->u.binop.arg2;
+		VG_(free)(e);
+	}
+
+	if (binop_lident_0(op) &&
 	    e1->type == EXPR_CONST &&
 	    e1->u.cnst == 0) {
 		free_expression(e1);
 		return e2;
 	}
-	if (binop_rident_0(type) &&
+	if (binop_rident_0(op) &&
 	    e2->type == EXPR_CONST &&
 	    e2->u.cnst == 0) {
 		free_expression(e2);
@@ -551,7 +600,7 @@ expr_binop(struct expression *e1, struct expression *e2, unsigned type)
 	}
 	e = VG_(malloc)("expression", sizeof(*e));
 	VG_(memset)(e, 0, sizeof(*e));
-	e->type = type;
+	e->type = op;
 	e->u.binop.arg1 = e1;
 	e->u.binop.arg2 = e2;
 	return e;
