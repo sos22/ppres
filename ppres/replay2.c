@@ -1359,6 +1359,7 @@ eval_expression(struct interpret_state *state,
 			ORIGIN(expr_and(arg.origin, expr_const(0xff)));
 			break;
 		case Iop_128to64:
+		case Iop_V128to64:
 			dest->v1 = arg.v1;
 			ORIGIN(arg.origin);
 			break;
