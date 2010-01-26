@@ -840,24 +840,15 @@ interpret_create_mem_lookaside(unsigned long ptr,
 	VG_(memcpy)((void *)ptr, &data.v1, size);
 }
 
-static void
-interpreter_do_load(struct abstract_interpret_value *aiv,
-		    unsigned size,
-		    unsigned long addr)
+static struct expression *
+find_origin_expression(struct interpret_mem_lookaside *iml,
+		       unsigned size,
+		       unsigned long addr)
 {
-	struct interpret_mem_lookaside *iml;
-
-	free_expression(aiv->origin);
-	VG_(memcpy)(&aiv->v1, (const void *)addr, size);
-	for (iml = head_interpret_mem_lookaside;
-	     iml;
-	     iml = iml->next) {
-		if (iml->ptr == addr && iml->size == size) {
-			tl_assert(aiv->v1 == iml->aiv.v1);
-			aiv->origin = copy_expression(iml->aiv.origin);
-			return;
-		}
-		if (iml->ptr == addr && iml->size > size) {
+	while (iml) {
+		if (iml->ptr == addr && iml->size == size)
+			return copy_expression(iml->aiv.origin);
+		if (iml->ptr <= addr && iml->ptr + iml->size >= addr + size) {
 			unsigned long mask;
 			switch (size) {
 			case 1: mask = 0xff; break;
@@ -865,18 +856,30 @@ interpreter_do_load(struct abstract_interpret_value *aiv,
 			case 4: mask = 0xffffffff; break;
 			default: ASSUME(0);
 			}
-			aiv->origin = expr_and(copy_expression(iml->aiv.origin),
-					       expr_const(mask));
-			return;
+			return expr_and(expr_shrl(copy_expression(iml->aiv.origin),
+						  expr_const((addr - iml->ptr) * 8)),
+					expr_const(mask));
 		}
 		if (iml->ptr < addr + size &&
 		    iml->ptr + iml->size > addr) {
-			/* Don't want to deal with this yet. */
-			ASSUME(0);
+			return expr_combine(copy_expression(iml->aiv.origin),
+					    find_origin_expression(iml->next, size, addr));
 		}
+		iml = iml->next;
 	}
+	return expr_imported();
+}
 
-	aiv->origin = expr_imported();
+static void
+interpreter_do_load(struct abstract_interpret_value *aiv,
+		    unsigned size,
+		    unsigned long addr)
+{
+	free_expression(aiv->origin);
+	VG_(memcpy)(&aiv->v1, (const void *)addr, size);
+	aiv->origin = find_origin_expression(head_interpret_mem_lookaside,
+					     size,
+					     addr);
 }
 
 static void
