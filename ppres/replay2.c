@@ -1408,6 +1408,7 @@ do_dirty_call(struct interpret_state *is,
 static void initialise_is_for_vex_state(struct interpret_state *is,
 					const VexGuestArchState *state);
 static void syscall_event(VexGuestAMD64State *state);
+static void footstep_event(Addr rip, Word rdx, Word rcx, Word rax);
 
 static UInt
 interpret_log_control_flow(VexGuestArchState *state)
@@ -1465,8 +1466,6 @@ interpret_log_control_flow(VexGuestArchState *state)
 			    guest_amd64_state_requires_precise_mem_exns,
 			    addr );
 
-	ppIRSB(irsb);
-
 	tl_assert(istate->temporaries == NULL);
 	istate->temporaries = VG_(malloc)("interpreter temporaries",
 					  sizeof(istate->temporaries[0]) *
@@ -1482,7 +1481,13 @@ interpret_log_control_flow(VexGuestArchState *state)
 		VG_(printf)("\n");
 		switch (stmt->tag) {
 		case Ist_NoOp:
+			break;
 		case Ist_IMark:
+			footstep_event(stmt->Ist.IMark.addr,
+				       istate->rdx.v1,
+				       istate->rcx.v1,
+				       istate->rax.v1);
+			break;
 		case Ist_AbiHint:
 			break;
 		case Ist_WrTmp:
@@ -1875,6 +1880,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	va_start(args, fmt);
 	msg = my_vasprintf(fmt, args);
 	va_end(args);
+
+	VG_(printf)("FAILED %s\n", msg);
 
 	send_error();
 	while (1) {
