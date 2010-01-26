@@ -1030,7 +1030,18 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 	eval_expression(state, &ndep, args[3]);
 
 	switch (op.v1) {
+	case AMD64G_CC_OP_SUBB:
+		dest->v1 = (unsigned char)(dep1.v1 - dep2.v1) < (unsigned char)dep2.v1;
+		free_expression(dest->origin);
+		dest->origin = expr_b(expr_and(expr_sub(copy_expression(dep1.origin),
+							copy_expression(dep2.origin)),
+					       expr_const(0xff)),
+				      expr_and(copy_expression(dep2.origin),
+					       expr_const(0xff)));
+		break;
+
 	case AMD64G_CC_OP_LOGICB:
+	case AMD64G_CC_OP_LOGICL:
 		/* XXX Why doesn't the Valgrind optimiser remove
 		 * these? */
 		dest->v1 = 0;
@@ -1220,6 +1231,10 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg1.v1 < arg2.v1;
 			ORIGIN(expr_b(arg1.origin, arg2.origin));
 			break;
+		case Iop_Mul64:
+			dest->v1 = arg1.v1 * arg2.v1;
+			ORIGIN(expr_mul(arg1.origin, arg2.origin));
+			break;
 		case Iop_MullU64: {
 			unsigned long a1, a2, b1, b2;
 			struct expression *t1, *t2;
@@ -1291,6 +1306,12 @@ eval_expression(struct interpret_state *state,
 
 		case Iop_Not1:
 			dest->v1 = !arg.v1;
+			ORIGIN(expr_and(expr_not(arg.origin),
+					expr_const(1)));
+			break;
+
+		case Iop_Not64:
+			dest->v1 = ~arg.v1;
 			ORIGIN(expr_not(arg.origin));
 			break;
 
