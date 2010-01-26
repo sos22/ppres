@@ -489,189 +489,95 @@ expr_imported(void)
 	return e;
 }
 
-static struct expression *
-expr_sub(struct expression *e1, struct expression *e2)
+static Bool
+binop_commutes(unsigned op)
 {
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_SUB;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
+	switch (op) {
+	case EXPR_AND: case EXPR_OR: case EXPR_EQ: case EXPR_XOR:
+	case EXPR_MUL: case EXPR_MUL_HI:
+		return True;
+	default:
+		return False;
+	}
+}
+
+/* True if 0 {op} x == x (i.e. if 0 is a left identity for op) */
+static Bool
+binop_lident_0(unsigned op)
+{
+	switch (op) {
+	case EXPR_OR: case EXPR_ADD: case EXPR_XOR:
+		return True;
+	default:
+		return False;
+	}
+}
+
+/* True if x {op} 0 == x (i.e. if 0 is a right identity for op) */
+static Bool
+binop_rident_0(unsigned op)
+{
+	switch (op) {
+	case EXPR_OR: case EXPR_ADD: case EXPR_XOR: case EXPR_SUB:
+	case EXPR_SHRL: case EXPR_SHL: case EXPR_SHRA:
+		return True;
+	default:
+		return False;
+	}
 }
 
 static struct expression *
-expr_add(struct expression *e1, struct expression *e2)
+expr_binop(struct expression *e1, struct expression *e2, unsigned type)
 {
 	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_ADD;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
-}
 
-static struct expression *
-expr_mul(struct expression *e1, struct expression *e2)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_MUL;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
-}
-
-static struct expression *
-expr_mul_hi(struct expression *e1, struct expression *e2)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_MUL_HI;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
-}
-
-static struct expression *
-expr_and(struct expression *e1, struct expression *e2)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_AND;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
-}
-
-static struct expression *
-expr_or(struct expression *e1, struct expression *e2)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_OR;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
-}
-
-static struct expression *
-expr_xor(struct expression *e1, struct expression *e2)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_XOR;
-	e->u.binop.arg1 = e1;
-	e->u.binop.arg2 = e2;
-	return e;
-}
-
-static struct expression *
-expr_shrl(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	if (amt->type == EXPR_CONST && amt->u.cnst == 0) {
-		free_expression(amt);
-		return val;
+	if (binop_commutes(type) &&
+	    e1->type > e2->type) {
+		e = e1;
+		e1 = e2;
+		e2 = e;
+	}
+	if (binop_lident_0(type) &&
+	    e1->type == EXPR_CONST &&
+	    e1->u.cnst == 0) {
+		free_expression(e1);
+		return e2;
+	}
+	if (binop_rident_0(type) &&
+	    e2->type == EXPR_CONST &&
+	    e2->u.cnst == 0) {
+		free_expression(e2);
+		return e1;
 	}
 	e = VG_(malloc)("expression", sizeof(*e));
 	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_SHRL;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
+	e->type = type;
+	e->u.binop.arg1 = e1;
+	e->u.binop.arg2 = e2;
 	return e;
 }
 
-static struct expression *
-expr_shra(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_SHRA;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
-
-static struct expression *
-expr_shl(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_SHL;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
-
-static struct expression *
-expr_combine(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_COMBINE;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
-
-static struct expression *
-expr_le(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_LE;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
-
-static struct expression *
-expr_eq(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_EQ;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
-
-static struct expression *
-expr_be(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_BE;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
-
-static struct expression *
-expr_b(struct expression *val, struct expression *amt)
-{
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_B;
-	e->u.binop.arg1 = val;
-	e->u.binop.arg2 = amt;
-	return e;
-}
+#define mk_expr(name1, name2)						\
+	static inline struct expression *				\
+	expr_ ## name1 (struct expression *e1, struct expression *e2)	\
+	{								\
+		return expr_binop(e1, e2, EXPR_ ## name2);		\
+	}
+mk_expr(sub, SUB)
+mk_expr(add, ADD)
+mk_expr(mul, MUL)
+mk_expr(mul_hi, MUL_HI)
+mk_expr(and, AND)
+mk_expr(or, OR)
+mk_expr(xor, XOR)
+mk_expr(shrl, SHRL)
+mk_expr(shra, SHRA)
+mk_expr(shl, SHL)
+mk_expr(combine, COMBINE)
+mk_expr(le, LE)
+mk_expr(be, BE)
+mk_expr(eq, EQ)
+mk_expr(b, B)
 
 static void
 send_expression(struct expression *e)

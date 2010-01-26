@@ -68,8 +68,8 @@ struct response_string {
 #define REG_RSI 6
 #define REG_RDI 7
 
-#define EXPR_REG 0
-#define EXPR_CONST 1
+#define EXPR_CONST 0
+#define EXPR_REG 1
 #define EXPR_MEM 2
 #define EXPR_IMPORTED 3
 #define EXPR_SUB 4
