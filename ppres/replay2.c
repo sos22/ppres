@@ -109,6 +109,8 @@ struct interpret_state {
 	struct abstract_interpret_value cc_dep1;
 	struct abstract_interpret_value cc_dep2;
 	struct abstract_interpret_value cc_ndep;
+
+	struct abstract_interpret_value d_flag;
 };
 
 struct replay_thread {
@@ -833,6 +835,8 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 		return &state->cc_dep2;
 	case OFFSET_amd64_CC_NDEP:
 		return &state->cc_ndep;
+	case 160:
+		return &state->d_flag;
 	case 168:
 		return &state->rip;
 	default:
@@ -951,6 +955,7 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			free_expression(dest->origin);
 			dest->origin = copy_expression(dep1.origin);
 			break;
+		case AMD64G_CC_OP_SUBB:
 		case AMD64G_CC_OP_SUBQ:
 			dest->v1 = dep1.v1 == dep2.v1;
 			free_expression(dest->origin);
@@ -1237,6 +1242,10 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg1.v1 == arg2.v1;
 			ORIGIN(expr_eq(arg1.origin, arg2.origin));
 			break;
+		case Iop_CmpNE64:
+			dest->v1 = arg1.v1 != arg2.v1;
+			ORIGIN(expr_not(expr_eq(arg1.origin, arg2.origin)));
+			break;
 		case Iop_CmpLE64U:
 			dest->v1 = arg1.v1 <= arg2.v1;
 			ORIGIN(expr_be(arg1.origin, arg2.origin));
@@ -1266,6 +1275,7 @@ eval_expression(struct interpret_state *state,
 			free_expression(t2);
 			break;
 		}
+
 		default:
 			VG_(tool_panic)((Char *)"bad binop");
 		}
@@ -1316,6 +1326,12 @@ eval_expression(struct interpret_state *state,
 			tl_assert(arg.origin2 != NULL);
 			ORIGIN(arg.origin2);
 			break;
+
+		case Iop_Not1:
+			dest->v1 = !arg.v1;
+			ORIGIN(expr_not(arg.origin));
+			break;
+
 		default:
 			VG_(tool_panic)((Char *)"bad unop");
 		}
@@ -2403,6 +2419,8 @@ initialise_is_for_vex_state(struct interpret_state *is,
 	init_register(&is->cc_dep1, state->guest_CC_DEP1);
 	init_register(&is->cc_dep2, state->guest_CC_DEP2);
 	init_register(&is->cc_ndep, state->guest_CC_NDEP);
+
+	init_register(&is->d_flag, state->guest_DFLAG);
 }
 
 static void
@@ -2455,6 +2473,8 @@ commit_is_to_vex_state(struct interpret_state *is,
 	state->guest_CC_DEP1 = commit_register(&is->cc_dep1);
 	state->guest_CC_DEP2 = commit_register(&is->cc_dep2);
 	state->guest_CC_NDEP = commit_register(&is->cc_ndep);
+
+	state->guest_DFLAG = commit_register(&is->d_flag);
 }
 
 static void
