@@ -1322,6 +1322,8 @@ eval_expression(struct interpret_state *state,
 			ORIGIN(expr_not(expr_eq(arg1.origin, arg2.origin)));
 			break;
 		case Iop_CmpEQ8:
+		case Iop_CmpEQ16:
+		case Iop_CmpEQ32:
 		case Iop_CmpEQ64:
 			dest->v1 = arg1.v1 == arg2.v1;
 			ORIGIN(expr_eq(arg1.origin, arg2.origin));
@@ -1418,6 +1420,10 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg.v1 & 0xffffffff;
 			ORIGIN(expr_and(arg.origin, expr_const(0xfffffffful)));
 			break;
+		case Iop_64to16:
+			dest->v1 = arg.v1 & 0xffff;
+			ORIGIN(expr_and(arg.origin, expr_const(0xffff)));
+			break;
 		case Iop_64to8:
 			dest->v1 = arg.v1 & 0xff;
 			ORIGIN(expr_and(arg.origin, expr_const(0xff)));
@@ -1462,6 +1468,12 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = !arg.v1;
 			ORIGIN(expr_and(expr_not(arg.origin),
 					expr_const(1)));
+			break;
+
+		case Iop_Not32:
+			dest->v1 = ~arg.v1 & 0xffffffff;
+			ORIGIN(expr_and(expr_not(arg.origin),
+					expr_const(0xffffffff)));
 			break;
 
 		case Iop_Not64:
