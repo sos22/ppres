@@ -85,3 +85,9 @@ struct response_string {
 #define EXPR_EQ 14
 #define EXPR_XOR 15
 
+#define EXPR_MUL 16
+#define EXPR_MUL_HI 17
+
+#define EXPR_NOT 18
+
+#define EXPR_B 19
