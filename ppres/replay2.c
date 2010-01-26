@@ -577,6 +577,10 @@ static struct expression *
 expr_shrl(struct expression *val, struct expression *amt)
 {
 	struct expression *e;
+	if (amt->type == EXPR_CONST && amt->u.cnst == 0) {
+		free_expression(amt);
+		return val;
+	}
 	e = VG_(malloc)("expression", sizeof(*e));
 	VG_(memset)(e, 0, sizeof(*e));
 	e->type = EXPR_SHRL;
