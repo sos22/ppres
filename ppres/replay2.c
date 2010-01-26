@@ -1300,6 +1300,12 @@ eval_expression(struct interpret_state *state,
 						  expr_const(32)),
 					 expr_const(32)));
 			break;
+		case Iop_8Sto32:
+			dest->v1 = (int)(signed char)arg.v1;
+			ORIGIN(expr_shra(expr_shl(arg.origin,
+						  expr_const(56)),
+					 expr_const(56)));
+			break;
 		case Iop_128HIto64:
 			dest->v1 = arg.v2;
 			tl_assert(arg.origin2 != NULL);
