@@ -1260,6 +1260,11 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg1.v1 | arg2.v1;
 			ORIGIN(expr_or(arg1.origin, arg2.origin));
 			break;
+		case Iop_Shl32:
+			dest->v1 = (arg1.v1 << arg2.v1) & 0xffffffff;
+			ORIGIN(expr_and(expr_shl(arg1.origin, arg2.origin),
+					expr_const(0xffffffff)));
+			break;
 		case Iop_Shl64:
 			dest->v1 = arg1.v1 << arg2.v1;
 			ORIGIN(expr_shl(arg1.origin, arg2.origin));
