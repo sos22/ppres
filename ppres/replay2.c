@@ -1272,7 +1272,11 @@ eval_expression(struct interpret_state *state,
 			a2 = arg1.v1 >> 32;
 			b1 = arg2.v1 & 0xffffffff;
 			b2 = arg2.v1 >> 32;
-			dest->v2 = a1 * b1 + ((a1 * b2 + a2 * b1) >> 32);
+			dest->v2 = a2 * b2 +
+				( (a1 * b2 + a2 * b1 +
+				   ((a1 * b1) >> 32)) >> 32);
+			VG_(printf)("%lx * %lx -> %lx:%lx\n",
+				    arg1.v1, arg2.v1, dest->v1, dest->v2);
 			t1 = dest->origin;
 			t2 = dest->origin2;
 			dest->origin = expr_mul(arg1.origin, arg2.origin);
