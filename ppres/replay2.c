@@ -849,6 +849,7 @@ interpreter_do_load(struct abstract_interpret_value *aiv,
 	     iml;
 	     iml = iml->next) {
 		if (iml->ptr == addr && iml->size == size) {
+			tl_assert(aiv->v1 == iml->aiv.v1);
 			aiv->origin = copy_expression(iml->aiv.origin);
 			return;
 		}
@@ -2450,14 +2451,13 @@ commit_interpreter_state(void)
 		commit_is_to_vex_state(&rt->interpret_state,
 				       &ts->arch.vex);
 	}
+	/* Actual memory is already correct, so this just needs to
+	   release all the slots. */
 	VG_(printf)("Committing interpreter memory...\n");
 	for (iml = head_interpret_mem_lookaside;
 	     iml != NULL;
 	     iml = next) {
 		next = iml->next;
-		VG_(memcpy)((void *)iml->ptr,
-			    &iml->aiv.v1,
-			    iml->size);
 		free_expression(iml->aiv.origin);
 		VG_(free)(iml);
 	}
