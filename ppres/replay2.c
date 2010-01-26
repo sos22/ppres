@@ -111,6 +111,8 @@ struct interpret_state {
 	struct abstract_interpret_value cc_ndep;
 
 	struct abstract_interpret_value d_flag;
+
+	struct abstract_interpret_value xmm0;
 };
 
 struct replay_thread {
@@ -798,6 +800,8 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 		return &state->d_flag;
 	case 168:
 		return &state->rip;
+	case 200:
+		return &state->xmm0;
 	default:
 		VG_(printf)("Bad state offset %d\n", offset);
 		VG_(tool_panic)((Char *)"failed");
@@ -1132,6 +1136,7 @@ eval_expression(struct interpret_state *state,
 					 expr->Iex.Get.offset - sub_word_offset);
 		switch (expr->Iex.Get.ty) {
 		case Ity_I64:
+		case Ity_V128:
 			tl_assert(!sub_word_offset);
 			copy_aiv(dest, src);
 			break;
@@ -1176,8 +1181,38 @@ eval_expression(struct interpret_state *state,
 
 	case Iex_Const: {
 		IRConst *cnst = expr->Iex.Const.con;
-		dest->v1 = cnst->Ico.U64;
-		ORIGIN(expr_const(cnst->Ico.U64));
+		free_expression(dest->origin);
+		dest->origin = NULL;
+		free_expression(dest->origin2);
+		dest->origin2 = NULL;
+		switch (cnst->tag) {
+		case Ico_U1:
+			dest->v1 = cnst->Ico.U1;
+			break;
+		case Ico_U8:
+			dest->v1 = cnst->Ico.U8;
+			break;
+		case Ico_U16:
+			dest->v1 = cnst->Ico.U16;
+			break;
+		case Ico_U32:
+			dest->v1 = cnst->Ico.U32;
+			break;
+		case Ico_U64:
+		case Ico_F64:
+		case Ico_F64i:
+			dest->v1 = cnst->Ico.U64;
+			break;
+		case Ico_V128:
+			dest->v1 = cnst->Ico.V128;
+			dest->v1 = dest->v1 | (dest->v1 << 16) | (dest->v1 << 32) | (dest->v1 << 48);
+			dest->v2 = dest->v1;
+			dest->origin2 = expr_const(dest->v2);
+			break;
+		default:
+			ASSUME(0);
+		}
+		dest->origin = expr_const(dest->v1);
 		break;
 	}
 
@@ -1584,6 +1619,8 @@ interpret_log_control_flow(VexGuestArchState *state)
 							  expr_const(~(0xFF << (byte_offset * 8)))));
 				break;
 			case Ity_I64:
+			case Ity_I128:
+			case Ity_V128:
 				tl_assert(byte_offset == 0);
 				eval_expression(istate, dest, stmt->Ist.Put.data);
 				break;
@@ -2458,6 +2495,17 @@ init_register(struct abstract_interpret_value *aiv,
 }
 
 static void
+init_register_xmm(struct abstract_interpret_value *aiv,
+		  const U128 *v)
+{
+	VG_(memcpy)(&aiv->v1, v, 16);
+	free_expression(aiv->origin);
+	free_expression(aiv->origin2);
+	aiv->origin = expr_imported();
+	aiv->origin2 = expr_imported();
+}
+
+static void
 initialise_is_for_vex_state(struct interpret_state *is,
 			    const VexGuestArchState *state)
 {
@@ -2485,6 +2533,8 @@ initialise_is_for_vex_state(struct interpret_state *is,
 	init_register(&is->cc_ndep, state->guest_CC_NDEP);
 
 	init_register(&is->d_flag, state->guest_DFLAG);
+
+	init_register_xmm(&is->xmm0, &state->guest_XMM0);
 }
 
 static void
@@ -2509,6 +2559,14 @@ commit_register(struct abstract_interpret_value *aiv)
 	free_expression(aiv->origin);
 	aiv->origin = NULL;
 	return aiv->v1;
+}
+
+static void
+commit_register_xmm(U128 *r, struct abstract_interpret_value *aiv)
+{
+	free_expression(aiv->origin);
+	aiv->origin = NULL;
+	VG_(memcpy)(r, &aiv->v1, 16);
 }
 
 static void
@@ -2539,6 +2597,8 @@ commit_is_to_vex_state(struct interpret_state *is,
 	state->guest_CC_NDEP = commit_register(&is->cc_ndep);
 
 	state->guest_DFLAG = commit_register(&is->d_flag);
+
+	commit_register_xmm(&state->guest_XMM0, &is->xmm0);
 }
 
 static void
