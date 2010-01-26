@@ -1342,6 +1342,32 @@ eval_expression(struct interpret_state *state,
 				       arg2.origin));
 			break;
 
+		case Iop_64HLtoV128:
+		case Iop_64HLto128:
+			dest->v1 = arg2.v1;
+			dest->v2 = arg1.v1;
+			free_expression(dest->origin);
+			free_expression(dest->origin2);
+			dest->origin = arg2.origin;
+			dest->origin2 = arg1.origin;
+			break;
+
+		case Iop_DivModU128to64:
+			/* arg1 is a I128, arg2 is an I64, result is
+			   128 bits and has the dividend in its low 64
+			   bits and the modulus in its high 64
+			   bits. */
+			asm ("div %4\n"
+			     : "=a" (dest->v1), "=d" (dest->v2)
+			     : "0" (arg1.v1), "1" (arg1.v2), "r" (arg2.v1));
+			free_expression(dest->origin);
+			free_expression(dest->origin2);
+			dest->origin = expr_combine(arg1.origin,
+						    expr_combine(arg1.origin2,
+								 arg2.origin));
+			dest->origin2 = copy_expression(dest->origin);
+			break;
+
 		default:
 			VG_(tool_panic)((Char *)"bad binop");
 		}
