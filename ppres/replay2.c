@@ -1126,7 +1126,10 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->origin = expr_eq(copy_expression(dep1.origin),
 					       copy_expression(dep2.origin));
 			break;
+		case AMD64G_CC_OP_INCL:
 		case AMD64G_CC_OP_INCQ:
+		case AMD64G_CC_OP_SHRL:
+		case AMD64G_CC_OP_SHRQ:
 			dest->v1 = dep1.v1 == 0;
 			free_expression(dest->origin);
 			dest->origin = expr_eq(copy_expression(dep1.origin),
@@ -1257,6 +1260,14 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 	eval_expression(state, &ndep, args[3]);
 
 	switch (op.v1) {
+	case AMD64G_CC_OP_INCB:
+	case AMD64G_CC_OP_INCW:
+	case AMD64G_CC_OP_INCL:
+	case AMD64G_CC_OP_INCQ:
+		dest->v1 = ndep.v1 & 1;
+		dest->origin = expr_and(ndep.origin, expr_const(1));
+		break;
+
 	case AMD64G_CC_OP_SUBB:
 		dest->v1 = (unsigned char)(dep1.v1 - dep2.v1) < (unsigned char)dep2.v1;
 		free_expression(dest->origin);
@@ -1274,6 +1285,11 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 		dest->v1 = 0;
 		free_expression(dest->origin);
 		dest->origin = expr_const(0);
+		break;
+
+	case AMD64G_CC_OP_SHRL:
+		dest->v1 = dep2.v1 & 1;
+		dest->origin = expr_and(dep1.origin, expr_const(1));
 		break;
 
 	default:
