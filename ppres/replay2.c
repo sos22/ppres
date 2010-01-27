@@ -933,7 +933,6 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 	} else if (offset >= 200 && (offset - 200) < 32 * 8) {
 		offset -= 200;
 		tl_assert(!(offset % 8));
-		VG_(printf)("Fetch xmm ~~%d\n", offset / 8);
 		return &state->xmm[offset / 8];
 	}
 
@@ -1017,6 +1016,7 @@ interpreter_do_load(struct expression_result *er,
 		    unsigned size,
 		    unsigned long addr)
 {
+	VG_(memset)(er, 0, sizeof(*er));
 	if (size > 8) {
 		tl_assert(size == 16);
 		er->hi.origin = find_origin_expression(head_interpret_mem_lookaside,
@@ -1559,6 +1559,10 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.lo.v;
 			dest->lo.origin = arg2.lo.origin;
 			dest->hi.origin = arg1.lo.origin;
+			VG_(printf)("64HLto{V}128: %lx:%lx %lx:%lx -> %lx:%lx\n",
+				    arg1.lo.v, arg1.hi.v,
+				    arg2.lo.v, arg2.hi.v,
+				    dest->lo.v, dest->hi.v);
 			break;
 
 		case Iop_DivModU128to64:
@@ -1602,28 +1606,34 @@ eval_expression(struct interpret_state *state,
 
 		case Iop_InterleaveLO32x4:
 			dest->lo.v = (arg2.lo.v & 0xffffffff) | (arg1.lo.v << 32);
-			dest->hi.v = (arg1.lo.v & 0xffffffff) | (arg2.lo.v << 32);
+			dest->hi.v = (arg2.lo.v >> 32) | (arg1.lo.v & 0xffffffff00000000ul);
 			dest->lo.origin = expr_or(expr_and(arg2.lo.origin,
 							   expr_const(0xffffffff)),
 						  expr_shl(arg1.lo.origin,
 							   expr_const(32)));
-			dest->hi.origin = expr_or(expr_and(arg1.lo.origin,
-							   expr_const(0xffffffff)),
-						  expr_shl(arg2.lo.origin,
-							   expr_const(32)));
+			dest->hi.origin = expr_or(expr_shrl(arg2.lo.origin,
+							    expr_const(32)),
+						  expr_and(arg1.lo.origin,
+							   expr_const(0xffffffff00000000ul)));
+			VG_(printf)("Interleave lo32x4 %lx:%lx %lx:%lx -> %lx:%lx\n",
+				    arg1.hi.v, arg1.lo.v, arg2.hi.v, arg2.lo.v,
+				    dest->hi.v, dest->lo.v);
 			break;
 
 		case Iop_InterleaveHI32x4:
 			dest->lo.v = (arg2.hi.v & 0xffffffff) | (arg1.hi.v << 32);
-			dest->hi.v = (arg1.hi.v & 0xffffffff) | (arg2.hi.v << 32);
+			dest->hi.v = (arg2.hi.v >> 32) | (arg1.hi.v & 0xffffffff00000000ul);
 			dest->lo.origin = expr_or(expr_and(arg2.hi.origin,
 							   expr_const(0xffffffff)),
 						  expr_shl(arg1.hi.origin,
 							   expr_const(32)));
-			dest->hi.origin = expr_or(expr_and(arg1.hi.origin,
-							   expr_const(0xffffffff)),
-						  expr_shl(arg2.hi.origin,
-							   expr_const(32)));
+			dest->hi.origin = expr_or(expr_shrl(arg2.hi.origin,
+							    expr_const(32)),
+						  expr_and(arg1.hi.origin,
+							   expr_const(0xffffffff00000000ul)));
+			VG_(printf)("Interleave hi32x4 %lx:%lx %lx:%lx -> %lx:%lx\n",
+				    arg1.hi.v, arg1.lo.v, arg2.hi.v, arg2.lo.v,
+				    dest->hi.v, dest->lo.v);
 			break;
 
 		case Iop_ShrN64x2:
@@ -1644,10 +1654,16 @@ eval_expression(struct interpret_state *state,
 			break;
 
 		case Iop_CmpGT32Sx4:
-			dest->lo.v = ((int)arg1.lo.v > (int)arg2.lo.v) |
-				((unsigned long)((int)(arg1.lo.v >> 32) > (int)(arg2.lo.v >> 32)) << 32);
-			dest->hi.v = ((int)arg1.hi.v > (int)arg2.hi.v) |
-				((unsigned long)((int)(arg1.hi.v >> 32) > (int)(arg2.hi.v >> 32)) << 32);
+			dest->lo.v = 0;
+			dest->hi.v = 0;
+			if ( (int)arg1.lo.v > (int)arg2.lo.v )
+				dest->lo.v |= 0xffffffff;
+			if ( (int)(arg1.lo.v >> 32) > (int)(arg2.lo.v >> 32) )
+				dest->lo.v |= 0xffffffff00000000;
+			if ( (int)arg1.hi.v > (int)arg2.hi.v )
+				dest->hi.v |= 0xffffffff;
+			if ( (int)(arg1.hi.v >> 32) > (int)(arg2.hi.v >> 32) )
+				dest->hi.v |= 0xffffffff00000000;
 			dest->lo.origin = expr_combine(arg1.lo.origin, arg2.lo.origin);
 			dest->hi.origin = expr_combine(arg1.hi.origin, arg2.hi.origin);
 			VG_(printf)("%lx:%lx > %lx:%lx -> %lx:%lx\n",
@@ -1991,9 +2007,11 @@ interpret_log_control_flow(VexGuestArchState *state)
 		    irsb->tyenv->types_used);
 	for (stmt_nr = 0; stmt_nr < irsb->stmts_used; stmt_nr++) {
 		stmt = irsb->stmts[stmt_nr];
-		VG_(printf)("Interpreting record %d ", record_nr);
-		ppIRStmt(stmt);
-		VG_(printf)("\n");
+		if (record_nr > 208000) {
+			VG_(printf)("Interpreting record %d ", record_nr);
+			ppIRStmt(stmt);
+			VG_(printf)("\n");
+		}
 		switch (stmt->tag) {
 		case Ist_NoOp:
 			break;
