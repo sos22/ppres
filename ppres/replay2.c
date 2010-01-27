@@ -88,22 +88,7 @@ struct interpret_state {
 	/* Update commit_is_to_vex_state, initialise_is_for_vex_state,
 	   get_aiv_for_offset, and gc_explore_interpret_state when
 	   changing these. */
-	struct abstract_interpret_value rax;
-	struct abstract_interpret_value rcx;
-	struct abstract_interpret_value rdx;
-	struct abstract_interpret_value rbx;
-	struct abstract_interpret_value rsp;
-	struct abstract_interpret_value rbp;
-	struct abstract_interpret_value rsi;
-	struct abstract_interpret_value rdi;
-	struct abstract_interpret_value r8;
-	struct abstract_interpret_value r9;
-	struct abstract_interpret_value r10;
-	struct abstract_interpret_value r11;
-	struct abstract_interpret_value r12;
-	struct abstract_interpret_value r13;
-	struct abstract_interpret_value r14;
-	struct abstract_interpret_value r15;
+	struct abstract_interpret_value gregs[16];
 	struct abstract_interpret_value rip;
 
 	struct abstract_interpret_value cc_op;
@@ -114,8 +99,7 @@ struct interpret_state {
 	struct abstract_interpret_value d_flag;
 	struct abstract_interpret_value fs_zero;
 
-	struct abstract_interpret_value xmm0;
-	struct abstract_interpret_value xmm1;
+	struct abstract_interpret_value xmm[16];
 };
 
 struct replay_thread {
@@ -453,23 +437,12 @@ gc_explore_aiv(const struct abstract_interpret_value *aiv)
 static void
 gc_explore_interpret_state(const struct interpret_state *is)
 {
+	unsigned x;
+
 	tl_assert(is->temporaries == NULL);
-	gc_explore_aiv(&is->rax);
-	gc_explore_aiv(&is->rcx);
-	gc_explore_aiv(&is->rdx);
-	gc_explore_aiv(&is->rbx);
-	gc_explore_aiv(&is->rsp);
-	gc_explore_aiv(&is->rbp);
-	gc_explore_aiv(&is->rsi);
-	gc_explore_aiv(&is->rdi);
-	gc_explore_aiv(&is->r8);
-	gc_explore_aiv(&is->r9);
-	gc_explore_aiv(&is->r10);
-	gc_explore_aiv(&is->r11);
-	gc_explore_aiv(&is->r12);
-	gc_explore_aiv(&is->r13);
-	gc_explore_aiv(&is->r14);
-	gc_explore_aiv(&is->r15);
+	for (x = 0; x < 16; x++)
+		gc_explore_aiv(&is->gregs[x]);
+
 	gc_explore_aiv(&is->rip);
 
 	gc_explore_aiv(&is->cc_op);
@@ -478,8 +451,8 @@ gc_explore_interpret_state(const struct interpret_state *is)
 	gc_explore_aiv(&is->cc_ndep);
 	gc_explore_aiv(&is->d_flag);
 	gc_explore_aiv(&is->fs_zero);
-	gc_explore_aiv(&is->xmm0);
-	gc_explore_aiv(&is->xmm1);
+	for (x = 0; x < 16; x++)
+		gc_explore_aiv(&is->xmm[x]);
 }
 
 static void
@@ -948,39 +921,16 @@ chase_into_ok(void *ignore, Addr64 ignore2)
 static struct abstract_interpret_value *
 get_aiv_for_offset(struct interpret_state *state, Int offset)
 {
+	if (offset < 16 * 8) {
+		tl_assert(!(offset % 8));
+		return &state->gregs[offset / 8];
+	} else if (offset >= 200 && (offset - 200) < 16 * 16) {
+		offset -= 200;
+		tl_assert(!(offset % 16));
+		return &state->xmm[offset / 16];
+	}
+
 	switch (offset) {
-	case OFFSET_amd64_RAX:
-		return &state->rax;
-	case OFFSET_amd64_RCX:
-		return &state->rcx;
-	case OFFSET_amd64_RDX:
-		return &state->rdx;
-	case OFFSET_amd64_RBX:
-		return &state->rbx;
-	case OFFSET_amd64_RSP:
-		return &state->rsp;
-	case OFFSET_amd64_RBP:
-		return &state->rbp;
-	case OFFSET_amd64_RSI:
-		return &state->rsi;
-	case OFFSET_amd64_RDI:
-		return &state->rdi;
-	case OFFSET_amd64_R8:
-		return &state->r8;
-	case OFFSET_amd64_R9:
-		return &state->r9;
-	case OFFSET_amd64_R10:
-		return &state->r10;
-	case OFFSET_amd64_R11:
-		return &state->r11;
-	case OFFSET_amd64_R12:
-		return &state->r12;
-	case OFFSET_amd64_R13:
-		return &state->r13;
-	case OFFSET_amd64_R14:
-		return &state->r14;
-	case OFFSET_amd64_R15:
-		return &state->r15;
 	case OFFSET_amd64_CC_OP:
 		return &state->cc_op;
 	case OFFSET_amd64_CC_DEP1:
@@ -995,10 +945,6 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 		return &state->rip;
 	case 184:
 		return &state->fs_zero;
-	case 200:
-		return &state->xmm0;
-	case 216:
-		return &state->xmm1;
 	default:
 		VG_(printf)("Bad state offset %d\n", offset);
 		VG_(tool_panic)((Char *)"failed");
@@ -1636,6 +1582,13 @@ eval_expression(struct interpret_state *state,
 			dest->origin2 = copy_expression(dest->origin);
 			break;
 
+		case Iop_InterleaveLO64x2:
+			dest->v1 = arg2.v1;
+			dest->v2 = arg1.v1;
+			dest->origin = arg2.origin;
+			dest->origin2 = arg1.origin;
+			break;
+
 		default:
 			VG_(tool_panic)((Char *)"bad binop");
 		}
@@ -1736,7 +1689,7 @@ eval_expression(struct interpret_state *state,
 		load_event((const void *)addr.v1,
 			   sizeofIRType(expr->Iex.Load.ty),
 			   dummy_buf,
-			   state->rsp.v1);
+			   state->gregs[REG_RSP].v1);
 		break;
 	}
 	case Iex_Mux0X: {
@@ -1916,9 +1869,9 @@ interpret_log_control_flow(VexGuestArchState *state)
 			break;
 		case Ist_IMark:
 			footstep_event(stmt->Ist.IMark.addr,
-				       istate->rdx.v1,
-				       istate->rcx.v1,
-				       istate->rax.v1);
+				       istate->gregs[REG_RDX].v1,
+				       istate->gregs[REG_RCX].v1,
+				       istate->gregs[REG_RAX].v1);
 			break;
 		case Ist_AbiHint:
 			break;
@@ -1978,7 +1931,7 @@ interpret_log_control_flow(VexGuestArchState *state)
 				    sizeofIRType(typeOfIRExpr(irsb->tyenv,
 							      stmt->Ist.Store.data)),
 				    &data.v1,
-				    istate->rsp.v1);
+				    istate->gregs[REG_RSP].v1);
 			break;
 		}
 
@@ -2839,22 +2792,9 @@ static void
 initialise_is_for_vex_state(struct interpret_state *is,
 			    const VexGuestArchState *state)
 {
-	init_register(&is->rax, state->guest_RAX);
-	init_register(&is->rcx, state->guest_RCX);
-	init_register(&is->rdx, state->guest_RDX);
-	init_register(&is->rbx, state->guest_RBX);
-	init_register(&is->rsp, state->guest_RSP);
-	init_register(&is->rbp, state->guest_RBP);
-	init_register(&is->rdi, state->guest_RDI);
-	init_register(&is->rsi, state->guest_RSI);
-	init_register(&is->r8, state->guest_R8);
-	init_register(&is->r9, state->guest_R9);
-	init_register(&is->r10, state->guest_R10);
-	init_register(&is->r11, state->guest_R11);
-	init_register(&is->r12, state->guest_R12);
-	init_register(&is->r13, state->guest_R13);
-	init_register(&is->r14, state->guest_R14);
-	init_register(&is->r15, state->guest_R15);
+	unsigned x;
+	for (x = 0; x < 16; x++)
+		init_register(&is->gregs[x], (&state->guest_RAX)[x]);
 	init_register(&is->rip, state->guest_RIP);
 
 	init_register(&is->cc_op, state->guest_CC_OP);
@@ -2865,8 +2805,9 @@ initialise_is_for_vex_state(struct interpret_state *is,
 	init_register(&is->d_flag, state->guest_DFLAG);
 	init_register(&is->fs_zero, state->guest_FS_ZERO);
 
-	init_register_xmm(&is->xmm0, &state->guest_XMM0);
-	init_register_xmm(&is->xmm1, &state->guest_XMM1);
+	for (x = 0; x < 16; x++)
+		init_register_xmm(&is->xmm[x],
+				  &state->guest_XMM0 + x);
 }
 
 static void
@@ -2905,22 +2846,9 @@ static void
 commit_is_to_vex_state(struct interpret_state *is,
 		       VexGuestArchState *state)
 {
-	state->guest_RAX = commit_register(&is->rax);
-	state->guest_RCX = commit_register(&is->rcx);
-	state->guest_RDX = commit_register(&is->rdx);
-	state->guest_RBX = commit_register(&is->rbx);
-	state->guest_RSP = commit_register(&is->rsp);
-	state->guest_RBP = commit_register(&is->rbp);
-	state->guest_RSI = commit_register(&is->rsi);
-	state->guest_RDI = commit_register(&is->rdi);
-	state->guest_R8 = commit_register(&is->r8);
-	state->guest_R9 = commit_register(&is->r9);
-	state->guest_R10 = commit_register(&is->r10);
-	state->guest_R11 = commit_register(&is->r11);
-	state->guest_R12 = commit_register(&is->r12);
-	state->guest_R13 = commit_register(&is->r13);
-	state->guest_R14 = commit_register(&is->r14);
-	state->guest_R15 = commit_register(&is->r15);
+	unsigned x;
+	for (x = 0; x < 16; x++)
+		(&state->guest_RAX)[x] = commit_register(&is->gregs[x]);
 	state->guest_RIP = commit_register(&is->rip);
 
 	state->guest_CC_OP = commit_register(&is->cc_op);
@@ -2931,8 +2859,9 @@ commit_is_to_vex_state(struct interpret_state *is,
 	state->guest_DFLAG = commit_register(&is->d_flag);
 	state->guest_FS_ZERO = commit_register(&is->fs_zero);
 
-	commit_register_xmm(&state->guest_XMM0, &is->xmm0);
-	commit_register_xmm(&state->guest_XMM1, &is->xmm1);
+	for (x = 0; x < 16; x++)
+		commit_register_xmm(&state->guest_XMM0 + x,
+				    &is->xmm[x]);
 }
 
 static void
