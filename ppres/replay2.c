@@ -414,12 +414,20 @@ copy_expression(const struct expression *e)
 }
 
 static struct expression *
-expr_reg(unsigned reg)
+_new_expression(unsigned code)
 {
 	struct expression *e;
 	e = VG_(malloc)("expression", sizeof(*e));
 	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_REG;
+	e->type = code;
+	return e;
+}
+
+static struct expression *
+expr_reg(unsigned reg)
+{
+	struct expression *e;
+	e = _new_expression(EXPR_REG);
 	e->u.reg = reg;
 	return e;
 }
@@ -428,9 +436,7 @@ static struct expression *
 expr_const(unsigned long c)
 {
 	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_CONST;
+	e = _new_expression(EXPR_CONST);
 	e->u.cnst = c;
 	return e;
 }
@@ -439,9 +445,7 @@ static struct expression *
 expr_mem(void *ptr, unsigned size)
 {
 	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_MEM;
+	e = _new_expression(EXPR_MEM);
 	e->u.mem.size = size;
 	e->u.mem.ptr = ptr;
 	return e;
@@ -456,9 +460,7 @@ static struct expression *
 expr_not(struct expression *e)
 {
 	struct expression *r;
-	r = VG_(malloc)("expression", sizeof(*r));
-	VG_(memset)(r, 0, sizeof(*r));
-	r->type = EXPR_NOT;
+	r = _new_expression(EXPR_NOT);
 	r->u.unop.e = e;
 	return r;
 }
@@ -466,11 +468,7 @@ expr_not(struct expression *e)
 static struct expression *
 expr_imported(void)
 {
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = EXPR_IMPORTED;
-	return e;
+	return _new_expression(EXPR_IMPORTED);
 }
 
 static Bool
@@ -582,9 +580,7 @@ expr_binop(struct expression *e1, struct expression *e2, unsigned op)
 		free_expression(e2);
 		return e1;
 	}
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = op;
+	e = _new_expression(op);
 	e->u.binop.arg1 = e1;
 	e->u.binop.arg2 = e2;
 	return e;
