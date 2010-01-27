@@ -1865,9 +1865,11 @@ interpret_log_control_flow(VexGuestArchState *state)
 		    irsb->tyenv->types_used);
 	for (stmt_nr = 0; stmt_nr < irsb->stmts_used; stmt_nr++) {
 		stmt = irsb->stmts[stmt_nr];
-		VG_(printf)("Interpreting record %d ", record_nr);
-		ppIRStmt(stmt);
-		VG_(printf)("\n");
+		if (record_nr > 200000) {
+			VG_(printf)("Interpreting record %d ", record_nr);
+			ppIRStmt(stmt);
+			VG_(printf)("\n");
+		}
 		switch (stmt->tag) {
 		case Ist_NoOp:
 			break;
