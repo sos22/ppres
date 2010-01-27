@@ -1018,8 +1018,15 @@ interpreter_do_load(struct abstract_interpret_value *aiv,
 		    unsigned size,
 		    unsigned long addr)
 {
-	free_expression(aiv->origin);
 	VG_(memcpy)(&aiv->v1, (const void *)addr, size);
+	if (size > 8) {
+		aiv->origin2 = find_origin_expression(head_interpret_mem_lookaside,
+						      size - 8,
+						      addr + 8);
+		size = 8;
+	} else {
+		aiv->origin2 = NULL;
+	}
 	aiv->origin = find_origin_expression(head_interpret_mem_lookaside,
 					     size,
 					     addr);
@@ -1676,15 +1683,12 @@ eval_expression(struct interpret_state *state,
 
 	case Iex_Load: {
 		struct abstract_interpret_value addr = {0};
-		struct abstract_interpret_value data = {0};
 		unsigned char dummy_buf[16];
 
 		eval_expression(state, &addr, expr->Iex.Load.addr);
-		interpreter_do_load(&data,
+		interpreter_do_load(dest,
 				    sizeofIRType(expr->Iex.Load.ty),
 				    addr.v1);
-		dest->v1 = data.v1;
-		ORIGIN(expr_combine(addr.origin, data.origin));
 
 		load_event((const void *)addr.v1,
 			   sizeofIRType(expr->Iex.Load.ty),
