@@ -351,42 +351,35 @@ sysres_to_eax(SysRes sr)
 		return sr_Res(sr);
 }
 
+static Bool
+op_binop(unsigned x)
+{
+	return x >= EXPR_BINOP_FIRST && x <= EXPR_BINOP_LAST;
+}
+
 static void
 free_expression(const struct expression *e)
 {
 	if (!e)
 		return;
-	switch (e->type) {
-	case EXPR_MUL:
-	case EXPR_MUL_HI:
-	case EXPR_SUB:
-	case EXPR_ADD:
-	case EXPR_AND:
-	case EXPR_XOR:
-	case EXPR_EQ:
-	case EXPR_LE:
-	case EXPR_BE:
-	case EXPR_B:
-	case EXPR_OR:
-	case EXPR_SHRL:
-	case EXPR_SHRA:
-	case EXPR_SHL:
-	case EXPR_COMBINE:
+	if (op_binop(e->type)) {
 		free_expression(e->u.binop.arg1);
 		free_expression(e->u.binop.arg2);
-		break;
-	case EXPR_MEM:
-		free_expression(e->u.mem.ptr);
-		break;
-	case EXPR_NOT:
-		free_expression(e->u.unop.e);
-		break;
-	case EXPR_REG:
-	case EXPR_CONST:
-	case EXPR_IMPORTED:
-		break;
-	default:
-		VG_(tool_panic)((Char *)"free bad expression");
+	} else {
+		switch (e->type) {
+		case EXPR_MEM:
+			free_expression(e->u.mem.ptr);
+			break;
+		case EXPR_NOT:
+			free_expression(e->u.unop.e);
+			break;
+		case EXPR_REG:
+		case EXPR_CONST:
+		case EXPR_IMPORTED:
+			break;
+		default:
+			VG_(tool_panic)((Char *)"free bad expression");
+		}
 	}
 	VG_(free)((void *)e);
 }
@@ -398,37 +391,24 @@ copy_expression(const struct expression *e)
 	work = VG_(malloc)("expression", sizeof(*work));
 	*work = *e;
 	work->type = e->type;
-	switch (work->type) {
-	case EXPR_REG:
-	case EXPR_CONST:
-	case EXPR_IMPORTED:
-		break;
-	case EXPR_MEM:
-		work->u.mem.ptr = copy_expression(e->u.mem.ptr);
-		break;
-	case EXPR_NOT:
-		work->u.unop.e = copy_expression(e->u.unop.e);
-		break;
-	case EXPR_SUB:
-	case EXPR_ADD:
-	case EXPR_AND:
-	case EXPR_XOR:
-	case EXPR_SHRL:
-	case EXPR_SHRA:
-	case EXPR_SHL:
-	case EXPR_COMBINE:
-	case EXPR_OR:
-	case EXPR_LE:
-	case EXPR_BE:
-	case EXPR_B:
-	case EXPR_EQ:
-	case EXPR_MUL:
-	case EXPR_MUL_HI:
+	if (op_binop(e->type)) {
 		work->u.binop.arg1 = copy_expression(e->u.binop.arg1);
 		work->u.binop.arg2 = copy_expression(e->u.binop.arg2);
-		break;
-	default:
-		VG_(tool_panic)((Char *)"Copy bad expression");
+	} else {
+		switch (work->type) {
+		case EXPR_REG:
+		case EXPR_CONST:
+		case EXPR_IMPORTED:
+			break;
+		case EXPR_MEM:
+			work->u.mem.ptr = copy_expression(e->u.mem.ptr);
+			break;
+		case EXPR_NOT:
+			work->u.unop.e = copy_expression(e->u.unop.e);
+			break;
+		default:
+			VG_(tool_panic)((Char *)"Copy bad expression");
+		}
 	}
 	return work;
 }
