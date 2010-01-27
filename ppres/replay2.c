@@ -1145,6 +1145,25 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			VG_(tool_panic)((Char *)"failed");
 		}
 		break;
+
+	case AMD64CondL:
+		switch (op.v1) {
+		case AMD64G_CC_OP_SUBL:
+			dest->v1 = (int)dep1.v1 < (int)dep2.v1;
+			dest->origin =
+				expr_b(expr_and(expr_add(copy_expression(dep1.origin),
+							 expr_const(0x80000000)),
+						 expr_const(0xffffffff)),
+					expr_and(expr_add(copy_expression(dep2.origin),
+							  expr_const(0x80000000)),
+						 expr_const(0xffffffff)));
+			break;
+		default:
+			VG_(printf)("Strange operation code %ld for lt\n", op.v1);
+			VG_(tool_panic)((Char *)"failed");
+		}
+		break;
+
 	case AMD64CondLE:
 		switch (op.v1) {
 		case AMD64G_CC_OP_SUBB:
@@ -1539,6 +1558,11 @@ eval_expression(struct interpret_state *state,
 		case Iop_CmpLE64S:
 			dest->v1 = (long)arg1.v1 <= (long)arg2.v1;
 			ORIGIN(expr_le(arg1.origin, arg2.origin));
+			break;
+		case Iop_CmpLT64S:
+			dest->v1 = (long)arg1.v1 <= (long)arg2.v1;
+			ORIGIN(expr_and(expr_le(arg1.origin, arg2.origin),
+					expr_not(expr_eq(arg1.origin, arg2.origin))));
 			break;
 		case Iop_CmpLT64U:
 			dest->v1 = arg1.v1 < arg2.v1;
