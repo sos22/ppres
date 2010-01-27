@@ -1116,6 +1116,9 @@ do_ccall_calculate_condition(struct interpret_state *state,
 	switch (condcode.v1 & ~1) {
 	case AMD64CondZ:
 		switch (op.v1) {
+		case AMD64G_CC_OP_LOGICB:
+		case AMD64G_CC_OP_LOGICW:
+		case AMD64G_CC_OP_LOGICL:
 		case AMD64G_CC_OP_LOGICQ:
 			dest->v1 = dep1.v1 == 0;
 			free_expression(dest->origin);
