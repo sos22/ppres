@@ -138,7 +138,8 @@ close_logfile(struct record_emitter *re)
 
 
 static void
-record_instr(Word addr, Word rdx, Word rcx, Word rax)
+record_instr(Word addr, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
+	     unsigned long xmm0a)
 {
 	struct footstep_record *fr;
 	if (client_in_monitor())
@@ -148,6 +149,8 @@ record_instr(Word addr, Word rdx, Word rcx, Word rax)
 	fr->rdx = rdx;
 	fr->rcx = rcx;
 	fr->rax = rax;
+	fr->xmm3a = xmm3a;
+	fr->xmm0a = xmm0a;
 }
 
 static void

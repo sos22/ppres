@@ -13,6 +13,8 @@ struct footstep_record {
 	Word rdx;
 	Word rcx;
 	Word rax;
+	unsigned long xmm3a;
+	unsigned long xmm0a;
 };
 
 struct syscall_record {

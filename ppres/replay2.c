@@ -218,6 +218,17 @@ trace_address;
 static struct interpret_mem_lookaside *
 head_interpret_mem_lookaside;
 
+static void footstep_event(Addr rip, Word rdx, Word rcx, Word rax,
+			   unsigned long xmm3a, unsigned long xmm0a);
+static void store_event(void *ptr, unsigned size, const void *written_bytes,
+			unsigned long rsp);
+static IRSB *instrument_func(VgCallbackClosure *closure,
+			     IRSB *sb_in,
+			     VexGuestLayout *layout,
+			     VexGuestExtents *vge,
+			     IRType gWordTy,
+			     IRType hWordTy);
+
 static void
 my_mprotect(void *base, size_t len, int prot)
 {
@@ -497,8 +508,6 @@ gc_expressions(void)
 	if ((++nr_garbage_collections) % 16)
 		return;
 
-	VG_(printf)("Doing garbage collect.\n");
-
 	/* Clear the mark flag */
 	for (a = head_expr_arena; a; a = a->next) {
 		tl_assert(a->magic == ARENA_MAGIC);
@@ -506,14 +515,10 @@ gc_expressions(void)
 			a->exprs[x].in_use_ptr &= ~2;
 	}
 
-	VG_(printf)("Done mark phase.\n");
-
 	/* Sweep from all roots. */
 	for (rt = head_thread; rt; rt = rt->next)
 		gc_explore_interpret_state(&rt->interpret_state);
 	gc_explore_mem_lookaside();
-
-	VG_(printf)("Done sweep phase.\n");
 
 	/* Go back and rebuild the free lists. */
 	head_free_expression = NULL;
@@ -551,8 +556,6 @@ gc_expressions(void)
 			head_free_expression = head;
 		}
 	}
-
-	VG_(printf)("Done free phase.\n");
 }
 
 static struct expression_arena *
@@ -930,6 +933,7 @@ get_aiv_for_offset(struct interpret_state *state, Int offset)
 	} else if (offset >= 200 && (offset - 200) < 32 * 8) {
 		offset -= 200;
 		tl_assert(!(offset % 8));
+		VG_(printf)("Fetch xmm ~~%d\n", offset / 8);
 		return &state->xmm[offset / 8];
 	}
 
@@ -1027,6 +1031,8 @@ interpreter_do_load(struct expression_result *er,
 	er->lo.origin = find_origin_expression(head_interpret_mem_lookaside,
 					       size,
 					       addr);
+	VG_(printf)("Load %d bytes from %lx -> %lx:%lx\n", size, addr,
+		    er->lo.v, er->hi.v);
 }
 
 static void
@@ -1342,7 +1348,7 @@ eval_expression(struct interpret_state *state,
 			tl_assert(!sub_word_offset);
 			copy_aiv(&dest->lo, src);
 			copy_aiv(&dest->hi,
-				 get_aiv_for_offset(state, expr->Iex.Get.offset));
+				 get_aiv_for_offset(state, expr->Iex.Get.offset + 8));
 			break;
 		case Ity_I32:
 			tl_assert(!(sub_word_offset % 4));
@@ -1433,6 +1439,15 @@ eval_expression(struct interpret_state *state,
 			dest->lo.v = arg1.lo.v + arg2.lo.v;
 			ORIGIN(expr_add(arg1.lo.origin, arg2.lo.origin));
 			break;
+		case Iop_Add64x2:
+			dest->lo.v = arg1.lo.v + arg2.lo.v;
+			dest->hi.v = arg1.hi.v + arg2.hi.v;
+			dest->lo.origin = expr_add(arg1.lo.origin, arg2.lo.origin);
+			dest->hi.origin = expr_add(arg1.hi.origin, arg2.hi.origin);
+			VG_(printf)("Add64x %lx:%lx + %lx:%lx -> %lx:%lx\n",
+				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
+				    dest->lo.v, dest->hi.v);
+			break;
 		case Iop_Add32:
 			dest->lo.v = (arg1.lo.v + arg2.lo.v) & 0xffffffff;
 			ORIGIN(expr_and(expr_add(arg1.lo.origin, arg2.lo.origin),
@@ -1511,6 +1526,8 @@ eval_expression(struct interpret_state *state,
 
 		case Iop_MullU32: {
 			dest->lo.v = arg1.lo.v * arg2.lo.v;
+			VG_(printf)("%lx:%lx * %lx:%lx -> %lx\n", arg1.lo.v,
+				    arg1.hi.v, arg2.lo.v, arg2.hi.v, dest->lo.v);
 			dest->lo.origin = expr_mul(arg1.lo.origin, arg2.lo.origin);
 			break;
 		}
@@ -1572,6 +1589,70 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.lo.v;
 			dest->lo.origin = arg2.lo.origin;
 			dest->hi.origin = arg1.lo.origin;
+			break;
+
+		case Iop_InterleaveHI64x2:
+			dest->lo.v = arg2.hi.v;
+			dest->hi.v = arg1.hi.v;
+			dest->lo.origin = arg2.hi.origin;
+			dest->hi.origin = arg1.hi.origin;
+			VG_(printf)("Interleave hi 64x2 %lx %lx -> %lx:%lx\n",
+				    arg2.hi.v, arg1.hi.v, dest->hi.v, dest->lo.v);
+			break;
+
+		case Iop_InterleaveLO32x4:
+			dest->lo.v = (arg2.lo.v & 0xffffffff) | (arg1.lo.v << 32);
+			dest->hi.v = (arg1.lo.v & 0xffffffff) | (arg2.lo.v << 32);
+			dest->lo.origin = expr_or(expr_and(arg2.lo.origin,
+							   expr_const(0xffffffff)),
+						  expr_shl(arg1.lo.origin,
+							   expr_const(32)));
+			dest->hi.origin = expr_or(expr_and(arg1.lo.origin,
+							   expr_const(0xffffffff)),
+						  expr_shl(arg2.lo.origin,
+							   expr_const(32)));
+			break;
+
+		case Iop_InterleaveHI32x4:
+			dest->lo.v = (arg2.hi.v & 0xffffffff) | (arg1.hi.v << 32);
+			dest->hi.v = (arg1.hi.v & 0xffffffff) | (arg2.hi.v << 32);
+			dest->lo.origin = expr_or(expr_and(arg2.hi.origin,
+							   expr_const(0xffffffff)),
+						  expr_shl(arg1.hi.origin,
+							   expr_const(32)));
+			dest->hi.origin = expr_or(expr_and(arg1.hi.origin,
+							   expr_const(0xffffffff)),
+						  expr_shl(arg2.hi.origin,
+							   expr_const(32)));
+			break;
+
+		case Iop_ShrN64x2:
+			dest->lo.v = arg1.lo.v >> arg2.lo.v;
+			dest->hi.v = arg1.hi.v >> arg2.lo.v;
+			dest->lo.origin = expr_shrl(arg1.lo.origin, arg2.lo.origin);
+			dest->hi.origin = expr_shrl(arg1.hi.origin, arg2.lo.origin);
+			break;
+
+		case Iop_ShlN64x2:
+			dest->lo.v = arg1.lo.v << arg2.lo.v;
+			dest->hi.v = arg1.hi.v << arg2.lo.v;
+			dest->lo.origin = expr_shl(arg1.lo.origin, arg2.lo.origin);
+			dest->hi.origin = expr_shl(arg1.hi.origin, arg2.lo.origin);
+			VG_(printf)("shln64x2 %lx:%lx %lx:%lx -> %lx:%lx\n",
+				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
+				    dest->lo.v, dest->hi.v);
+			break;
+
+		case Iop_CmpGT32Sx4:
+			dest->lo.v = ((int)arg1.lo.v > (int)arg2.lo.v) |
+				((unsigned long)((int)(arg1.lo.v >> 32) > (int)(arg2.lo.v >> 32)) << 32);
+			dest->hi.v = ((int)arg1.hi.v > (int)arg2.hi.v) |
+				((unsigned long)((int)(arg1.hi.v >> 32) > (int)(arg2.hi.v >> 32)) << 32);
+			dest->lo.origin = expr_combine(arg1.lo.origin, arg2.lo.origin);
+			dest->hi.origin = expr_combine(arg1.hi.origin, arg2.hi.origin);
+			VG_(printf)("%lx:%lx > %lx:%lx -> %lx:%lx\n",
+				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
+				    dest->lo.v, dest->hi.v);
 			break;
 
 		default:
@@ -1660,22 +1741,6 @@ eval_expression(struct interpret_state *state,
 		break;
 	}
 
-	case Iex_Load: {
-		struct expression_result addr;
-		unsigned char dummy_buf[16];
-
-		eval_expression(state, &addr, expr->Iex.Load.addr);
-		tl_assert(!addr.hi.origin);
-		interpreter_do_load(dest,
-				    sizeofIRType(expr->Iex.Load.ty),
-				    addr.lo.v);
-
-		load_event((const void *)addr.lo.v,
-			   sizeofIRType(expr->Iex.Load.ty),
-			   dummy_buf,
-			   state->gregs[REG_RSP].v);
-		break;
-	}
 	case Iex_Mux0X: {
 		struct expression_result cond;
 		struct expression_result res0;
@@ -1715,6 +1780,46 @@ eval_expression(struct interpret_state *state,
 static void commit_interpreter_state(void);
 static void initialise_interpreter_state(void);
 
+static struct expression_result
+do_helper_load(unsigned size,
+	       struct abstract_interpret_value addr,
+	       struct abstract_interpret_value rsp)
+{
+	struct expression_result res;
+	unsigned char dummy_buf[16];
+
+	interpreter_do_load(&res, size, addr.v);
+
+	load_event((const void *)addr.v, size, dummy_buf, rsp.v);
+
+	return res;
+}
+
+static void
+do_helper_store(unsigned size,
+		struct abstract_interpret_value addr,
+		struct expression_result data,
+		struct abstract_interpret_value rsp)
+{
+	unsigned long buf[2];
+
+	if (size == 16) {
+		interpret_create_mem_lookaside(addr.v, 8, data.lo);
+		interpret_create_mem_lookaside(addr.v+8, 8, data.hi);
+	} else {
+		interpret_create_mem_lookaside(addr.v, size, data.lo);
+	}
+
+	buf[0] = data.lo.v;
+	buf[1] = data.hi.v;
+	store_event((void *)addr.v,
+		    size,
+		    buf,
+		    rsp.v);
+}
+
+#define strcmp(x, y) VG_(strcmp)((Char *)(x), (Char *)y)
+
 /* XXX We don't track dependencies through dirty calls at all.  Oh
  * well. */
 static void
@@ -1724,8 +1829,7 @@ do_dirty_call(struct interpret_state *is,
 	      IRDirty *details)
 {
 	struct expression_result guard;
-	struct expression_result arg;
-	unsigned long args[6];
+	struct expression_result args[6];
 	unsigned x;
 	unsigned long res;
 
@@ -1737,51 +1841,83 @@ do_dirty_call(struct interpret_state *is,
 	}
 	for (x = 0; details->args[x]; x++) {
 		tl_assert(x < 6);
-		eval_expression(is, &arg, details->args[x]);
-		args[x] = arg.lo.v;
+		eval_expression(is, &args[x], details->args[x]);
 	}
 	tl_assert(!details->cee->regparms);
 
-	commit_interpreter_state();
-
-	if (details->needsBBP) {
-		res = ((unsigned long (*)(VexGuestArchState *,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long))(details->cee->addr))
-			(state, args[0], args[1], args[2], args[3],
-			 args[4], args[5]);
+	if (!strcmp(details->cee->name, "footstep_event")) {
+		footstep_event(args[0].lo.v,
+			       args[1].lo.v,
+			       args[2].lo.v,
+			       args[3].lo.v,
+			       args[4].lo.v,
+			       args[5].lo.v);
+	} else if (!strcmp(details->cee->name, "helper_load_8")) {
+		is->temporaries[details->tmp] =
+			do_helper_load(1, args[0].lo, args[1].lo);
+	} else if (!strcmp(details->cee->name, "helper_load_16")) {
+		is->temporaries[details->tmp] =
+			do_helper_load(2, args[0].lo, args[1].lo);
+	} else if (!strcmp(details->cee->name, "helper_load_32")) {
+		is->temporaries[details->tmp] =
+			do_helper_load(4, args[0].lo, args[1].lo);
+	} else if (!strcmp(details->cee->name, "helper_load_64")) {
+		is->temporaries[details->tmp] =
+			do_helper_load(8, args[0].lo, args[1].lo);
+	} else if (!strcmp(details->cee->name, "helper_load_128")) {
+		is->temporaries[details->tmp] =
+			do_helper_load(16, args[0].lo, args[1].lo);
+	} else if (!strcmp(details->cee->name, "helper_store_8")) {
+		do_helper_store(1, args[0].lo, args[1], args[2].lo);
+	} else if (!strcmp(details->cee->name, "helper_store_16")) {
+		do_helper_store(2, args[0].lo, args[1], args[2].lo);
+	} else if (!strcmp(details->cee->name, "helper_store_32")) {
+		do_helper_store(4, args[0].lo, args[1], args[2].lo);
+	} else if (!strcmp(details->cee->name, "helper_store_64")) {
+		do_helper_store(8, args[0].lo, args[1], args[2].lo);
+	} else if (!strcmp(details->cee->name, "helper_store_128")) {
+		args[1].hi = args[2].lo;
+		do_helper_store(16, args[0].lo, args[1], args[3].lo);
 	} else {
-		res = ((unsigned long (*)(unsigned long,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long,
-					  unsigned long))(details->cee->addr))
-			(args[0], args[1], args[2], args[3],
-			 args[4], args[5]);
-	}
+		VG_(printf)("Unknown dirty call %s\n", details->cee->name);
+		commit_interpreter_state();
 
-	initialise_interpreter_state();
+		if (details->needsBBP) {
+			res = ((unsigned long (*)(VexGuestArchState *,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long))(details->cee->addr))
+				(state, args[0].lo.v, args[1].lo.v, args[2].lo.v, args[3].lo.v,
+				 args[4].lo.v, args[5].lo.v);
+		} else {
+			res = ((unsigned long (*)(unsigned long,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long,
+						  unsigned long))(details->cee->addr))
+				(args[0].lo.v, args[1].lo.v, args[2].lo.v, args[3].lo.v,
+				 args[4].lo.v, args[5].lo.v);
+		}
 
-	if (details->tmp != IRTemp_INVALID) {
-		is->temporaries[details->tmp].lo.v = res;
-		is->temporaries[details->tmp].lo.origin =
-			expr_imported();
-		is->temporaries[details->tmp].hi.v = 0;
-		is->temporaries[details->tmp].hi.origin = NULL;
+		initialise_interpreter_state();
+
+		if (details->tmp != IRTemp_INVALID) {
+			is->temporaries[details->tmp].lo.v = res;
+			is->temporaries[details->tmp].lo.origin =
+				expr_imported();
+			is->temporaries[details->tmp].hi.v = 0;
+			is->temporaries[details->tmp].hi.origin = NULL;
+		}
 	}
 }
 
 static void initialise_is_for_vex_state(struct interpret_state *is,
 					const VexGuestArchState *state);
 static void syscall_event(VexGuestAMD64State *state);
-static void footstep_event(Addr rip, Word rdx, Word rcx, Word rax);
-static void store_event(void *ptr, unsigned size, const void *written_bytes,
-			unsigned long rsp);
 
 static UInt
 interpret_log_control_flow(VexGuestArchState *state)
@@ -1805,7 +1941,6 @@ interpret_log_control_flow(VexGuestArchState *state)
 		initialise_is_for_vex_state(istate, state);
 		addr = state->guest_RIP;
 	}
-	VG_(printf)("Interpreting from rip %llx\n", addr);
 
 	/* This is all ripped from VG_(translate) and
 	 * LibVEX_Translate(). */
@@ -1839,6 +1974,13 @@ interpret_log_control_flow(VexGuestArchState *state)
 			    guest_amd64_state_requires_precise_mem_exns,
 			    addr );
 
+	irsb = instrument_func(NULL, irsb, &amd64guest_layout, &vge,
+			       Ity_I64, Ity_I64);
+
+	irsb = do_iropt_BB (irsb, guest_amd64_spechelper,
+			    guest_amd64_state_requires_precise_mem_exns,
+			    addr );
+
 	tl_assert(istate->temporaries == NULL);
 	istate->temporaries = VG_(malloc)("interpreter temporaries",
 					  sizeof(istate->temporaries[0]) *
@@ -1856,10 +1998,6 @@ interpret_log_control_flow(VexGuestArchState *state)
 		case Ist_NoOp:
 			break;
 		case Ist_IMark:
-			footstep_event(stmt->Ist.IMark.addr,
-				       istate->gregs[REG_RDX].v,
-				       istate->gregs[REG_RCX].v,
-				       istate->gregs[REG_RAX].v);
 			break;
 		case Ist_AbiHint:
 			break;
@@ -1894,60 +2032,21 @@ interpret_log_control_flow(VexGuestArchState *state)
 
 			case Ity_I128:
 			case Ity_V128:
+				VG_(printf)("Put %lx:%lx to %x\n",
+					    data.lo.v, data.hi.v, stmt->Ist.Put.offset);
 				tl_assert(byte_offset == 0);
+				VG_(printf)("dest %p xmm2 %p\n",
+					    dest, &istate->xmm[4]);
 				*dest = data.lo;
 				*get_aiv_for_offset(istate,
 						    stmt->Ist.Put.offset + 8) =
 					data.hi;
+				VG_(printf)("xmm2a %lx, xmm2b %lx\n",
+					    istate->xmm[4].v, istate->xmm[5].v);
 				break;
 			default:
 				VG_(tool_panic)((Char *)"put to strange-sized location");
 			}
-			break;
-		}
-		case Ist_Store: {
-			/* In principle, we should probably make
-			   everything depend on addr on at this point,
-			   because the write could clobber almost
-			   anything.  We don't because that's not
-			   usually useful, and it tends to hide lots
-			   of more interesting dependencies. */
-			struct expression_result addr;
-			struct expression_result data;
-			unsigned long buf[2];
-
-			eval_expression(istate, &addr, stmt->Ist.Store.addr);
-			eval_expression(istate, &data, stmt->Ist.Store.data);
-			tl_assert(addr.hi.origin == NULL);
-			switch (typeOfIRExpr(irsb->tyenv, stmt->Ist.Store.data)) {
-			case Ity_I8:
-				interpret_create_mem_lookaside(addr.lo.v, 1, data.lo);
-				break;
-			case Ity_I16:
-				interpret_create_mem_lookaside(addr.lo.v, 2, data.lo);
-				break;
-			case Ity_I32:
-				interpret_create_mem_lookaside(addr.lo.v, 4, data.lo);
-				break;
-			case Ity_I64:
-				interpret_create_mem_lookaside(addr.lo.v, 8, data.lo);
-				break;
-			case Ity_I128:
-			case Ity_V128:
-				interpret_create_mem_lookaside(addr.lo.v, 8, data.lo);
-				interpret_create_mem_lookaside(addr.lo.v + 8, 8, data.hi);
-				break;
-			default:
-				VG_(tool_panic)((Char *)"foo");
-			}
-
-			buf[0] = data.lo.v;
-			buf[1] = data.hi.v;
-			store_event((void *)addr.lo.v,
-				    sizeofIRType(typeOfIRExpr(irsb->tyenv,
-							      stmt->Ist.Store.data)),
-				    buf,
-				    istate->gregs[REG_RSP].v);
 			break;
 		}
 
@@ -1997,16 +2096,13 @@ interpret_log_control_flow(VexGuestArchState *state)
 	}
 
 finished_block:
-	VG_(printf)("Returning from interpreter.\n");
 	for (x = 0; x < irsb->tyenv->types_used; x++) {
 		free_expression(istate->temporaries[x].lo.origin);
 	}
 	VG_(free)(istate->temporaries);
 	istate->temporaries = NULL;
 
-	VG_(printf)("running garbage collection\n");
 	gc_expressions();
-	VG_(printf)("Done garbage collect\n");
 
 	state->guest_RIP = istate->rip.v;
 
@@ -2077,12 +2173,14 @@ do {                                                              \
 /* The various events.  These are the bits which run in client
    context. */
 static void
-footstep_event(Addr rip, Word rdx, Word rcx, Word rax)
+footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
+	       unsigned long xmm0a)
 {
 	if (!current_thread->in_monitor) {
 		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
 		if (use_footsteps)
-			event(EVENT_footstep, rip, rdx, rcx, rax);
+			event(EVENT_footstep, rip, rdx, rcx, rax, xmm3a,
+			      xmm0a);
 	}
 }
 
@@ -2315,6 +2413,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 
 	VG_(printf)("FAILED %s\n", msg);
 
+	while (1) ;
+
 	send_error();
 	while (1) {
 		get_control_command(&cmd);
@@ -2385,6 +2485,12 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_data(expr_reg(REG_RAX),
 					     expr_const(fr->rax)),
 				 fr->rax, args[3]);
+		if (args[4] != fr->xmm3a)
+			VG_(printf)("XMM3 divergence: %lx != %lx\n",
+				    args[4], fr->xmm3a);
+		if (args[5] != fr->xmm0a)
+			VG_(printf)("XMM0 divergence: %lx != %lx\n",
+				    args[5], fr->xmm0a);
 		return;
 	}
 	case EVENT_syscall: {
