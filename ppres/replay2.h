@@ -59,9 +59,11 @@ struct response_string {
 #define REASON_DATA 1
 #define REASON_OTHER 2
 
+/* These must be in the same order as the fields in VEX's guest state
+   structure. */
 #define REG_RAX 0
-#define REG_RDX 1
-#define REG_RCX 2
+#define REG_RCX 1
+#define REG_RDX 2
 #define REG_RBX 3
 #define REG_RSP 4
 #define REG_RBP 5
