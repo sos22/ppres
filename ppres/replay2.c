@@ -79,14 +79,15 @@ struct client_event_record {
 struct abstract_interpret_value {
 	unsigned long v1;
 	unsigned long v2;
-	struct expression *origin;
-	struct expression *origin2;
+	const struct expression *origin;
+	const struct expression *origin2;
 };
 
 struct interpret_state {
 	struct abstract_interpret_value *temporaries;
 	/* Update commit_is_to_vex_state, initialise_is_for_vex_state,
-	   and get_aiv_for_offset when changing these. */
+	   get_aiv_for_offset, and gc_explore_interpret_state when
+	   changing these. */
 	struct abstract_interpret_value rax;
 	struct abstract_interpret_value rcx;
 	struct abstract_interpret_value rdx;
@@ -168,19 +169,19 @@ struct expression {
 			unsigned size;
 		} mem;
 		struct {
-			struct expression *arg1;
-			struct expression *arg2;
+			const struct expression *arg1;
+			const struct expression *arg2;
 		} binop;
 		struct {
-			struct expression *e;
+			const struct expression *e;
 		} unop;
 	} u;
 };
 
 struct failure_reason {
 	unsigned reason;
-	struct expression *arg1;
-	struct expression *arg2;
+	const struct expression *arg1;
+	const struct expression *arg2;
 };
 
 struct interpret_mem_lookaside {
@@ -360,70 +361,221 @@ op_binop(unsigned x)
 static void
 free_expression(const struct expression *e)
 {
-	if (!e)
-		return;
-	if (op_binop(e->type)) {
-		free_expression(e->u.binop.arg1);
-		free_expression(e->u.binop.arg2);
-	} else {
-		switch (e->type) {
-		case EXPR_MEM:
-			free_expression(e->u.mem.ptr);
-			break;
-		case EXPR_NOT:
-			free_expression(e->u.unop.e);
-			break;
-		case EXPR_REG:
-		case EXPR_CONST:
-		case EXPR_IMPORTED:
-			break;
-		default:
-			VG_(tool_panic)((Char *)"free bad expression");
-		}
-	}
-	VG_(free)((void *)e);
 }
 
-static struct expression *
+static const struct expression *
 copy_expression(const struct expression *e)
 {
-	struct expression *work;
-	work = VG_(malloc)("expression", sizeof(*work));
-	*work = *e;
-	work->type = e->type;
+	return e;
+}
+
+struct maybe_expression {
+	unsigned long in_use_ptr; /* Bottom bit is the in_use flag,
+				     ptr is a pointer which can be
+				     used by the garbage collector. */
+	union {
+		struct maybe_expression *next_free;
+		struct expression expr;
+	} u;
+};
+
+#define EXPRESSIONS_PER_ARENA 4096
+struct expression_arena {
+	struct expression_arena *next, *prev;
+	struct maybe_expression exprs[EXPRESSIONS_PER_ARENA];
+};
+
+static struct expression_arena *
+head_expr_arena;
+
+static struct maybe_expression *
+head_free_expression;
+
+static Bool
+gc_discover_expression(const struct expression *e)
+{
+	struct maybe_expression *me =
+		(struct maybe_expression *)((unsigned long *)e - 1);
+	Bool res;
+	tl_assert(e == &me->u.expr);
+	res = me->in_use_ptr & 1;
+	me->in_use_ptr = 1;
+	return res;
+}
+
+/* XXX TODO: use the pointer flipping trick to reduce stack usage. */
+static void
+gc_explore_expression(const struct expression *e)
+{
+	if (!e)
+		return;
+
+	if (gc_discover_expression(e))
+		return;
+
 	if (op_binop(e->type)) {
-		work->u.binop.arg1 = copy_expression(e->u.binop.arg1);
-		work->u.binop.arg2 = copy_expression(e->u.binop.arg2);
+		gc_explore_expression(e->u.binop.arg1);
+		gc_explore_expression(e->u.binop.arg2);
+		return;
 	} else {
-		switch (work->type) {
-		case EXPR_REG:
+		switch (e->type) {
 		case EXPR_CONST:
+		case EXPR_REG:
 		case EXPR_IMPORTED:
-			break;
 		case EXPR_MEM:
-			work->u.mem.ptr = copy_expression(e->u.mem.ptr);
-			break;
+			return;
 		case EXPR_NOT:
-			work->u.unop.e = copy_expression(e->u.unop.e);
-			break;
+			gc_explore_expression(e->u.unop.e);
+			return;
 		default:
-			VG_(tool_panic)((Char *)"Copy bad expression");
+			VG_(tool_panic)((Char *)"gc exploration hit bad expression type");
 		}
 	}
+}
+
+static void
+gc_explore_aiv(const struct abstract_interpret_value *aiv)
+{
+	gc_explore_expression(aiv->origin);
+	gc_explore_expression(aiv->origin2);
+}
+
+static void
+gc_explore_interpret_state(const struct interpret_state *is)
+{
+	tl_assert(is->temporaries == NULL);
+	gc_explore_aiv(&is->rax);
+	gc_explore_aiv(&is->rcx);
+	gc_explore_aiv(&is->rdx);
+	gc_explore_aiv(&is->rbx);
+	gc_explore_aiv(&is->rsp);
+	gc_explore_aiv(&is->rbp);
+	gc_explore_aiv(&is->rsi);
+	gc_explore_aiv(&is->rdi);
+	gc_explore_aiv(&is->r8);
+	gc_explore_aiv(&is->r9);
+	gc_explore_aiv(&is->r10);
+	gc_explore_aiv(&is->r11);
+	gc_explore_aiv(&is->r12);
+	gc_explore_aiv(&is->r13);
+	gc_explore_aiv(&is->r14);
+	gc_explore_aiv(&is->r15);
+	gc_explore_aiv(&is->rip);
+
+	gc_explore_aiv(&is->cc_op);
+	gc_explore_aiv(&is->cc_dep1);
+	gc_explore_aiv(&is->cc_dep2);
+	gc_explore_aiv(&is->cc_ndep);
+	gc_explore_aiv(&is->d_flag);
+	gc_explore_aiv(&is->fs_zero);
+	gc_explore_aiv(&is->xmm0);
+	gc_explore_aiv(&is->xmm1);
+}
+
+static void
+gc_explore_mem_lookaside(void)
+{
+	struct interpret_mem_lookaside *iml;
+	for (iml = head_interpret_mem_lookaside; iml; iml = iml->next)
+		gc_explore_aiv(&iml->aiv);
+}
+
+static void
+gc_expressions(void)
+{
+	static unsigned nr_garbage_collections;
+	struct expression_arena *a, *next;
+	struct replay_thread *rt;
+	int x;
+	Bool arena_free;
+
+	if ((++nr_garbage_collections) % 16)
+		return;
+
+	VG_(printf)("Doing garbage collect.\n");
+
+	/* Mark things as not in use. */
+	for (a = head_expr_arena; a; a = a->next) {
+		for (x = 0; x < EXPRESSIONS_PER_ARENA; x++)
+			a->exprs[x].in_use_ptr = 0;
+	}
+
+	VG_(printf)("Done mark phase.\n");
+
+	/* Sweep from all roots. */
+	for (rt = head_thread; rt; rt = rt->next)
+		gc_explore_interpret_state(&rt->interpret_state);
+	gc_explore_mem_lookaside();
+
+	VG_(printf)("Done sweep phase.\n");
+
+	/* Go back and rebuild the free lists. */
+	head_free_expression = NULL;
+	for (a = head_expr_arena; a; a = next) {
+		arena_free = True;
+		for (x = EXPRESSIONS_PER_ARENA - 1; x >= 0; x--) {
+			if (!(a->exprs[x].in_use_ptr & 1)) {
+				a->exprs[x].u.next_free = head_free_expression;
+				head_free_expression = &a->exprs[x];
+			} else {
+				arena_free = False;
+			}
+		}
+		next = a->next;
+		if (arena_free) {
+			VG_(printf)("Release expression arena.\n");
+			a->prev->next = a->next;
+			a->next->prev = a->prev;
+			if (a == head_expr_arena)
+				head_expr_arena = a->next;
+			VG_(free)(a);
+		}
+	}
+
+	VG_(printf)("Done free phase.\n");
+}
+
+static struct expression_arena *
+_new_expression_arena(void)
+{
+	struct expression_arena *work;
+	unsigned x;
+
+	work = VG_(malloc)("Expression arena", sizeof(*work));
+	for (x = 0; x < EXPRESSIONS_PER_ARENA; x++) {
+		work->exprs[x].in_use_ptr = 0;
+		work->exprs[x].u.next_free = &work->exprs[x+1];
+	}
+	work->exprs[x-1].u.next_free = head_free_expression;
+	head_free_expression = &work->exprs[0];
+	work->prev = NULL;
+	work->next = head_expr_arena;
+	if (head_expr_arena)
+		head_expr_arena->prev = work;
+	head_expr_arena = work;
 	return work;
 }
 
 static struct expression *
 _new_expression(unsigned code)
 {
-	struct expression *e;
-	e = VG_(malloc)("expression", sizeof(*e));
-	VG_(memset)(e, 0, sizeof(*e));
-	e->type = code;
-	return e;
+	struct maybe_expression *e;
+
+	if (!head_free_expression)
+		_new_expression_arena();
+	tl_assert(head_free_expression);
+	e = head_free_expression;
+
+	tl_assert(!(e->in_use_ptr & 1));
+	head_free_expression = e->u.next_free;
+
+	e->in_use_ptr = 1;
+	VG_(memset)(&e->u.expr, 0, sizeof(e->u.expr));
+	e->u.expr.type = code;
+	return &e->u.expr;
 }
 
-static struct expression *
+static const struct expression *
 expr_reg(unsigned reg)
 {
 	struct expression *e;
@@ -432,7 +584,7 @@ expr_reg(unsigned reg)
 	return e;
 }
 
-static struct expression *
+static const struct expression *
 expr_const(unsigned long c)
 {
 	struct expression *e;
@@ -441,7 +593,7 @@ expr_const(unsigned long c)
 	return e;
 }
 
-static struct expression *
+static const struct expression *
 expr_mem(void *ptr, unsigned size)
 {
 	struct expression *e;
@@ -456,8 +608,8 @@ expr_mem(void *ptr, unsigned size)
 #define expr_mem4(p) expr_mem((p), 4)
 #define expr_mem8(p) expr_mem((p), 8)
 
-static struct expression *
-expr_not(struct expression *e)
+static const struct expression *
+expr_not(const struct expression *e)
 {
 	struct expression *r;
 	r = _new_expression(EXPR_NOT);
@@ -465,7 +617,7 @@ expr_not(struct expression *e)
 	return r;
 }
 
-static struct expression *
+static const struct expression *
 expr_imported(void)
 {
 	return _new_expression(EXPR_IMPORTED);
@@ -521,26 +673,27 @@ binop_associates(unsigned op)
 	}
 }
 
-static struct expression *
-expr_binop(struct expression *e1, struct expression *e2, unsigned op)
+static const struct expression *
+expr_binop(const struct expression *e1, const struct expression *e2, unsigned op)
 {
 	struct expression *e;
+	const struct expression *ec;
 
 	if (e1->type == EXPR_CONST && e2->type == EXPR_CONST) {
 		/* Try to do some constant folding.  We only do this
 		   for a few special cases. */
-		e = NULL;
+		ec = NULL;
 		switch (op) {
 		case EXPR_ADD:
-			e = expr_const(e1->u.cnst + e2->u.cnst);
+			ec = expr_const(e1->u.cnst + e2->u.cnst);
 			break;
 		default:
 			break;
 		}
-		if (e) {
+		if (ec) {
 			free_expression(e1);
 			free_expression(e2);
-			return e;
+			return ec;
 		}
 	}
 
@@ -549,9 +702,9 @@ expr_binop(struct expression *e1, struct expression *e2, unsigned op)
 	   than the thing on the right. */
 	if (binop_commutes(op) &&
 	    e1->type > e2->type) {
-		e = e1;
+		ec = e1;
 		e1 = e2;
-		e2 = e;
+		e2 = ec;
 	}
 	/* Try to get things with lower codes to the bottom-left of
 	   the expression tree (assuming the operation associates).
@@ -563,9 +716,7 @@ expr_binop(struct expression *e1, struct expression *e2, unsigned op)
 	    e1->type < op &&
 	    e2->type == op) {
 		e1 = expr_binop(e1, e2->u.binop.arg1, op);
-		e = e2;
 		e2 = e2->u.binop.arg2;
-		VG_(free)(e);
 	}
 
 	if (binop_lident_0(op) &&
@@ -587,8 +738,9 @@ expr_binop(struct expression *e1, struct expression *e2, unsigned op)
 }
 
 #define mk_expr(name1, name2)						\
-	static inline struct expression *				\
-	expr_ ## name1 (struct expression *e1, struct expression *e2)	\
+	static inline const struct expression *				\
+	expr_ ## name1 (const struct expression *e1,			\
+			const struct expression *e2)			\
 	{								\
 		return expr_binop(e1, e2, EXPR_ ## name2);		\
 	}
@@ -609,7 +761,7 @@ mk_expr(eq, EQ)
 mk_expr(b, B)
 
 static void
-send_expression(struct expression *e)
+send_expression(const struct expression *e)
 {
 	VG_(printf)("WRITE ME %s\n", __func__);
 }
@@ -822,7 +974,7 @@ interpret_create_mem_lookaside(unsigned long ptr,
 	VG_(memcpy)((void *)ptr, &data.v1, size);
 }
 
-static struct expression *
+static const struct expression *
 find_origin_expression(struct interpret_mem_lookaside *iml,
 		       unsigned size,
 		       unsigned long addr)
@@ -1134,7 +1286,7 @@ eval_expression(struct interpret_state *state,
 {
 #define ORIGIN(x)				\
 	do {					\
-		struct expression *t;		\
+		const struct expression *t;	\
 		t = dest->origin;		\
 		dest->origin = x;		\
 		free_expression(t);		\
@@ -1326,7 +1478,7 @@ eval_expression(struct interpret_state *state,
 			break;
 		case Iop_MullU64: {
 			unsigned long a1, a2, b1, b2;
-			struct expression *t1, *t2;
+			const struct expression *t1, *t2;
 			dest->v1 = arg1.v1 * arg2.v1;
 			a1 = arg1.v1 & 0xffffffff;
 			a2 = arg1.v1 >> 32;
@@ -1778,6 +1930,10 @@ finished_block:
 	VG_(free)(istate->temporaries);
 	istate->temporaries = NULL;
 
+	VG_(printf)("running garbage collection\n");
+	gc_expressions();
+	VG_(printf)("Done garbage collect\n");
+
 	state->guest_RIP = istate->rip.v1;
 
 	return VG_TRC_BORING;
@@ -2051,7 +2207,7 @@ reason_control(void)
 }
 
 static struct failure_reason *
-reason_data(struct expression *e1, struct expression *e2)
+reason_data(const struct expression *e1, const struct expression *e2)
 {
 	struct failure_reason *fr;
 	fr = VG_(malloc)("reason_data", sizeof(*fr));
