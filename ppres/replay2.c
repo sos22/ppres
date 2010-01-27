@@ -557,8 +557,10 @@ gc_expressions(void)
 		next = a->next;
 		if (arena_free) {
 			VG_(printf)("Release expression arena.\n");
-			a->prev->next = a->next;
-			a->next->prev = a->prev;
+			if (a->prev)
+				a->prev->next = a->next;
+			if (a->next)
+				a->next->prev = a->prev;
 			if (a == head_expr_arena)
 				head_expr_arena = a->next;
 			VG_(free)(a);
