@@ -1535,6 +1535,13 @@ eval_expression(struct interpret_state *state,
 			dest->v1 = arg1.v1 * arg2.v1;
 			ORIGIN(expr_mul(arg1.origin, arg2.origin));
 			break;
+
+		case Iop_MullU32: {
+			dest->v1 = arg1.v1 * arg2.v1;
+			dest->origin = expr_mul(arg1.origin, arg2.origin);
+			break;
+		}
+
 		case Iop_MullU64: {
 			unsigned long a1, a2, b1, b2;
 			const struct expression *t1, *t2;
@@ -1587,6 +1594,15 @@ eval_expression(struct interpret_state *state,
 						    expr_combine(arg1.origin2,
 								 arg2.origin));
 			dest->origin2 = copy_expression(dest->origin);
+			break;
+
+		case Iop_Add32x4:
+			dest->v1 = ((arg1.v1 + arg2.v1) & 0xffffffff) +
+				((arg1.v1 & ~0xfffffffful) + (arg2.v1 & ~0xfffffffful));
+			dest->v2 = ((arg1.v2 + arg2.v2) & 0xffffffff) +
+				((arg1.v2 & ~0xfffffffful) + (arg2.v2 & ~0xfffffffful));
+			dest->origin = expr_combine(arg1.origin, arg2.origin);
+			dest->origin2 = expr_combine(arg1.origin2, arg2.origin2);
 			break;
 
 		case Iop_InterleaveLO64x2:
@@ -1653,6 +1669,7 @@ eval_expression(struct interpret_state *state,
 					 expr_const(56)));
 			break;
 		case Iop_128HIto64:
+		case Iop_V128HIto64:
 			dest->v1 = arg.v2;
 			tl_assert(arg.origin2 != NULL);
 			ORIGIN(arg.origin2);
