@@ -385,7 +385,9 @@ struct maybe_expression {
 };
 
 #define EXPRESSIONS_PER_ARENA 4096
+#define ARENA_MAGIC 0xe5a7ca94cd42fd51
 struct expression_arena {
+	unsigned long magic;
 	struct expression_arena *next, *prev;
 	struct maybe_expression exprs[EXPRESSIONS_PER_ARENA];
 };
@@ -510,6 +512,7 @@ static void
 gc_expressions(void)
 {
 	static unsigned nr_garbage_collections;
+	struct maybe_expression *head;
 	struct expression_arena *a, *next;
 	struct replay_thread *rt;
 	int x;
@@ -522,6 +525,7 @@ gc_expressions(void)
 
 	/* Clear the mark flag */
 	for (a = head_expr_arena; a; a = a->next) {
+		tl_assert(a->magic == ARENA_MAGIC);
 		for (x = 0; x < EXPRESSIONS_PER_ARENA; x++)
 			a->exprs[x].in_use_ptr &= ~2;
 	}
@@ -538,7 +542,9 @@ gc_expressions(void)
 	/* Go back and rebuild the free lists. */
 	head_free_expression = NULL;
 	for (a = head_expr_arena; a; a = next) {
+		tl_assert(a->magic == ARENA_MAGIC);
 		arena_free = True;
+		head = head_free_expression;
 		for (x = EXPRESSIONS_PER_ARENA - 1; x >= 0; x--) {
 			if (!(a->exprs[x].in_use_ptr & 2)) {
 				if (a->exprs[x].in_use_ptr & 1) {
@@ -548,8 +554,8 @@ gc_expressions(void)
 					finalise_expression(&a->exprs[x].u.expr);
 					a->exprs[x].in_use_ptr &= ~1;
 				}
-				a->exprs[x].u.next_free = head_free_expression;
-				head_free_expression = &a->exprs[x];
+				a->exprs[x].u.next_free = head;
+				head = &a->exprs[x];
 			} else {
 				arena_free = False;
 			}
@@ -563,7 +569,10 @@ gc_expressions(void)
 				a->next->prev = a->prev;
 			if (a == head_expr_arena)
 				head_expr_arena = a->next;
+			a->magic++;
 			VG_(free)(a);
+		} else {
+			head_free_expression = head;
 		}
 	}
 
@@ -588,6 +597,7 @@ _new_expression_arena(void)
 	if (head_expr_arena)
 		head_expr_arena->prev = work;
 	head_expr_arena = work;
+	work->magic = ARENA_MAGIC;
 	return work;
 }
 
