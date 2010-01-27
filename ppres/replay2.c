@@ -163,7 +163,10 @@ struct expression {
 	unsigned type;
 	union {
 		unsigned reg;
-		unsigned long cnst;
+		struct {
+			unsigned long val;
+			struct expression *next, *prev;
+		} cnst;
 		struct {
 			const void *ptr;
 			unsigned size;
@@ -371,8 +374,10 @@ copy_expression(const struct expression *e)
 
 struct maybe_expression {
 	unsigned long in_use_ptr; /* Bottom bit is the in_use flag,
-				     ptr is a pointer which can be
-				     used by the garbage collector. */
+				     next is the mark-and-sweep mark,
+				     and the rest is a pointer which
+				     can be used by the garbage
+				     collector. */
 	union {
 		struct maybe_expression *next_free;
 		struct expression expr;
@@ -391,6 +396,9 @@ head_expr_arena;
 static struct maybe_expression *
 head_free_expression;
 
+static struct expression *
+head_constant_expression;
+
 static Bool
 gc_discover_expression(const struct expression *e)
 {
@@ -398,8 +406,8 @@ gc_discover_expression(const struct expression *e)
 		(struct maybe_expression *)((unsigned long *)e - 1);
 	Bool res;
 	tl_assert(e == &me->u.expr);
-	res = me->in_use_ptr & 1;
-	me->in_use_ptr = 1;
+	res = !!(me->in_use_ptr & 2);
+	me->in_use_ptr |= 2;
 	return res;
 }
 
@@ -480,6 +488,24 @@ gc_explore_mem_lookaside(void)
 		gc_explore_aiv(&iml->aiv);
 }
 
+/* Perform cleanup when an expression gets garbage collected */
+static void
+finalise_expression(struct expression *e)
+{
+	if (e->type != EXPR_CONST)
+		return;
+
+	/* Remove it from the constant pool */
+	if (e->u.cnst.prev) {
+		e->u.cnst.prev->u.cnst.next = e->u.cnst.next;
+	} else {
+		tl_assert(e == head_constant_expression);
+		head_constant_expression = e->u.cnst.next;
+	}
+	if (e->u.cnst.next)
+		e->u.cnst.next->u.cnst.prev = e->u.cnst.prev;
+}
+
 static void
 gc_expressions(void)
 {
@@ -494,10 +520,10 @@ gc_expressions(void)
 
 	VG_(printf)("Doing garbage collect.\n");
 
-	/* Mark things as not in use. */
+	/* Clear the mark flag */
 	for (a = head_expr_arena; a; a = a->next) {
 		for (x = 0; x < EXPRESSIONS_PER_ARENA; x++)
-			a->exprs[x].in_use_ptr = 0;
+			a->exprs[x].in_use_ptr &= ~2;
 	}
 
 	VG_(printf)("Done mark phase.\n");
@@ -514,7 +540,14 @@ gc_expressions(void)
 	for (a = head_expr_arena; a; a = next) {
 		arena_free = True;
 		for (x = EXPRESSIONS_PER_ARENA - 1; x >= 0; x--) {
-			if (!(a->exprs[x].in_use_ptr & 1)) {
+			if (!(a->exprs[x].in_use_ptr & 2)) {
+				if (a->exprs[x].in_use_ptr & 1) {
+					/* This expression just went
+					 * from in use to not in
+					 * use. */
+					finalise_expression(&a->exprs[x].u.expr);
+					a->exprs[x].in_use_ptr &= ~1;
+				}
 				a->exprs[x].u.next_free = head_free_expression;
 				head_free_expression = &a->exprs[x];
 			} else {
@@ -567,9 +600,9 @@ _new_expression(unsigned code)
 	e = head_free_expression;
 
 	tl_assert(!(e->in_use_ptr & 1));
+	e->in_use_ptr |= 1;
 	head_free_expression = e->u.next_free;
 
-	e->in_use_ptr = 1;
 	VG_(memset)(&e->u.expr, 0, sizeof(e->u.expr));
 	e->u.expr.type = code;
 	return &e->u.expr;
@@ -588,8 +621,26 @@ static const struct expression *
 expr_const(unsigned long c)
 {
 	struct expression *e;
-	e = _new_expression(EXPR_CONST);
-	e->u.cnst = c;
+	for (e = head_constant_expression; e && e->u.cnst.val != c; e = e->u.cnst.next)
+		;
+	if (!e) {
+		e = _new_expression(EXPR_CONST);
+		e->u.cnst.val = c;
+		e->u.cnst.prev = NULL;
+		e->u.cnst.next = NULL;
+	}
+
+	if (e != head_constant_expression) {
+		if (e->u.cnst.prev)
+			e->u.cnst.prev->u.cnst.next = e->u.cnst.next;
+		if (e->u.cnst.next)
+			e->u.cnst.next->u.cnst.prev = e->u.cnst.prev;
+		e->u.cnst.prev = NULL;
+		e->u.cnst.next = head_constant_expression;
+		if (head_constant_expression)
+			head_constant_expression->u.cnst.prev = e;
+		head_constant_expression = e;
+	}
 	return e;
 }
 
@@ -685,7 +736,7 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 		ec = NULL;
 		switch (op) {
 		case EXPR_ADD:
-			ec = expr_const(e1->u.cnst + e2->u.cnst);
+			ec = expr_const(e1->u.cnst.val + e2->u.cnst.val);
 			break;
 		default:
 			break;
@@ -721,13 +772,13 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 
 	if (binop_lident_0(op) &&
 	    e1->type == EXPR_CONST &&
-	    e1->u.cnst == 0) {
+	    e1->u.cnst.val == 0) {
 		free_expression(e1);
 		return e2;
 	}
 	if (binop_rident_0(op) &&
 	    e2->type == EXPR_CONST &&
-	    e2->u.cnst == 0) {
+	    e2->u.cnst.val == 0) {
 		free_expression(e2);
 		return e1;
 	}
