@@ -1644,7 +1644,7 @@ eval_expression(struct interpret_state *state,
 			ORIGIN(expr_le(arg1.lo.origin, arg2.lo.origin));
 			break;
 		case Iop_CmpLT64S:
-			dest->lo.v = (long)arg1.lo.v <= (long)arg2.lo.v;
+			dest->lo.v = (long)arg1.lo.v < (long)arg2.lo.v;
 			ORIGIN(expr_and(expr_le(arg1.lo.origin, arg2.lo.origin),
 					expr_not(expr_eq(arg1.lo.origin, arg2.lo.origin))));
 			break;
