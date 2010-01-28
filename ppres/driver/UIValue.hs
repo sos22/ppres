@@ -5,6 +5,7 @@ import Control.Monad.Instances
 
 import Types
 import ReplayState()
+import Expression
 
 instance Show UIValue where
     show UIValueNull = "()"

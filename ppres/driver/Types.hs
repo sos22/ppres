@@ -97,14 +97,15 @@ data Binop = BinopCombine
            | BinopBe
            | BinopEq
            | BinopB
-             deriving Show
 
-data Expression = ExpressionRegister RegisterName Integer Integer Expression
+data ExpressionCoord = ExpressionCoord Integer Integer
+
+data Expression = ExpressionRegister RegisterName ExpressionCoord Expression
                 | ExpressionConst Word64
-                | ExpressionMem Int Integer Integer Expression Expression
+                | ExpressionMem Int ExpressionCoord Expression Expression
                 | ExpressionImported
                 | ExpressionBinop Binop Expression Expression
-                | ExpressionNot Expression deriving Show
+                | ExpressionNot Expression
 
 data ReplayFailureReason = FailureReasonControl deriving Show
 

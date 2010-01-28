@@ -217,11 +217,11 @@ parseExpression =
          [0, val] -> return $ ExpressionConst val
          [1, reg, rec, acc] ->
              do val <- parseExpression
-                return $ ExpressionRegister (parseRegister reg) (fromIntegral rec) (fromIntegral acc) val
+                return $ ExpressionRegister (parseRegister reg) (ExpressionCoord (fromIntegral rec) (fromIntegral acc)) val
          [2, sz, rec, acc] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) (fromIntegral rec) (fromIntegral acc) ptr val
+                return $ ExpressionMem (fromIntegral sz) (ExpressionCoord (fromIntegral rec) (fromIntegral acc)) ptr val
          [3] -> return ExpressionImported
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression
