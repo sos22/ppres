@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 277195
+#define NOISY_AFTER_RECORD 355857
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -672,7 +672,7 @@ binop_commutes(unsigned op)
 	switch (op) {
 	case EXPR_AND: case EXPR_OR: case EXPR_EQ: case EXPR_XOR:
 	case EXPR_MUL: case EXPR_MUL_HI: case EXPR_COMBINE:
-	case EXPR_MULS:
+	case EXPR_MULS: case EXPR_ADD:
 		return True;
 	default:
 		return False;
@@ -723,6 +723,13 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 	struct expression *e;
 	const struct expression *ec;
 
+	/* + is a little easier to deal with than -.  If we get x -
+	   {const}, turn it into x + -{const} */
+	if (op == EXPR_SUB && e2->type == EXPR_CONST) {
+		e2 = expr_const(-e2->u.cnst.val);
+		op = EXPR_ADD;
+	}
+
 	if (e1->type == EXPR_CONST && e2->type == EXPR_CONST) {
 		/* Try to do some constant folding.  We only do this
 		   for a few special cases. */
@@ -772,6 +779,13 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 	    e2->type == op) {
 		e1 = expr_binop(e1, e2->u.binop.arg1, op);
 		e2 = e2->u.binop.arg2;
+	}
+	if (binop_commutes(op) &&
+	    e1->type > e2->type) {
+		ec = e1;
+		e1 = e2;
+		e2 = ec;
+		tl_assert(e1->type < e2->type);
 	}
 
 	if (binop_lident_0(op) &&
@@ -1240,6 +1254,12 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->lo.v = dep1.lo.v >> 7;
 			dest->lo.origin = expr_shrl(dep1.lo.origin,
 						    expr_const(7));
+			break;
+		case AMD64G_CC_OP_LOGICW:
+			dest->lo.v = dep1.lo.v >> 15;
+			free_expression(dest->lo.origin);
+			dest->lo.origin = expr_shrl(dep1.lo.origin,
+						    expr_const(15));
 			break;
 		case AMD64G_CC_OP_LOGICL:
 			dest->lo.v = dep1.lo.v >> 31;
