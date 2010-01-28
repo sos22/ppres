@@ -1075,12 +1075,15 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->lo.origin = dep1.lo.origin;
 			break;
 		case AMD64G_CC_OP_SUBB:
+		case AMD64G_CC_OP_SUBW:
+		case AMD64G_CC_OP_SUBL:
 		case AMD64G_CC_OP_SUBQ:
 			dest->lo.v = dep1.lo.v == dep2.lo.v;
 			dest->lo.origin = expr_eq(dep1.lo.origin,
 						  dep2.lo.origin);
 			break;
 		case AMD64G_CC_OP_INCL:
+		case AMD64G_CC_OP_DECL:
 		case AMD64G_CC_OP_INCQ:
 		case AMD64G_CC_OP_SHRL:
 		case AMD64G_CC_OP_SHRQ:
@@ -1123,6 +1126,16 @@ do_ccall_calculate_condition(struct interpret_state *state,
 					expr_and(expr_add(copy_expression(dep2.lo.origin),
 							  expr_const(0x80)),
 						 expr_const(0xff)));
+			break;
+		case AMD64G_CC_OP_SUBL:
+			dest->lo.v = (int)dep1.lo.v <= (int)dep2.lo.v;
+			dest->lo.origin =
+				expr_be(expr_and(expr_add(dep1.lo.origin,
+							  expr_const(0x80000000)),
+						 expr_const(0xffffffff)),
+					expr_and(expr_add(dep2.lo.origin,
+							  expr_const(0x80000000)),
+						 expr_const(0xffffffff)));
 			break;
 		case AMD64G_CC_OP_SUBQ:
 			dest->lo.v = (long)dep1.lo.v <= (long)dep2.lo.v;
@@ -1240,17 +1253,32 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 		break;
 
 	case AMD64G_CC_OP_SUBB:
-		dest->lo.v = (unsigned char)(dep1.lo.v - dep2.lo.v) < (unsigned char)dep2.lo.v;
+		dest->lo.v = (unsigned char)dep1.lo.v < (unsigned char)dep2.lo.v;
 		free_expression(dest->lo.origin);
-		dest->lo.origin = expr_b(expr_and(expr_sub(copy_expression(dep1.lo.origin),
-							copy_expression(dep2.lo.origin)),
-					       expr_const(0xff)),
-				      expr_and(copy_expression(dep2.lo.origin),
-					       expr_const(0xff)));
+		dest->lo.origin = expr_b(expr_and(dep1.lo.origin,
+						  expr_const(0xff)),
+					 expr_and(dep2.lo.origin,
+						  expr_const(0xff)));
+		break;
+
+	case AMD64G_CC_OP_SUBL:
+		dest->lo.v = (unsigned)dep1.lo.v < (unsigned)dep2.lo.v;
+		dest->lo.origin = expr_b(expr_and(dep1.lo.origin,
+						  expr_const(0xffffffff)),
+					 expr_and(dep2.lo.origin,
+						  expr_const(0xffffffff)));
+		break;
+
+	case AMD64G_CC_OP_SUBQ:
+		dest->lo.v = dep1.lo.v  < dep2.lo.v;
+		dest->lo.origin = expr_b(dep1.lo.origin,
+					 dep2.lo.origin);
 		break;
 
 	case AMD64G_CC_OP_LOGICB:
+	case AMD64G_CC_OP_LOGICW:
 	case AMD64G_CC_OP_LOGICL:
+	case AMD64G_CC_OP_LOGICQ:
 		/* XXX Why doesn't the Valgrind optimiser remove
 		 * these? */
 		dest->lo.v = 0;
