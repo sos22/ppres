@@ -52,6 +52,12 @@ op_binop(unsigned x)
 }
 
 static Bool
+op_logical(unsigned x)
+{
+	return x >= EXPR_LOGICAL_FIRST && x <= EXPR_LOGICAL_LAST;
+}
+
+static Bool
 binop_commutes(unsigned op)
 {
 	switch (op) {
@@ -437,6 +443,12 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 		e2 = ec;
 		tl_assert(e1->type < e2->type);
 	}
+
+	/* Special case: 1 & foo is just foo if foo's op is guaranteed
+	   to return 0 or 1. */
+	if (op == EXPR_AND && e1->type == EXPR_CONST && e1->u.cnst.val == 1 &&
+	    op_logical(e2->type))
+		return e2;
 
 	if (binop_lident_0(op) &&
 	    e1->type == EXPR_CONST &&

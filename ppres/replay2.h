@@ -111,6 +111,9 @@ struct response_string {
 #define EXPR_EQ 18
 #define EXPR_B 19
 
+#define EXPR_LOGICAL_FIRST EXPR_LE
+#define EXPR_LOGICAL_LAST EXPR_B
+
 #define EXPR_BINOP_FIRST EXPR_COMBINE
 #define EXPR_BINOP_LAST EXPR_B
 
