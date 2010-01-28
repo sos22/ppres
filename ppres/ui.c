@@ -12,6 +12,7 @@
 #include "pub_tool_libcprint.h"
 #include "pub_tool_libcproc.h"
 #include "pub_tool_mallocfree.h"
+#include "libvex_guest_amd64.h"
 #include "valgrind.h"
 
 #include "replay2.h"

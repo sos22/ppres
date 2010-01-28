@@ -177,6 +177,14 @@ parseRegister 4 = REG_RSP
 parseRegister 5 = REG_RBP
 parseRegister 6 = REG_RSI
 parseRegister 7 = REG_RDI
+parseRegister 8 = REG_R8
+parseRegister 9 = REG_R9
+parseRegister 10 = REG_R10
+parseRegister 11 = REG_R11
+parseRegister 12 = REG_R12
+parseRegister 13 = REG_R13
+parseRegister 14 = REG_R14
+parseRegister 15 = REG_R15
 parseRegister r = error $ "bad register encoding " ++ (show r)
 
 isBinop :: Word64 -> Bool
@@ -207,8 +215,13 @@ parseExpression =
        let (ResponseDataAncillary 12 params) = d
        case params of
          [0, val] -> return $ ExpressionConst val
-         [1, reg] -> return $ ExpressionRegister $ parseRegister reg
-         [2, sz, addr] -> return $ ExpressionMem (fromIntegral sz) addr
+         [1, reg, rec, acc] ->
+             do val <- parseExpression
+                return $ ExpressionRegister (parseRegister reg) (fromIntegral rec) (fromIntegral acc) val
+         [2, sz, rec, acc] ->
+             do ptr <- parseExpression
+                val <- parseExpression
+                return $ ExpressionMem (fromIntegral sz) (fromIntegral rec) (fromIntegral acc) ptr val
          [3] -> return ExpressionImported
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression

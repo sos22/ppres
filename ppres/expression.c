@@ -137,9 +137,14 @@ gc_explore_expression(const struct expression *e)
 	} else {
 		switch (e->type) {
 		case EXPR_CONST:
-		case EXPR_REG:
 		case EXPR_IMPORTED:
+			break;
+		case EXPR_REG:
+			gc_explore_expression(e->u.reg.val);
+			return;
 		case EXPR_MEM:
+			gc_explore_expression(e->u.mem.ptr_e);
+			gc_explore_expression(e->u.mem.val);
 			return;
 		case EXPR_NOT:
 			gc_explore_expression(e->u.unop.e);
@@ -162,19 +167,8 @@ gc_explore_interpret_state(const struct interpret_state *is)
 	unsigned x;
 
 	tl_assert(is->temporaries == NULL);
-	for (x = 0; x < 16; x++)
-		gc_explore_aiv(&is->gregs[x]);
-
-	gc_explore_aiv(&is->rip);
-
-	gc_explore_aiv(&is->cc_op);
-	gc_explore_aiv(&is->cc_dep1);
-	gc_explore_aiv(&is->cc_dep2);
-	gc_explore_aiv(&is->cc_ndep);
-	gc_explore_aiv(&is->d_flag);
-	gc_explore_aiv(&is->fs_zero);
-	for (x = 0; x < 16; x++)
-		gc_explore_aiv(&is->xmm[x]);
+	for (x = 0; x <= REG_LAST; x++)
+		gc_explore_aiv(&is->registers[x]);
 }
 
 static void
@@ -314,11 +308,14 @@ _new_expression(unsigned code)
 }
 
 const struct expression *
-expr_reg(unsigned reg)
+expr_reg(unsigned reg, const struct expression *val)
 {
 	struct expression *e;
 	e = _new_expression(EXPR_REG);
-	e->u.reg = reg;
+	e->u.reg.record_nr = record_nr;
+	e->u.reg.mem_access_nr = access_nr;
+	e->u.reg.name = reg;
+	e->u.reg.val = val;
 	return e;
 }
 
@@ -350,12 +347,15 @@ expr_const(unsigned long c)
 }
 
 const struct expression *
-expr_mem(void *ptr, unsigned size)
+expr_mem(unsigned size, const struct expression *ptr, const struct expression *val)
 {
 	struct expression *e;
 	e = _new_expression(EXPR_MEM);
 	e->u.mem.size = size;
-	e->u.mem.ptr = ptr;
+	e->u.mem.ptr_e = ptr;
+	e->u.mem.val = val;
+	e->u.mem.record_nr = record_nr;
+	e->u.mem.mem_access_nr = access_nr;
 	return e;
 }
 
@@ -493,10 +493,13 @@ send_expression(const struct expression *e)
 			expr(e->u.cnst.val);
 			break;
 		case EXPR_REG:
-			expr(e->u.reg);
+			expr(e->u.reg.name, e->u.reg.record_nr, e->u.reg.mem_access_nr);
+			send_expression(e->u.reg.val);
 			break;
 		case EXPR_MEM:
-			expr(e->u.mem.size, (unsigned long)e->u.mem.ptr);
+			expr(e->u.mem.size, e->u.reg.record_nr, e->u.reg.mem_access_nr);
+			send_expression(e->u.mem.ptr_e);
+			send_expression(e->u.mem.val);
 			break;
 		case EXPR_IMPORTED:
 			expr();

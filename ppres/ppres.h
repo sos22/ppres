@@ -50,13 +50,13 @@ struct rdtsc_record {
 
 struct mem_read_record {
 #define RECORD_mem_read 5
-	void *ptr;
+	Word ptr;
 	/* Followed by the data */
 };
 
 struct mem_write_record {
 #define RECORD_mem_write 6
-	void *ptr;
+	Word ptr;
 	/* Followed by the data */
 };
 

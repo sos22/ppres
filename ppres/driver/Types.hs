@@ -70,7 +70,16 @@ data RegisterName = REG_RAX
                   | REG_RSP
                   | REG_RBP
                   | REG_RSI
-                  | REG_RDI deriving Show
+                  | REG_RDI
+                  | REG_R8
+                  | REG_R9
+                  | REG_R10
+                  | REG_R11
+                  | REG_R12
+                  | REG_R13
+                  | REG_R14
+                  | REG_R15
+                    deriving Show
 
 data Binop = BinopCombine
            | BinopSub
@@ -90,9 +99,9 @@ data Binop = BinopCombine
            | BinopB
              deriving Show
 
-data Expression = ExpressionRegister RegisterName
+data Expression = ExpressionRegister RegisterName Integer Integer Expression
                 | ExpressionConst Word64
-                | ExpressionMem Int Word64
+                | ExpressionMem Int Integer Integer Expression Expression
                 | ExpressionImported
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression deriving Show

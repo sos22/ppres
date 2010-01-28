@@ -49,21 +49,8 @@ initialise_is_for_vex_state(struct interpret_state *is,
 			    const VexGuestAMD64State *state)
 {
 	unsigned x;
-	for (x = 0; x < 16; x++)
-		init_register(&is->gregs[x], (&state->guest_RAX)[x]);
-	init_register(&is->rip, state->guest_RIP);
-
-	init_register(&is->cc_op, state->guest_CC_OP);
-	init_register(&is->cc_dep1, state->guest_CC_DEP1);
-	init_register(&is->cc_dep2, state->guest_CC_DEP2);
-	init_register(&is->cc_ndep, state->guest_CC_NDEP);
-
-	init_register(&is->d_flag, state->guest_DFLAG);
-	init_register(&is->fs_zero, state->guest_FS_ZERO);
-
-	for (x = 0; x < 32; x++)
-		init_register(&is->xmm[x],
-			      ((unsigned long *)&state->guest_XMM0)[x]);
+	for (x = 0; x <= REG_LAST; x++)
+		init_register(&is->registers[x], (&state->guest_RAX)[x]);
 }
 
 void
@@ -94,21 +81,8 @@ commit_is_to_vex_state(struct interpret_state *is,
 		       VexGuestArchState *state)
 {
 	unsigned x;
-	for (x = 0; x < 16; x++)
-		(&state->guest_RAX)[x] = commit_register(&is->gregs[x]);
-	state->guest_RIP = commit_register(&is->rip);
-
-	state->guest_CC_OP = commit_register(&is->cc_op);
-	state->guest_CC_DEP1 = commit_register(&is->cc_dep1);
-	state->guest_CC_DEP2 = commit_register(&is->cc_dep2);
-	state->guest_CC_NDEP = commit_register(&is->cc_ndep);
-
-	state->guest_DFLAG = commit_register(&is->d_flag);
-	state->guest_FS_ZERO = commit_register(&is->fs_zero);
-
-	for (x = 0; x < 16; x++)
-		((unsigned long *)&state->guest_XMM0)[x] =
-			commit_register(&is->xmm[x]);
+	for (x = 0; x <= REG_LAST; x++)
+		(&state->guest_RAX)[x] = commit_register(&is->registers[x]);
 }
 
 void
@@ -149,42 +123,17 @@ chase_into_ok(void *ignore, Addr64 ignore2)
 static struct abstract_interpret_value *
 get_aiv_for_offset(struct interpret_state *state, Int offset)
 {
-	if (offset < 16 * 8) {
-		tl_assert(!(offset % 8));
-		return &state->gregs[offset / 8];
-	} else if (offset >= 200 && (offset - 200) < 32 * 8) {
-		offset -= 200;
-		tl_assert(!(offset % 8));
-		return &state->xmm[offset / 8];
-	}
-
-	switch (offset) {
-	case OFFSET_amd64_CC_OP:
-		return &state->cc_op;
-	case OFFSET_amd64_CC_DEP1:
-		return &state->cc_dep1;
-	case OFFSET_amd64_CC_DEP2:
-		return &state->cc_dep2;
-	case OFFSET_amd64_CC_NDEP:
-		return &state->cc_ndep;
-	case 160:
-		return &state->d_flag;
-	case 168:
-		return &state->rip;
-	case 184:
-		return &state->fs_zero;
-	default:
-		VG_(printf)("Bad state offset %d\n", offset);
-		VG_(tool_panic)((Char *)"failed");
-		break;
-	}
+	tl_assert(!(offset % 8));
+	tl_assert(offset / 8 <= REG_LAST);
+	return &state->registers[offset / 8];
 }
 
-static void
-copy_aiv(struct abstract_interpret_value *dest,
-	 const struct abstract_interpret_value *src)
+static const struct expression *
+read_reg(struct interpret_state *state, unsigned offset, unsigned long *v)
 {
-	*dest = *src;
+	struct abstract_interpret_value *aiv = get_aiv_for_offset(state, offset);
+	*v = aiv->v;
+	return expr_reg(offset / 8, aiv->origin);
 }
 
 static void
@@ -236,23 +185,29 @@ find_origin_expression(struct interpret_mem_lookaside *iml,
 static void
 interpreter_do_load(struct expression_result *er,
 		    unsigned size,
-		    unsigned long addr)
+		    struct abstract_interpret_value addr)
 {
 	VG_(memset)(er, 0, sizeof(*er));
 	if (size > 8) {
 		tl_assert(size == 16);
-		er->hi.origin = find_origin_expression(head_interpret_mem_lookaside,
-						       8,
-						       addr + 8);
-		VG_(memcpy)(&er->hi.v, (const void *)addr + 8, 8);
+		er->hi.origin =
+			expr_mem(8,
+				 expr_add(addr.origin, expr_const(8)),
+				 find_origin_expression(head_interpret_mem_lookaside,
+							8,
+							addr.v + 8));
+		VG_(memcpy)(&er->hi.v, (const void *)addr.v + 8, 8);
 		size = 8;
 	} else {
 		er->hi.origin = NULL;
 	}
-	VG_(memcpy)(&er->lo.v, (const void *)addr, size);
-	er->lo.origin = find_origin_expression(head_interpret_mem_lookaside,
-					       size,
-					       addr);
+	VG_(memcpy)(&er->lo.v, (const void *)addr.v, size);
+	er->lo.origin =
+		expr_mem(size,
+			 addr.origin,
+			 find_origin_expression(head_interpret_mem_lookaside,
+						size,
+						addr.v));
 }
 
 static void
@@ -632,39 +587,44 @@ eval_expression(struct interpret_state *state,
 
 	switch (expr->tag) {
 	case Iex_Get: {
-		struct abstract_interpret_value *src;
+		unsigned long v1;
+		const struct expression *src1;
 		unsigned sub_word_offset = expr->Iex.Get.offset & 7;
-		src = get_aiv_for_offset(state,
-					 expr->Iex.Get.offset - sub_word_offset);
+		src1 = read_reg(state,
+				expr->Iex.Get.offset - sub_word_offset,
+				&v1);
 		switch (expr->Iex.Get.ty) {
 		case Ity_I64:
 			tl_assert(!sub_word_offset);
-			copy_aiv(&dest->lo, src);
+			dest->lo.v = v1;
+			dest->lo.origin = src1;
 			break;
 		case Ity_V128:
 			tl_assert(!sub_word_offset);
-			copy_aiv(&dest->lo, src);
-			copy_aiv(&dest->hi,
-				 get_aiv_for_offset(state, expr->Iex.Get.offset + 8));
+			dest->lo.v = v1;
+			dest->lo.origin = read_reg(state,
+						   expr->Iex.Get.offset - sub_word_offset,
+						   &dest->hi.v);
+			dest->lo.origin = src1;
 			break;
 		case Ity_I32:
 			tl_assert(!(sub_word_offset % 4));
-			dest->lo.v = (src->v >> (sub_word_offset * 8)) & 0xffffffff;
+			dest->lo.v = (v1 >> (sub_word_offset * 8)) & 0xffffffff;
 			dest->lo.origin = expr_and(expr_const(0xffffffff),
-						   expr_shrl(src->origin,
+						   expr_shrl(src1,
 							     expr_const(sub_word_offset * 8)));
 			break;
 		case Ity_I16:
 			tl_assert(!(sub_word_offset % 2));
-			dest->lo.v = (src->v >> (sub_word_offset * 8)) & 0xffff;
+			dest->lo.v = (v1 >> (sub_word_offset * 8)) & 0xffff;
 			dest->lo.origin = expr_and(expr_const(0xffff),
-						   expr_shrl(src->origin,
+						   expr_shrl(src1,
 							     expr_const(sub_word_offset * 8)));
 			break;
 		case Ity_I8:
-			dest->lo.v = (src->v >> (sub_word_offset * 8)) & 0xff;
+			dest->lo.v = (v1 >> (sub_word_offset * 8)) & 0xff;
 			dest->lo.origin = expr_and(expr_const(0xff),
-						   expr_shrl(src->origin,
+						   expr_shrl(src1,
 							     expr_const(sub_word_offset * 8)));
 			break;
 		default:
@@ -1132,7 +1092,7 @@ do_helper_load(unsigned size,
 	struct expression_result res;
 	unsigned char dummy_buf[16];
 
-	interpreter_do_load(&res, size, addr.v);
+	interpreter_do_load(&res, size, addr);
 
 	load_event((const void *)addr.v, size, dummy_buf, rsp.v);
 
@@ -1272,7 +1232,7 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 	IRStmt *stmt;
 	unsigned stmt_nr;
 
-	addr = istate->rip.v;
+	addr = istate->registers[REG_RIP].v;
 	if (addr == 0) {
 		/* Hackity hackity hack: at the start of day, RIP in
 		   the interpreter state is wrong.  Fix it up a
@@ -1418,7 +1378,7 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 			}
 			tl_assert(stmt->Ist.Exit.jk == Ijk_Boring);
 			tl_assert(stmt->Ist.Exit.dst->tag == Ico_U64);
-			istate->rip.v = stmt->Ist.Exit.dst->Ico.U64;
+			istate->registers[REG_RIP].v = stmt->Ist.Exit.dst->Ico.U64;
 			goto finished_block;
 		}
 
@@ -1440,7 +1400,7 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		eval_expression(istate, &next_addr, irsb->next);
 		tl_assert(next_addr.hi.origin == NULL);
 		send_non_const_expression(next_addr.lo.origin);
-		istate->rip.v = next_addr.lo.v;
+		istate->registers[REG_RIP].v = next_addr.lo.v;
 	}
 
 	if (irsb->jumpkind == Ijk_Sys_syscall) {
@@ -1455,7 +1415,7 @@ finished_block:
 
 	gc_expressions();
 
-	state->guest_RIP = istate->rip.v;
+	state->guest_RIP = istate->registers[REG_RIP].v;
 
 	return VG_TRC_BORING;
 }

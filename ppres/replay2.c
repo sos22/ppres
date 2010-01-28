@@ -111,7 +111,7 @@ control_process_socket;
 unsigned
 record_nr;
 
-static unsigned
+unsigned
 access_nr;
 
 static Bool
@@ -736,16 +736,16 @@ validate_event(const struct record_header *rec,
 	case EVENT_syscall: {
 		const struct syscall_record *sr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_syscall);
-		replay_assert_eq(reason_data(expr_reg(REG_RAX),
+		replay_assert_eq(reason_data(expr_reg(REG_RAX, expr_imported()),
 					     expr_const(sr->syscall_nr)),
 				 sr->syscall_nr, args[0]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDI),
+		replay_assert_eq(reason_data(expr_reg(REG_RDI, expr_imported()),
 					     expr_const(sr->arg1)),
 				 sr->arg1, args[1]);
-		replay_assert_eq(reason_data(expr_reg(REG_RSI),
+		replay_assert_eq(reason_data(expr_reg(REG_RSI, expr_imported()),
 					     expr_const(sr->arg2)),
 				 sr->arg2, args[2]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDX),
+		replay_assert_eq(reason_data(expr_reg(REG_RDX, expr_imported()),
 					     expr_const(sr->arg3)),
 				 sr->arg3, args[3]);
 		return;
@@ -758,41 +758,41 @@ validate_event(const struct record_header *rec,
 		const struct mem_read_record *mrr = payload;
 		const void *mp = mrr + 1;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_mem_read);
-		replay_assert_eq(reason_other(), mrr->ptr, (void *)args[0]);
+		replay_assert_eq(reason_other(), mrr->ptr, args[0]);
 		replay_assert_eq(reason_control(),
 				 rec->size - sizeof(*rec) - sizeof(*mrr),
 				 args[1]);
 		switch (args[1]) {
 		case 1:
-			replay_assert_eq(reason_data(expr_mem1(mrr->ptr),
+			replay_assert_eq(reason_data(expr_mem1(expr_const(mrr->ptr), expr_imported()),
 						     expr_const(*(unsigned char *)mp)),
 					 *(unsigned char *)mp,
 					 *(unsigned char *)args[2]);
 			break;
 		case 2:
-			replay_assert_eq(reason_data(expr_mem2(mrr->ptr),
+			replay_assert_eq(reason_data(expr_mem2(expr_const(mrr->ptr), expr_imported()),
 						     expr_const(*(unsigned short *)mp)),
 					 *(unsigned short *)mp,
 					 *(unsigned short *)args[2]);
 			break;
 		case 4:
-			replay_assert_eq(reason_data(expr_mem4(mrr->ptr),
+			replay_assert_eq(reason_data(expr_mem4(expr_const(mrr->ptr), expr_imported()),
 						     expr_const(*(unsigned *)mp)),
 					 *(unsigned *)mp,
 					 *(unsigned *)args[2]);
 			break;
 		case 8:
-			replay_assert_eq(reason_data(expr_mem8(mrr->ptr),
+			replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr), expr_imported()),
 						     expr_const(*(unsigned long *)mp)),
 					 *(unsigned long *)mp,
 					 *(unsigned long *)args[2]);
 			break;
 		case 16:
-			replay_assert_eq(reason_data(expr_mem8(mrr->ptr),
+			replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr), expr_imported()),
 						     expr_const(((unsigned long *)mp)[0])),
 					 ((unsigned long *)mp)[0],
 					 ((unsigned long *)args[2])[0]);
-			replay_assert_eq(reason_data(expr_mem8(mrr->ptr + 1),
+			replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr + 8), expr_imported()),
 						     expr_const(((unsigned long *)mp)[1])),
 					 ((unsigned long *)mp)[1],
 					 ((unsigned long *)args[2])[1]);
@@ -805,7 +805,7 @@ validate_event(const struct record_header *rec,
 	case EVENT_store: {
 		const struct mem_read_record *mwr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_mem_write);
-		replay_assert_eq(reason_other(), mwr->ptr, (void *)args[0]);
+		replay_assert_eq(reason_other(), mwr->ptr, args[0]);
 		replay_assert_eq(reason_control(),
 				 rec->size - sizeof(*rec) - sizeof(*mwr),
 				 args[1]);

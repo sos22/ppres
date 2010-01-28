@@ -159,7 +159,7 @@ record_load(const void *ptr, unsigned size, void *base, unsigned long rsp)
 	VG_(memcpy)(base, ptr, size);
 	if (!client_in_monitor() && !IS_STACK(ptr, rsp)) {
 		mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
-		mrr->ptr = (void *)ptr;
+		mrr->ptr = (Word)ptr;
 		VG_(memcpy)(mrr + 1, base, size);
 	}
 }
@@ -171,7 +171,7 @@ record_store(void *ptr, unsigned size, const void *base, unsigned long rsp)
 	VG_(memcpy)(ptr, base, size);
 	if (!client_in_monitor() && !IS_STACK(ptr, rsp)) {
 		mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
-		mrr->ptr = ptr;
+		mrr->ptr = (Word)ptr;
 		VG_(memcpy)(mrr + 1, base, size);
 	}
 }
