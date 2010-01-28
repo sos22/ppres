@@ -1572,10 +1572,13 @@ eval_expression(struct interpret_state *state,
 			break;
 		}
 		case Iop_32HLto64:
-			dest->lo.v = (arg1.lo.v << 32) | arg1.hi.v;
+			dest->lo.v = (arg1.lo.v << 32) | arg2.lo.v;
 			ORIGIN(expr_or(expr_shl(arg1.lo.origin,
 						expr_const(32)),
 				       arg2.lo.origin));
+			VG_(printf)("32HLto64 %lx:%lx %lx:%lx -> %lx:%lx\n",
+				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
+				    dest->lo.v, dest->hi.v);
 			break;
 
 		case Iop_64HLtoV128:
