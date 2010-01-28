@@ -81,22 +81,23 @@ struct response_string {
 #define EXPR_ADD 6
 #define EXPR_MUL 7
 #define EXPR_MUL_HI 8
+#define EXPR_MULS 9
 
-#define EXPR_SHRL 9
-#define EXPR_SHL 10
-#define EXPR_SHRA 11
+#define EXPR_SHRL 10
+#define EXPR_SHL 11
+#define EXPR_SHRA 12
 
-#define EXPR_AND 12
-#define EXPR_OR 13
-#define EXPR_XOR 14
+#define EXPR_AND 13
+#define EXPR_OR 14
+#define EXPR_XOR 15
 
-#define EXPR_LE 15
-#define EXPR_BE 16
-#define EXPR_EQ 17
-#define EXPR_B 18
+#define EXPR_LE 16
+#define EXPR_BE 17
+#define EXPR_EQ 18
+#define EXPR_B 19
 
 #define EXPR_BINOP_FIRST EXPR_COMBINE
 #define EXPR_BINOP_LAST EXPR_B
 
-#define EXPR_NOT 19
+#define EXPR_NOT 20
 
