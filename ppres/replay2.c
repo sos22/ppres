@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 218477
+#define NOISY_AFTER_RECORD 227906
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -1086,6 +1086,22 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->lo.origin = expr_eq(dep1.lo.origin,
 						  dep2.lo.origin);
 			break;
+
+		case AMD64G_CC_OP_ADDL:
+			dest->lo.v = (unsigned)(dep1.lo.v + dep2.lo.v) == 0;
+			dest->lo.origin = expr_eq(expr_and(expr_add(dep1.lo.origin,
+								    dep2.lo.origin),
+							   expr_const(0xffffffff)),
+						  expr_const(0));
+			break;
+
+		case AMD64G_CC_OP_ADDQ:
+			dest->lo.v = dep1.lo.v + dep2.lo.v == 0;
+			dest->lo.origin = expr_eq(expr_add(dep1.lo.origin,
+							   dep2.lo.origin),
+						  expr_const(0));
+			break;
+
 		case AMD64G_CC_OP_INCB:
 		case AMD64G_CC_OP_INCW:
 		case AMD64G_CC_OP_INCL:
@@ -1096,10 +1112,6 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		case AMD64G_CC_OP_DECQ:
 		case AMD64G_CC_OP_SHRL:
 		case AMD64G_CC_OP_SHRQ:
-		case AMD64G_CC_OP_ADDB:
-		case AMD64G_CC_OP_ADDW:
-		case AMD64G_CC_OP_ADDL:
-		case AMD64G_CC_OP_ADDQ:
 			dest->lo.v = dep1.lo.v == 0;
 			dest->lo.origin = expr_eq(dep1.lo.origin, expr_const(0));
 			break;
@@ -1213,6 +1225,11 @@ do_ccall_calculate_condition(struct interpret_state *state,
 
 	case AMD64CondS:
 		switch (op.lo.v) {
+		case AMD64G_CC_OP_LOGICB:
+			dest->lo.v = dep1.lo.v >> 7;
+			dest->lo.origin = expr_shrl(dep1.lo.origin,
+						    expr_const(7));
+			break;
 		case AMD64G_CC_OP_LOGICL:
 			dest->lo.v = dep1.lo.v >> 31;
 			free_expression(dest->lo.origin);
@@ -1234,6 +1251,16 @@ do_ccall_calculate_condition(struct interpret_state *state,
 				       expr_and(expr_add(dep2.lo.origin,
 							 expr_const(0x80)),
 						expr_const(0xff)));
+			break;
+		case AMD64G_CC_OP_SUBW:
+			dest->lo.v = (short)dep1.lo.v < (short)dep2.lo.v;
+			dest->lo.origin =
+				expr_b(expr_and(expr_add(dep1.lo.origin,
+							 expr_const(0x8000)),
+						expr_const(0xffff)),
+				       expr_and(expr_add(dep2.lo.origin,
+							 expr_const(0x8000)),
+						expr_const(0xffff)));
 			break;
 		case AMD64G_CC_OP_SUBL:
 			dest->lo.v = (long)dep1.lo.v < (long)dep2.lo.v;
