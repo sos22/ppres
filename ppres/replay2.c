@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 210500
+#define NOISY_AFTER_RECORD 212620
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -672,6 +672,7 @@ binop_commutes(unsigned op)
 	switch (op) {
 	case EXPR_AND: case EXPR_OR: case EXPR_EQ: case EXPR_XOR:
 	case EXPR_MUL: case EXPR_MUL_HI: case EXPR_COMBINE:
+	case EXPR_MULS:
 		return True;
 	default:
 		return False;
@@ -791,6 +792,7 @@ mk_expr(sub, SUB)
 mk_expr(add, ADD)
 mk_expr(mul, MUL)
 mk_expr(mul_hi, MUL_HI)
+mk_expr(muls, MULS)
 mk_expr(and, AND)
 mk_expr(or, OR)
 mk_expr(xor, XOR)
@@ -1604,6 +1606,18 @@ eval_expression(struct interpret_state *state,
 			dest->lo.origin = expr_mul(arg1.lo.origin, arg2.lo.origin);
 			break;
 		}
+		case Iop_MullS32: {
+			dest->lo.v = (long)(int)arg1.lo.v * (long)(int)arg2.lo.v;
+			VG_(printf)("%lx:%lx *s %lx:%lx -> %lx\n", arg1.lo.v,
+				    arg1.hi.v, arg2.lo.v, arg2.hi.v, dest->lo.v);
+			dest->lo.origin = expr_muls(expr_shra(expr_shl(arg1.lo.origin,
+								       expr_const(32)),
+							      expr_const(32)),
+						    expr_shra(expr_shl(arg2.lo.origin,
+								       expr_const(32)),
+							      expr_const(32)));
+			break;
+		}
 
 		case Iop_MullU64: {
 			unsigned long a1, a2, b1, b2;
@@ -1795,6 +1809,12 @@ eval_expression(struct interpret_state *state,
 			ORIGIN(expr_shra(expr_shl(arg.lo.origin,
 						  expr_const(56)),
 					 expr_const(56)));
+			break;
+		case Iop_16Sto64:
+			dest->lo.v = (long)(short)arg.lo.v;
+			ORIGIN(expr_shra(expr_shl(arg.lo.origin,
+						  expr_const(48)),
+					 expr_const(48)));
 			break;
 		case Iop_128HIto64:
 		case Iop_V128HIto64:
