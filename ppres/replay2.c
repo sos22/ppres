@@ -50,8 +50,7 @@ struct client_event_record {
 	       EVENT_rdtsc,
 	       EVENT_load,
 	       EVENT_store,
-	       EVENT_client_request,
-	       EVENT_resched_candidate } type;
+	       EVENT_client_request } type;
 	unsigned nr_args;
 
 	/* Careful: this is on the stack of the thread which generated
@@ -863,9 +862,6 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_control(), args[0], crr->flavour);
 		return;
 	}
-	case EVENT_resched_candidate:
-		/* Should have been handled by caller. */
-		VG_(tool_panic)((Char *)"resched candidate in bad place");
 	case EVENT_nothing:
 		VG_(tool_panic)((Char *)"validate event when no event present?");
 	}
@@ -1131,8 +1127,6 @@ run_for_n_records(struct record_consumer *logfile,
 			   (thread_event.type != EVENT_load &&
 			    thread_event.type != EVENT_store)));
 
-
-		ASSUME(thread_event.type != EVENT_resched_candidate);
 
 		validate_event(rec, &thread_event);
 
