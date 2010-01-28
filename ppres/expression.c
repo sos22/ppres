@@ -37,6 +37,11 @@ head_free_expression;
 static struct expression *
 head_constant_expression;
 
+static unsigned
+nr_free_expressions,
+expressions_in_use,
+nr_expression_arenas;
+
 /* ---------------- Predicates on operators ------------------ */
 static Bool
 op_binop(unsigned x)
@@ -122,6 +127,7 @@ gc_explore_expression(const struct expression *e)
 	if (gc_discover_expression(e))
 		return;
 
+	expressions_in_use++;
 	if (op_binop(e->type)) {
 		gc_explore_expression(e->u.binop.arg1);
 		gc_explore_expression(e->u.binop.arg2);
@@ -216,12 +222,14 @@ gc_expressions(void)
 	}
 
 	/* Sweep from all roots. */
+	expressions_in_use = 0;
 	for (rt = head_thread; rt; rt = rt->next)
 		gc_explore_interpret_state(&rt->interpret_state);
 	gc_explore_mem_lookaside();
 
 	/* Go back and rebuild the free lists. */
 	head_free_expression = NULL;
+	nr_free_expressions = 0;
 	for (a = head_expr_arena; a; a = next) {
 		tl_assert(a->magic == ARENA_MAGIC);
 		arena_free = True;
@@ -237,6 +245,7 @@ gc_expressions(void)
 				}
 				a->exprs[x].u.next_free = head;
 				head = &a->exprs[x];
+				nr_free_expressions++;
 			} else {
 				arena_free = False;
 			}
@@ -250,6 +259,8 @@ gc_expressions(void)
 			if (a == head_expr_arena)
 				head_expr_arena = a->next;
 			a->magic++;
+			nr_free_expressions -= EXPRESSIONS_PER_ARENA;
+			nr_expression_arenas--;
 			VG_(free)(a);
 		} else {
 			head_free_expression = head;
@@ -276,6 +287,7 @@ _new_expression_arena(void)
 		head_expr_arena->prev = work;
 	head_expr_arena = work;
 	work->magic = ARENA_MAGIC;
+	nr_expression_arenas++;
 	return work;
 }
 
