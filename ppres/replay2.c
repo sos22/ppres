@@ -656,8 +656,6 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 
 	VG_(printf)("FAILED %s\n", msg);
 
-	while (1) ;
-
 	send_error();
 	while (1) {
 		get_control_command(&cmd);
