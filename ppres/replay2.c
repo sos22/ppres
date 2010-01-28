@@ -1357,6 +1357,10 @@ eval_expression(struct interpret_state *state,
 	} while (0)
 
 	tl_assert(expr != NULL);
+	dest->lo.v = 0xdeadbeeff001f001;
+	dest->lo.origin = NULL;
+	dest->hi.v = 0xaaaaaaaaaaaaaaaa;
+	dest->hi.origin = NULL;
 
 	switch (expr->tag) {
 	case Iex_Get: {
@@ -2125,8 +2129,8 @@ interpret_log_control_flow(VexGuestArchState *state)
 
 	{
 		struct expression_result next_addr;
-		tl_assert(next_addr.hi.origin == NULL);
 		eval_expression(istate, &next_addr, irsb->next);
+		tl_assert(next_addr.hi.origin == NULL);
 		send_expression(next_addr.lo.origin);
 		istate->rip.v = next_addr.lo.v;
 	}
