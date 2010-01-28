@@ -7,14 +7,25 @@ struct record_header {
 	unsigned tid;
 };
 
+#define FOOTSTEP_REG_0_NAME cc_op
+#define FOOTSTEP_REG_0_OFFSET 128
+#define FOOTSTEP_REG_1_NAME cc_dep1
+#define FOOTSTEP_REG_1_OFFSET 136
+#define FOOTSTEP_REG_2_NAME cc_dep2
+#define FOOTSTEP_REG_2_OFFSET 144
+#define FOOTSTEP_REG_3_NAME cc_ndep
+#define FOOTSTEP_REG_3_OFFSET 152
+#define FOOTSTEP_REG_4_NAME rax
+#define FOOTSTEP_REG_4_OFFSET 0
+
 struct footstep_record {
 #define RECORD_footstep 1
 	Word rip;
-	Word rdx;
-	Word rcx;
-	Word rax;
-	unsigned long xmm3a;
-	unsigned long xmm0a;
+	Word FOOTSTEP_REG_0_NAME;
+	Word FOOTSTEP_REG_1_NAME;
+	Word FOOTSTEP_REG_2_NAME;
+	Word FOOTSTEP_REG_3_NAME;
+	Word FOOTSTEP_REG_4_NAME;
 };
 
 struct syscall_record {

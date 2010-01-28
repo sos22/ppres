@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 70000
+#define NOISY_AFTER_RECORD 130000
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -2536,21 +2536,18 @@ validate_event(const struct record_header *rec,
 		const struct footstep_record *fr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_footstep);
 		replay_assert_eq(reason_control(), fr->rip, args[0]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDX),
-					     expr_const(fr->rdx)),
-				 fr->rdx, args[1]);
-		replay_assert_eq(reason_data(expr_reg(REG_RCX),
-					     expr_const(fr->rcx)),
-				 fr->rcx, args[2]);
-		replay_assert_eq(reason_data(expr_reg(REG_RAX),
-					     expr_const(fr->rax)),
-				 fr->rax, args[3]);
-		replay_assert_eq(reason_data(expr_imported(),
-					     expr_const(fr->xmm3a)),
-				 fr->xmm3a, args[4]);
-		replay_assert_eq(reason_data(expr_imported(),
-					     expr_const(fr->xmm3a)),
-				 fr->xmm0a, args[5]);
+#define CHECK_REG(i)							\
+		replay_assert_eq(					\
+			reason_data(expr_imported(),			\
+				    expr_const(fr-> FOOTSTEP_REG_ ## i ## _NAME ) ), \
+			fr-> FOOTSTEP_REG_ ## i ## _NAME,		\
+			args[i+1])
+		CHECK_REG(0);
+		CHECK_REG(1);
+		CHECK_REG(2);
+		CHECK_REG(3);
+		CHECK_REG(4);
+#undef CHECK_REG
 		return;
 	}
 	case EVENT_syscall: {

@@ -298,11 +298,11 @@ instrument_func(VgCallbackClosure *closure,
 				VG_(fnptr_to_fnentry)(record_instr),
 #endif
 				mkIRExprVec_6(IRExpr_Const(IRConst_U64(current_in_stmt->Ist.IMark.addr)),
-					      IRExpr_Get(OFFSET_amd64_RDX, Ity_I64),
-					      IRExpr_Get(OFFSET_amd64_RCX, Ity_I64),
-					      IRExpr_Get(OFFSET_amd64_RAX, Ity_I64),
-					      IRExpr_Get(248, Ity_I64),
-					      IRExpr_Get(200, Ity_I64)
+					      IRExpr_Get(FOOTSTEP_REG_0_OFFSET, Ity_I64),
+					      IRExpr_Get(FOOTSTEP_REG_1_OFFSET, Ity_I64),
+					      IRExpr_Get(FOOTSTEP_REG_2_OFFSET, Ity_I64),
+					      IRExpr_Get(FOOTSTEP_REG_3_OFFSET, Ity_I64),
+					      IRExpr_Get(FOOTSTEP_REG_4_OFFSET, Ity_I64)
 					      ));
 
 			addStmtToIRSB(sb_out, out_stmt);
