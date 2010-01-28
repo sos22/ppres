@@ -35,6 +35,8 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
+#define NOISY_AFTER_RECORD 34000
+
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
 extern Bool VG_(tool_handles_synchronisation);
@@ -2029,6 +2031,9 @@ interpret_log_control_flow(VexGuestArchState *state)
 			    guest_amd64_state_requires_precise_mem_exns,
 			    addr );
 
+	if (record_nr > NOISY_AFTER_RECORD)
+		ppIRSB(irsb);
+
 	tl_assert(istate->temporaries == NULL);
 	istate->temporaries = VG_(malloc)("interpreter temporaries",
 					  sizeof(istate->temporaries[0]) *
@@ -2039,7 +2044,7 @@ interpret_log_control_flow(VexGuestArchState *state)
 		    irsb->tyenv->types_used);
 	for (stmt_nr = 0; stmt_nr < irsb->stmts_used; stmt_nr++) {
 		stmt = irsb->stmts[stmt_nr];
-		if (record_nr > 208000) {
+		if (record_nr > NOISY_AFTER_RECORD) {
 			VG_(printf)("Interpreting record %d ", record_nr);
 			ppIRStmt(stmt);
 			VG_(printf)("\n");
