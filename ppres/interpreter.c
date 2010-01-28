@@ -1179,7 +1179,7 @@ do_dirty_call(struct interpret_state *is,
 
 	if (details->guard) {
 		eval_expression(is, &guard, details->guard);
-		send_expression(guard.lo.origin);
+		send_non_const_expression(guard.lo.origin);
 		if (!guard.lo.v)
 			return;
 	}
@@ -1412,7 +1412,7 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 			struct expression_result guard;
 			if (stmt->Ist.Exit.guard) {
 				eval_expression(istate, &guard, stmt->Ist.Exit.guard);
-				send_expression(guard.lo.origin);
+				send_non_const_expression(guard.lo.origin);
 				if (!guard.lo.v)
 					break;
 			}
@@ -1439,7 +1439,7 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		struct expression_result next_addr;
 		eval_expression(istate, &next_addr, irsb->next);
 		tl_assert(next_addr.hi.origin == NULL);
-		send_expression(next_addr.lo.origin);
+		send_non_const_expression(next_addr.lo.origin);
 		istate->rip.v = next_addr.lo.v;
 	}
 

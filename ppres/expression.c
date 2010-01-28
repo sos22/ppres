@@ -512,3 +512,9 @@ send_expression(const struct expression *e)
 #undef expr
 }
 
+void
+send_non_const_expression(const struct expression *e)
+{
+	if (e->type != EXPR_CONST)
+		send_expression(e);
+}

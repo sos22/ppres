@@ -138,6 +138,7 @@ void footstep_event(Addr rip, Word rdx, Word rcx, Word rax,
 		    unsigned long xmm3a, unsigned long xmm0a);
 void syscall_event(VexGuestAMD64State *state);
 void send_expression(const struct expression *e);
+void send_non_const_expression(const struct expression *e);
 
 void _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args);
 #define send_ancillary(_code, ...)                         \
