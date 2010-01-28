@@ -16,8 +16,8 @@ ppres_replay2: replay2.o coroutines.o replay_logfile.o ../coregrind/libcoregrind
 	gcc  -Wall -fno-stack-protector -o ppres_replay2 -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds $^ -lgcc
 
 replay.o: transform_expr.c
-replay2.o: transform_expr.c
-record.o: transform_expr.c
+replay2.o: transform_expr.c ppres.h
+record.o: transform_expr.c ppres.h
 
 schedule.o: schedule.h
 
