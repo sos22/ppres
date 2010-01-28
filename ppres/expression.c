@@ -5,6 +5,8 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_mallocfree.h"
+#include "pub_tool_tooliface.h"
+#include "libvex_guest_amd64.h"
 
 #include "replay2.h"
 

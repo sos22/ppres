@@ -71,7 +71,9 @@ struct interpret_mem_lookaside {
 };
 
 extern struct replay_thread *head_thread;
+extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
+extern unsigned record_nr;
 
 int ui_loop(void);
 int do_snapshot(int parent_fd);
@@ -117,6 +119,34 @@ BINOP_EXPR(eq);
 BINOP_EXPR(b);
 
 void gc_expressions(void);
+
+UInt interpret_log_control_flow(VexGuestAMD64State *state);
+void initialise_interpreter_state(void);
+void commit_interpreter_state(void);
+IRSB *instrument_func(VgCallbackClosure *closure,
+		      IRSB *sb_in,
+		      VexGuestLayout *layout,
+		      VexGuestExtents *vge,
+		      IRType gWordTy,
+		      IRType hWordTy);
+
+void load_event(const void *ptr, unsigned size, void *read_bytes,
+		unsigned long rsp);
+void store_event(void *ptr, unsigned size, const void *written_bytes,
+		 unsigned long rsp);
+void footstep_event(Addr rip, Word rdx, Word rcx, Word rax,
+		    unsigned long xmm3a, unsigned long xmm0a);
+void syscall_event(VexGuestAMD64State *state);
+void send_expression(const struct expression *e);
+
+
+
+/* ASSUME is like assert, in that it terminates if the argument is
+   anything other than true, but it's supposed to be a hint that we're
+   failing because something isn't implemented rather than because of
+   a strict bug. */
+#define ASSUME tl_assert
+
 
 
 

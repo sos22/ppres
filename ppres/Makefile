@@ -12,13 +12,14 @@ record.o: record.c
 ppres_replay: replay.o coroutines.o replay_logfile.o schedule.o races.o
 	gcc  -Wall -fno-stack-protector -o ppres_replay -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds $^ ../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a -lgcc
 
-ppres_replay2: replay2.o coroutines.o replay_logfile.o ../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a ui.o expression.o
+ppres_replay2: replay2.o coroutines.o replay_logfile.o ../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a ui.o expression.o interpreter.o
 	gcc  -Wall -fno-stack-protector -o ppres_replay2 -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds $^ -lgcc
 
 replay.o: transform_expr.c
 replay2.o: transform_expr.c ppres.h replay2.h
 record.o: transform_expr.c ppres.h
 expression.o: replay2.h
+interpreter.o: replay2.h
 
 schedule.o: schedule.h
 

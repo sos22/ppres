@@ -266,7 +266,7 @@ log_cas_stmt(IRSB *sb, IRCAS *details)
 	return IRStmt_Dirty(f);
 }
 
-static IRSB *
+IRSB *
 instrument_func(VgCallbackClosure *closure,
 		IRSB *sb_in,
 		VexGuestLayout *layout,
