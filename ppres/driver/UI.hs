@@ -29,7 +29,7 @@ data UIExpression = UIDummyFunction
                   | UISecond UIExpression
                   | UIThreadState UIExpression
                   | UIRemoveFootsteps UIExpression
-                  | UIFindCriticalAccesses UIExpression UIExpression
+                  | UIFindRacingAccesses UIExpression UIExpression
                   | UIReplayState UIExpression
                   | UIControlTrace UIExpression Integer
                     deriving Show
@@ -92,10 +92,10 @@ expressionParser =
                   a <- expressionParser
                   b <- expressionParser
                   return $ UIPair a b,
-               do keyword "findcrit"
+               do keyword "findraces"
                   a <- expressionParser
                   b <- expressionParser
-                  return $ UIFindCriticalAccesses a b,
+                  return $ UIFindRacingAccesses a b,
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
@@ -171,10 +171,10 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> threadState s
       UIReplayState name -> withSnapshot ws name $ \s -> replayState s
       UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
-      UIFindCriticalAccesses a b ->
+      UIFindRacingAccesses a b ->
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
-                    return $ findCriticalAccesses a' b'
+                    return $ findRacingAccesses a' b'
       UIRemoveFootsteps e ->
           toUI $ do es <- fromUI $ evalExpression ws e
                     let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True

@@ -1,16 +1,16 @@
-module Analysis(findCriticalAccesses) where
+module Analysis(findRacingAccesses) where
 
 import Types
 
 {- We have two traces, A and B.  A represents what actually happened,
    and B an estimate of what we could have done by running some other
-   thread.  A pair of accesses is critical if one is a load in A from
-   some address X and the other is a store to X from B, and the values
-   in the two accesses are different.  This function finds all
-   critical access pairs, in some undefined order. -}
+   thread.  A pair of accesses races if one is a load in A from some
+   address X and the other is a store to X from B, and the values in
+   the two accesses are different.  This function finds all critical
+   access pairs, in some undefined order. -}
 
-findCriticalAccesses :: [TraceRecord] -> [TraceRecord] -> [(TraceRecord, TraceRecord)]
-findCriticalAccesses a b =
+findRacingAccesses :: [TraceRecord] -> [TraceRecord] -> [(TraceRecord, TraceRecord)]
+findRacingAccesses a b =
     let aLoads = [r | r@(TraceRecord (TraceLoad _ _ _ _) _) <- a]
         bStores = [r | r@(TraceRecord (TraceStore _ _ _ _) _) <- b]
         storesTo ptr = [r | r <- bStores, ptr == (trc_store_ptr $ trc_trc r)]
