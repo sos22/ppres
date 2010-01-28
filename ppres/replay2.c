@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 130000
+#define NOISY_AFTER_RECORD 210500
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -1084,9 +1084,14 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->lo.origin = expr_eq(dep1.lo.origin,
 						  dep2.lo.origin);
 			break;
+		case AMD64G_CC_OP_INCB:
+		case AMD64G_CC_OP_INCW:
 		case AMD64G_CC_OP_INCL:
-		case AMD64G_CC_OP_DECL:
 		case AMD64G_CC_OP_INCQ:
+		case AMD64G_CC_OP_DECB:
+		case AMD64G_CC_OP_DECW:
+		case AMD64G_CC_OP_DECL:
+		case AMD64G_CC_OP_DECQ:
 		case AMD64G_CC_OP_SHRL:
 		case AMD64G_CC_OP_SHRQ:
 		case AMD64G_CC_OP_ADDB:
@@ -1150,6 +1155,13 @@ do_ccall_calculate_condition(struct interpret_state *state,
 					       copy_expression(dep2.lo.origin));
 			break;
 		case AMD64G_CC_OP_LOGICL:
+			dest->lo.v = (unsigned)(dep1.lo.v + 0x80000000) <= 0x80000000 ;
+			dest->lo.origin = expr_le(expr_and(expr_add(dep1.lo.origin,
+								    expr_const(0x80000000)),
+							   expr_const(0xffffffff)),
+						  expr_const(0x80000000));
+			break;
+		case AMD64G_CC_OP_LOGICQ:
 			dest->lo.v = (long)dep1.lo.v <= 0;
 			dest->lo.origin = expr_le(dep1.lo.origin,
 						  expr_const(0));
@@ -1211,6 +1223,16 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			dest->lo.origin = expr_shrl(copy_expression(dep1.lo.origin),
 						 expr_const(63));
 			break;
+		case AMD64G_CC_OP_SUBB:
+			dest->lo.v = (char)dep1.lo.v < (char)dep2.lo.v;
+			dest->lo.origin =
+				expr_b(expr_and(expr_add(dep1.lo.origin,
+							 expr_const(0x80)),
+						expr_const(0xff)),
+				       expr_and(expr_add(dep2.lo.origin,
+							 expr_const(0x80)),
+						expr_const(0xff)));
+			break;
 		case AMD64G_CC_OP_SUBL:
 			dest->lo.v = (long)dep1.lo.v < (long)dep2.lo.v;
 			dest->lo.origin = expr_le(dep1.lo.origin, dep2.lo.origin);
@@ -1263,6 +1285,10 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 	case AMD64G_CC_OP_INCW:
 	case AMD64G_CC_OP_INCL:
 	case AMD64G_CC_OP_INCQ:
+	case AMD64G_CC_OP_DECB:
+	case AMD64G_CC_OP_DECW:
+	case AMD64G_CC_OP_DECL:
+	case AMD64G_CC_OP_DECQ:
 		dest->lo.v = ndep.lo.v & 1;
 		dest->lo.origin = expr_and(ndep.lo.origin, expr_const(1));
 		break;
@@ -1301,7 +1327,10 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 		dest->lo.origin = expr_const(0);
 		break;
 
+	case AMD64G_CC_OP_SHRB:
+	case AMD64G_CC_OP_SHRW:
 	case AMD64G_CC_OP_SHRL:
+	case AMD64G_CC_OP_SHRQ:
 		dest->lo.v = dep2.lo.v & 1;
 		dest->lo.origin = expr_and(dep1.lo.origin, expr_const(1));
 		break;
@@ -1595,9 +1624,6 @@ eval_expression(struct interpret_state *state,
 			ORIGIN(expr_or(expr_shl(arg1.lo.origin,
 						expr_const(32)),
 				       arg2.lo.origin));
-			VG_(printf)("32HLto64 %lx:%lx %lx:%lx -> %lx:%lx\n",
-				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
-				    dest->lo.v, dest->hi.v);
 			break;
 
 		case Iop_64HLtoV128:
