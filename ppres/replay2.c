@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 227906
+#define NOISY_AFTER_RECORD 277195
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -739,6 +739,17 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 			free_expression(e2);
 			return ec;
 		}
+	}
+
+	if (op == EXPR_SUB &&
+	    e1->type == EXPR_SUB &&
+	    e1->u.binop.arg2->type == EXPR_CONST &&
+	    e2->type == EXPR_CONST) {
+		/* Special case: (x - y) - z -> x - (y + z) if both y
+		   and z are constants. */
+		e2 = expr_const(e1->u.binop.arg2->u.cnst.val -
+				e2->u.cnst.val);
+		e1 = e1->u.binop.arg1;
 	}
 
 	/* Do some basic canonicalisations first: if the operation is
