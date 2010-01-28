@@ -228,10 +228,7 @@ do_ccall_calculate_condition(struct interpret_state *state,
 	tl_assert(cee->regparms == 0);
 
 	eval_expression(state, &condcode, args[0]);
-	tl_assert(condcode.lo.origin->type == EXPR_CONST);
-
 	eval_expression(state, &op, args[1]);
-	tl_assert(op.lo.origin->type == EXPR_CONST);
 
 	eval_expression(state, &dep1, args[2]);
 	eval_expression(state, &dep2, args[3]);
@@ -464,7 +461,6 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 	tl_assert(cee->regparms == 0);
 
 	eval_expression(state, &op, args[0]);
-	tl_assert(op.lo.origin->type == EXPR_CONST);
 
 	eval_expression(state, &dep1, args[1]);
 	eval_expression(state, &dep2, args[2]);
