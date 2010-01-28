@@ -72,9 +72,30 @@ data RegisterName = REG_RAX
                   | REG_RSI
                   | REG_RDI deriving Show
 
+data Binop = BinopCombine
+           | BinopSub
+           | BinopAdd
+           | BinopMull
+           | BinopMullHi
+           | BinopMullS
+           | BinopShrl
+           | BinopShl
+           | BinopShra
+           | BinopAnd
+           | BinopOr
+           | BinopXor
+           | BinopLe
+           | BinopBe
+           | BinopEq
+           | BinopB
+             deriving Show
+
 data Expression = ExpressionRegister RegisterName
                 | ExpressionConst Word64
-                | ExpressionMem Int Expression deriving Show
+                | ExpressionMem Int Word64
+                | ExpressionImported
+                | ExpressionBinop Binop Expression Expression
+                | ExpressionNot Expression deriving Show
 
 data ReplayFailureReason = FailureReasonControl deriving Show
 

@@ -479,3 +479,36 @@ mk_expr(eq, EQ)
 mk_expr(b, B)
 
 
+void
+send_expression(const struct expression *e)
+{
+#define expr(...) send_ancillary(ANCILLARY_EXPRESSION, e->type , ## __VA_ARGS__ )
+	if (op_binop(e->type)) {
+		expr();
+		send_expression(e->u.binop.arg1);
+		send_expression(e->u.binop.arg2);
+	} else {
+		switch (e->type) {
+		case EXPR_CONST:
+			expr(e->u.cnst.val);
+			break;
+		case EXPR_REG:
+			expr(e->u.reg);
+			break;
+		case EXPR_MEM:
+			expr(e->u.mem.size, (unsigned long)e->u.mem.ptr);
+			break;
+		case EXPR_IMPORTED:
+			expr();
+			break;
+		case EXPR_NOT:
+			expr();
+			send_expression(e->u.unop.e);
+			break;
+		default:
+			VG_(tool_panic)((Char *)"send bad expression");
+		}
+	}
+#undef expr
+}
+

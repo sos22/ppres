@@ -251,12 +251,6 @@ sysres_to_eax(SysRes sr)
 		return sr_Res(sr);
 }
 
-void
-send_expression(const struct expression *e)
-{
-#warning WRITE ME
-}
-
 static void
 send_okay(void)
 {
@@ -273,7 +267,7 @@ send_error(void)
 	safeish_write(control_process_socket, &rsp, sizeof(rsp));
 }
 
-static void
+void
 _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args)
 {
 	struct response_message rsp;
@@ -285,13 +279,6 @@ _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args)
 	safeish_write(control_process_socket, &anc, sizeof(anc));
 	safeish_write(control_process_socket, args, sizeof(args[0]) * nr_args);
 }
-#define send_ancillary(_code, ...)                         \
-do {						           \
-	const unsigned long args[] = {__VA_ARGS__};	   \
-	_send_ancillary((_code),			   \
-			sizeof(args)/sizeof(args[0]),	   \
-			args);				   \
-} while (0)
 
 static void
 send_string(unsigned size, const void *buf)

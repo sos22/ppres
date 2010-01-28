@@ -139,6 +139,14 @@ void footstep_event(Addr rip, Word rdx, Word rcx, Word rax,
 void syscall_event(VexGuestAMD64State *state);
 void send_expression(const struct expression *e);
 
+void _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args);
+#define send_ancillary(_code, ...)                         \
+do {						           \
+	const unsigned long args[] = {__VA_ARGS__};	   \
+	_send_ancillary((_code),			   \
+			sizeof(args)/sizeof(args[0]),	   \
+			args);				   \
+} while (0)
 
 
 /* ASSUME is like assert, in that it terminates if the argument is
@@ -185,6 +193,7 @@ struct response_message {
 #define ANCILLARY_TRACE_EXIT_MONITOR 9
 #define ANCILLARY_REPLAY_SUCCESS 10
 #define ANCILLARY_REPLAY_FAILED 11
+#define ANCILLARY_EXPRESSION 12
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;

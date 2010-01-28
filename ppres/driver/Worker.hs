@@ -170,8 +170,8 @@ evalConsumer items monad =
 
 parseRegister :: Word64 -> RegisterName
 parseRegister 0 = REG_RAX
-parseRegister 1 = REG_RDX
-parseRegister 2 = REG_RCX
+parseRegister 1 = REG_RCX
+parseRegister 2 = REG_RDX
 parseRegister 3 = REG_RBX
 parseRegister 4 = REG_RSP
 parseRegister 5 = REG_RBP
@@ -179,18 +179,44 @@ parseRegister 6 = REG_RSI
 parseRegister 7 = REG_RDI
 parseRegister r = error $ "bad register encoding " ++ (show r)
 
+isBinop :: Word64 -> Bool
+isBinop x = x >= 4 && x <= 19
+
+parseBinop :: Word64 -> Binop
+parseBinop 4 = BinopCombine
+parseBinop 5 = BinopSub
+parseBinop 6 = BinopAdd
+parseBinop 7 = BinopMull
+parseBinop 8 = BinopMullHi
+parseBinop 9 = BinopMullS
+parseBinop 10 = BinopShrl
+parseBinop 11 = BinopShl
+parseBinop 12 = BinopShra
+parseBinop 13 = BinopAnd
+parseBinop 14 = BinopOr
+parseBinop 15 = BinopXor
+parseBinop 16 = BinopLe
+parseBinop 17 = BinopBe
+parseBinop 18 = BinopEq
+parseBinop 19 = BinopB
+parseBinop x = error $ "unknown binop " ++ (show x)
+
 parseExpression :: ConsumerMonad ResponseData Expression
 parseExpression =
     do d <- consume
-       case d of
-         ResponseDataAncillary 0 [r] ->
-             return $ ExpressionRegister $ parseRegister r
-         ResponseDataAncillary 1 [val] ->
-             return $ ExpressionConst val
-         ResponseDataAncillary 2 [sz] ->
-             do addr <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) addr
-         _ -> error "failed to parse an expression"
+       let (ResponseDataAncillary 12 params) = d
+       case params of
+         [0, val] -> return $ ExpressionConst val
+         [1, reg] -> return $ ExpressionRegister $ parseRegister reg
+         [2, sz, addr] -> return $ ExpressionMem (fromIntegral sz) addr
+         [3] -> return ExpressionImported
+         [r] | isBinop r -> do a1 <- parseExpression
+                               a2 <- parseExpression
+                               return $ ExpressionBinop (parseBinop r) a1 a2
+         [20] -> do e <- parseExpression
+                    return $ ExpressionNot e
+
+         _ -> error $ "failed to parse an expression " ++ (show d)
 
 parseExpressions :: [ResponseData] -> [Expression]
 parseExpressions items =
