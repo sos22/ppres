@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 34000
+#define NOISY_AFTER_RECORD 70000
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -1089,6 +1089,10 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		case AMD64G_CC_OP_INCQ:
 		case AMD64G_CC_OP_SHRL:
 		case AMD64G_CC_OP_SHRQ:
+		case AMD64G_CC_OP_ADDB:
+		case AMD64G_CC_OP_ADDW:
+		case AMD64G_CC_OP_ADDL:
+		case AMD64G_CC_OP_ADDQ:
 			dest->lo.v = dep1.lo.v == 0;
 			dest->lo.origin = expr_eq(dep1.lo.origin, expr_const(0));
 			break;
@@ -1144,6 +1148,11 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			free_expression(dest->lo.origin);
 			dest->lo.origin = expr_le(copy_expression(dep1.lo.origin),
 					       copy_expression(dep2.lo.origin));
+			break;
+		case AMD64G_CC_OP_LOGICL:
+			dest->lo.v = (long)dep1.lo.v <= 0;
+			dest->lo.origin = expr_le(dep1.lo.origin,
+						  expr_const(0));
 			break;
 		default:
 			VG_(printf)("Strange operation code %ld for le\n", op.lo.v);
@@ -1201,6 +1210,10 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			free_expression(dest->lo.origin);
 			dest->lo.origin = expr_shrl(copy_expression(dep1.lo.origin),
 						 expr_const(63));
+			break;
+		case AMD64G_CC_OP_SUBL:
+			dest->lo.v = (long)dep1.lo.v < (long)dep2.lo.v;
+			dest->lo.origin = expr_le(dep1.lo.origin, dep2.lo.origin);
 			break;
 		default:
 			VG_(printf)("Strange operation code %ld for s\n", op.lo.v);
@@ -1593,10 +1606,6 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.lo.v;
 			dest->lo.origin = arg2.lo.origin;
 			dest->hi.origin = arg1.lo.origin;
-			VG_(printf)("64HLto{V}128: %lx:%lx %lx:%lx -> %lx:%lx\n",
-				    arg1.lo.v, arg1.hi.v,
-				    arg2.lo.v, arg2.hi.v,
-				    dest->lo.v, dest->hi.v);
 			break;
 
 		case Iop_DivModU128to64:
@@ -2536,12 +2545,12 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_data(expr_reg(REG_RAX),
 					     expr_const(fr->rax)),
 				 fr->rax, args[3]);
-		if (args[4] != fr->xmm3a)
-			VG_(printf)("XMM3 divergence: %lx != %lx\n",
-				    args[4], fr->xmm3a);
-		if (args[5] != fr->xmm0a)
-			VG_(printf)("XMM0 divergence: %lx != %lx\n",
-				    args[5], fr->xmm0a);
+		replay_assert_eq(reason_data(expr_imported(),
+					     expr_const(fr->xmm3a)),
+				 fr->xmm3a, args[4]);
+		replay_assert_eq(reason_data(expr_imported(),
+					     expr_const(fr->xmm3a)),
+				 fr->xmm0a, args[5]);
 		return;
 	}
 	case EVENT_syscall: {
