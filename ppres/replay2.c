@@ -362,17 +362,6 @@ op_binop(unsigned x)
 	return x >= EXPR_BINOP_FIRST && x <= EXPR_BINOP_LAST;
 }
 
-static void
-free_expression(const struct expression *e)
-{
-}
-
-static const struct expression *
-copy_expression(const struct expression *e)
-{
-	return e;
-}
-
 struct maybe_expression {
 	unsigned long in_use_ptr; /* Bottom bit is the in_use flag,
 				     next is the mark-and-sweep mark,
@@ -733,18 +722,11 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 	if (e1->type == EXPR_CONST && e2->type == EXPR_CONST) {
 		/* Try to do some constant folding.  We only do this
 		   for a few special cases. */
-		ec = NULL;
 		switch (op) {
 		case EXPR_ADD:
-			ec = expr_const(e1->u.cnst.val + e2->u.cnst.val);
-			break;
+			return expr_const(e1->u.cnst.val + e2->u.cnst.val);
 		default:
 			break;
-		}
-		if (ec) {
-			free_expression(e1);
-			free_expression(e2);
-			return ec;
 		}
 	}
 
@@ -791,13 +773,11 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 	if (binop_lident_0(op) &&
 	    e1->type == EXPR_CONST &&
 	    e1->u.cnst.val == 0) {
-		free_expression(e1);
 		return e2;
 	}
 	if (binop_rident_0(op) &&
 	    e2->type == EXPR_CONST &&
 	    e2->u.cnst.val == 0) {
-		free_expression(e2);
 		return e1;
 	}
 	e = _new_expression(op);
@@ -1016,7 +996,7 @@ find_origin_expression(struct interpret_mem_lookaside *iml,
 {
 	while (iml) {
 		if (iml->ptr == addr && iml->size == size)
-			return copy_expression(iml->aiv.origin);
+			return iml->aiv.origin;
 		if (iml->ptr <= addr && iml->ptr + iml->size >= addr + size) {
 			unsigned long mask;
 			switch (size) {
@@ -1025,13 +1005,13 @@ find_origin_expression(struct interpret_mem_lookaside *iml,
 			case 4: mask = 0xffffffff; break;
 			default: ASSUME(0);
 			}
-			return expr_and(expr_shrl(copy_expression(iml->aiv.origin),
+			return expr_and(expr_shrl(iml->aiv.origin,
 						  expr_const((addr - iml->ptr) * 8)),
 					expr_const(mask));
 		}
 		if (iml->ptr < addr + size &&
 		    iml->ptr + iml->size > addr) {
-			return expr_combine(copy_expression(iml->aiv.origin),
+			return expr_combine(iml->aiv.origin,
 					    find_origin_expression(iml->next, size, addr));
 		}
 		iml = iml->next;
@@ -1168,12 +1148,11 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		switch (op.lo.v) {
 		case AMD64G_CC_OP_SUBB:
 			dest->lo.v = (signed char)dep1.lo.v <= (signed char)dep2.lo.v;
-			free_expression(dest->lo.origin);
 			dest->lo.origin =
-				expr_be(expr_and(expr_add(copy_expression(dep1.lo.origin),
+				expr_be(expr_and(expr_add(dep1.lo.origin,
 							  expr_const(0x80)),
 						 expr_const(0xff)),
-					expr_and(expr_add(copy_expression(dep2.lo.origin),
+					expr_and(expr_add(dep2.lo.origin,
 							  expr_const(0x80)),
 						 expr_const(0xff)));
 			break;
@@ -1189,9 +1168,7 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			break;
 		case AMD64G_CC_OP_SUBQ:
 			dest->lo.v = (long)dep1.lo.v <= (long)dep2.lo.v;
-			free_expression(dest->lo.origin);
-			dest->lo.origin = expr_le(copy_expression(dep1.lo.origin),
-					       copy_expression(dep2.lo.origin));
+			dest->lo.origin = expr_le(dep1.lo.origin, dep2.lo.origin);
 			break;
 		case AMD64G_CC_OP_LOGICL:
 			dest->lo.v = (unsigned)(dep1.lo.v + 0x80000000) <= 0x80000000 ;
@@ -1216,16 +1193,13 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		case AMD64G_CC_OP_SUBL:
 		case AMD64G_CC_OP_SUBQ:
 			dest->lo.v = dep1.lo.v < dep2.lo.v;
-			free_expression(dest->lo.origin);
-			dest->lo.origin = expr_b(copy_expression(dep1.lo.origin),
-					      copy_expression(dep2.lo.origin));
+			dest->lo.origin = expr_b(dep1.lo.origin, dep2.lo.origin);
 			break;
 		case AMD64G_CC_OP_ADDQ:
 			dest->lo.v = dep1.lo.v + dep2.lo.v < dep1.lo.v;
-			free_expression(dest->lo.origin);
-			dest->lo.origin = expr_b(expr_add(copy_expression(dep1.lo.origin),
-						       copy_expression(dep2.lo.origin)),
-					      copy_expression(dep1.lo.origin));
+			dest->lo.origin = expr_b(expr_add(dep1.lo.origin,
+						       dep2.lo.origin),
+					      dep1.lo.origin);
 			break;
 		default:
 			VG_(printf)("Strange operation code %ld for b\n", op.lo.v);
@@ -1238,9 +1212,8 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		case AMD64G_CC_OP_SUBL:
 		case AMD64G_CC_OP_SUBQ:
 			dest->lo.v = dep1.lo.v <= dep2.lo.v;
-			free_expression(dest->lo.origin);
-			dest->lo.origin = expr_be(copy_expression(dep1.lo.origin),
-					       copy_expression(dep2.lo.origin));
+			dest->lo.origin = expr_be(dep1.lo.origin,
+					       dep2.lo.origin);
 			break;
 		default:
 			VG_(printf)("Strange operation code %ld for be\n", op.lo.v);
@@ -1257,20 +1230,17 @@ do_ccall_calculate_condition(struct interpret_state *state,
 			break;
 		case AMD64G_CC_OP_LOGICW:
 			dest->lo.v = dep1.lo.v >> 15;
-			free_expression(dest->lo.origin);
 			dest->lo.origin = expr_shrl(dep1.lo.origin,
 						    expr_const(15));
 			break;
 		case AMD64G_CC_OP_LOGICL:
 			dest->lo.v = dep1.lo.v >> 31;
-			free_expression(dest->lo.origin);
-			dest->lo.origin = expr_shrl(copy_expression(dep1.lo.origin),
+			dest->lo.origin = expr_shrl(dep1.lo.origin,
 						 expr_const(31));
 			break;
 		case AMD64G_CC_OP_LOGICQ:
 			dest->lo.v = dep1.lo.v >> 63;
-			free_expression(dest->lo.origin);
-			dest->lo.origin = expr_shrl(copy_expression(dep1.lo.origin),
+			dest->lo.origin = expr_shrl(dep1.lo.origin,
 						 expr_const(63));
 			break;
 		case AMD64G_CC_OP_SUBB:
@@ -1307,9 +1277,6 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		VG_(printf)("Strange cond code %ld (op %ld)\n", condcode.lo.v, op.lo.v);
 		VG_(tool_panic)((Char *)"failed");
 	}
-	free_expression(dep1.lo.origin);
-	free_expression(dep2.lo.origin);
-	free_expression(ndep.lo.origin);
 
 	if (inv) {
 		dest->lo.v ^= 1;
@@ -1334,7 +1301,6 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 
 	eval_expression(state, &op, args[0]);
 	tl_assert(op.lo.origin->type == EXPR_CONST);
-	free_expression(op.lo.origin);
 
 	eval_expression(state, &dep1, args[1]);
 	eval_expression(state, &dep2, args[2]);
@@ -1355,7 +1321,6 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 
 	case AMD64G_CC_OP_SUBB:
 		dest->lo.v = (unsigned char)dep1.lo.v < (unsigned char)dep2.lo.v;
-		free_expression(dest->lo.origin);
 		dest->lo.origin = expr_b(expr_and(dep1.lo.origin,
 						  expr_const(0xff)),
 					 expr_and(dep2.lo.origin,
@@ -1383,7 +1348,6 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 		/* XXX Why doesn't the Valgrind optimiser remove
 		 * these? */
 		dest->lo.v = 0;
-		free_expression(dest->lo.origin);
 		dest->lo.origin = expr_const(0);
 		break;
 
@@ -1400,10 +1364,6 @@ do_ccall_calculate_rflags_c(struct interpret_state *state,
 			    op.lo.v);
 		VG_(tool_panic)((Char *)"dead");
 	}
-
-	free_expression(dep1.lo.origin);
-	free_expression(dep2.lo.origin);
-	free_expression(ndep.lo.origin);
 }
 
 static void
@@ -1454,10 +1414,7 @@ eval_expression(struct interpret_state *state,
 {
 #define ORIGIN(x)				\
 	do {					\
-		const struct expression *t;	\
-		t = dest->lo.origin;		\
 		dest->lo.origin = x;		\
-		free_expression(t);		\
 	} while (0)
 
 	tl_assert(expr != NULL);
@@ -2114,7 +2071,6 @@ interpret_log_control_flow(VexGuestArchState *state)
 	IRSB *irsb;
 	IRStmt *stmt;
 	unsigned stmt_nr;
-	unsigned x;
 
 	addr = istate->rip.v;
 	if (addr == 0) {
@@ -2294,9 +2250,6 @@ interpret_log_control_flow(VexGuestArchState *state)
 	}
 
 finished_block:
-	for (x = 0; x < irsb->tyenv->types_used; x++) {
-		free_expression(istate->temporaries[x].lo.origin);
-	}
 	VG_(free)(istate->temporaries);
 	istate->temporaries = NULL;
 
