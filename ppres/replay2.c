@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 212620
+#define NOISY_AFTER_RECORD 218477
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -1654,6 +1654,16 @@ eval_expression(struct interpret_state *state,
 			   bits and the modulus in its high 64
 			   bits. */
 			asm ("div %4\n"
+			     : "=a" (dest->lo.v), "=d" (dest->hi.v)
+			     : "0" (arg1.lo.v), "1" (arg1.hi.v), "r" (arg2.lo.v));
+			dest->lo.origin = expr_combine(arg1.lo.origin,
+						       expr_combine(arg1.hi.origin,
+								    arg2.lo.origin));
+			dest->hi.origin = dest->lo.origin;
+			break;
+
+		case Iop_DivModS128to64:
+			asm ("idiv %4\n"
 			     : "=a" (dest->lo.v), "=d" (dest->hi.v)
 			     : "0" (arg1.lo.v), "1" (arg1.hi.v), "r" (arg2.lo.v));
 			dest->lo.origin = expr_combine(arg1.lo.origin,
