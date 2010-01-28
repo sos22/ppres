@@ -35,7 +35,7 @@
 #include "../VEX/priv/guest_amd64_defs.h"
 #include "../VEX/priv/ir_opt.h"
 
-#define NOISY_AFTER_RECORD 355857
+#define NOISY_AFTER_RECORD 1890045
 
 extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
@@ -1659,15 +1659,11 @@ eval_expression(struct interpret_state *state,
 
 		case Iop_MullU32: {
 			dest->lo.v = arg1.lo.v * arg2.lo.v;
-			VG_(printf)("%lx:%lx * %lx:%lx -> %lx\n", arg1.lo.v,
-				    arg1.hi.v, arg2.lo.v, arg2.hi.v, dest->lo.v);
 			dest->lo.origin = expr_mul(arg1.lo.origin, arg2.lo.origin);
 			break;
 		}
 		case Iop_MullS32: {
 			dest->lo.v = (long)(int)arg1.lo.v * (long)(int)arg2.lo.v;
-			VG_(printf)("%lx:%lx *s %lx:%lx -> %lx\n", arg1.lo.v,
-				    arg1.hi.v, arg2.lo.v, arg2.hi.v, dest->lo.v);
 			dest->lo.origin = expr_muls(expr_shra(expr_shl(arg1.lo.origin,
 								       expr_const(32)),
 							      expr_const(32)),
@@ -1704,6 +1700,13 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.lo.v;
 			dest->lo.origin = arg2.lo.origin;
 			dest->hi.origin = arg1.lo.origin;
+			break;
+
+		case Iop_DivModU64to32:
+			dest->lo.v = (arg1.lo.v / arg2.lo.v) |
+				((arg1.lo.v % arg2.lo.v) << 32);
+			dest->lo.origin = expr_combine(arg1.lo.origin,
+						       arg2.lo.origin);
 			break;
 
 		case Iop_DivModU128to64:
@@ -1872,11 +1875,18 @@ eval_expression(struct interpret_state *state,
 						  expr_const(32)),
 					 expr_const(32)));
 			break;
-		case Iop_8Sto32:
-			dest->lo.v = (int)(signed char)arg.lo.v;
+		case Iop_8Sto64:
+			dest->lo.v = (long)(signed char)arg.lo.v;
 			ORIGIN(expr_shra(expr_shl(arg.lo.origin,
 						  expr_const(56)),
 					 expr_const(56)));
+			break;
+		case Iop_8Sto32:
+			dest->lo.v = (int)(signed char)arg.lo.v;
+			ORIGIN(expr_and(expr_shra(expr_shl(arg.lo.origin,
+							   expr_const(56)),
+						  expr_const(56)),
+					expr_const(0xffffffff)));
 			break;
 		case Iop_16Sto64:
 			dest->lo.v = (long)(short)arg.lo.v;
@@ -2179,6 +2189,8 @@ interpret_log_control_flow(VexGuestArchState *state)
 			break;
 		case Ist_AbiHint:
 			break;
+		case Ist_MBE:
+			break;
 		case Ist_WrTmp:
 			eval_expression(istate,
 					&istate->temporaries[stmt->Ist.WrTmp.tmp],
@@ -2201,6 +2213,17 @@ interpret_log_control_flow(VexGuestArchState *state)
 							  expr_const(byte_offset * 8)),
 						 expr_and(dest->origin,
 							  expr_const(~(0xFF << (byte_offset * 8)))));
+				break;
+
+			case Ity_I16:
+				tl_assert(!(byte_offset % 2));
+				dest->v &= ~(0xFFFF << (byte_offset * 8));
+				dest->v |= data.lo.v << (byte_offset * 8);
+				dest->origin =
+					expr_or( expr_shl(data.lo.origin,
+							  expr_const(byte_offset * 8)),
+						 expr_and(dest->origin,
+							  expr_const(~(0xFFFF << (byte_offset * 8)))));
 				break;
 
 			case Ity_I64:
@@ -2244,8 +2267,9 @@ interpret_log_control_flow(VexGuestArchState *state)
 		}
 
 		default:
-			VG_(printf)("Don't know how to interpret statement\n");
+			VG_(printf)("Don't know how to interpret statement ");
 			ppIRStmt(stmt);
+			VG_(tool_panic)((Char *)"death");
 			break;
 		}
 	}
