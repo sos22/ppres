@@ -1,3 +1,78 @@
+#include "coroutines.h"
+
+struct expression {
+	unsigned type;
+	union {
+		unsigned reg;
+		struct {
+			unsigned long val;
+			struct expression *next, *prev;
+		} cnst;
+		struct {
+			const void *ptr;
+			unsigned size;
+		} mem;
+		struct {
+			const struct expression *arg1;
+			const struct expression *arg2;
+		} binop;
+		struct {
+			const struct expression *e;
+		} unop;
+	} u;
+};
+
+struct abstract_interpret_value {
+	unsigned long v;
+	const struct expression *origin;
+};
+
+struct interpret_state {
+	struct expression_result *temporaries;
+
+	/* Update commit_is_to_vex_state, initialise_is_for_vex_state,
+	   get_aiv_for_offset, and gc_explore_interpret_state when
+	   changing these. */
+	struct abstract_interpret_value gregs[16];
+	struct abstract_interpret_value rip;
+
+	struct abstract_interpret_value cc_op;
+	struct abstract_interpret_value cc_dep1;
+	struct abstract_interpret_value cc_dep2;
+	struct abstract_interpret_value cc_ndep;
+
+	struct abstract_interpret_value d_flag;
+	struct abstract_interpret_value fs_zero;
+
+	struct abstract_interpret_value xmm[32];
+};
+
+struct replay_thread {
+	struct replay_thread *next;
+	struct coroutine coroutine;
+	ThreadId id;
+
+	/* Hack: when we come back after satisfying a rdtsc, this is
+	 * what we return. */
+	ULong rdtsc_result;
+
+	unsigned last_record_nr;
+	Bool dead;
+	Bool in_monitor;
+
+	struct interpret_state interpret_state;
+};
+
+struct interpret_mem_lookaside {
+	struct interpret_mem_lookaside *next;
+	Addr ptr;
+	unsigned size;
+	struct abstract_interpret_value aiv;
+};
+
+extern struct replay_thread *head_thread;
+extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
+
 int ui_loop(void);
 int do_snapshot(int parent_fd);
 
@@ -10,6 +85,40 @@ void safeish_read(int fd, void *buffer, size_t buffer_size);
 struct msghdr;
 size_t recvmsg(int sockfd, struct msghdr *msg, int flags);
 size_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
+
+
+const struct expression *expr_reg(unsigned reg);
+const struct expression *expr_const(unsigned long c);
+const struct expression *expr_mem(void *ptr, unsigned size);
+#define expr_mem1(p) expr_mem((p), 1)
+#define expr_mem2(p) expr_mem((p), 2)
+#define expr_mem4(p) expr_mem((p), 4)
+#define expr_mem8(p) expr_mem((p), 8)
+const struct expression *expr_not(const struct expression *e);
+const struct expression *expr_imported(void);
+#define BINOP_EXPR(n)							\
+	const struct expression *expr_ ## n(const struct expression *,	\
+					    const struct expression *)
+BINOP_EXPR(sub);
+BINOP_EXPR(add);
+BINOP_EXPR(mul);
+BINOP_EXPR(mul_hi);
+BINOP_EXPR(muls);
+BINOP_EXPR(and);
+BINOP_EXPR(or);
+BINOP_EXPR(xor);
+BINOP_EXPR(shrl);
+BINOP_EXPR(shra);
+BINOP_EXPR(shl);
+BINOP_EXPR(combine);
+BINOP_EXPR(le);
+BINOP_EXPR(be);
+BINOP_EXPR(eq);
+BINOP_EXPR(b);
+
+void gc_expressions(void);
+
+
 
 #define WORKER_SNAPSHOT 0x1234
 #define WORKER_KILL 0x1235
