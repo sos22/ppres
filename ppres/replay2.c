@@ -543,7 +543,6 @@ gc_expressions(void)
 		}
 		next = a->next;
 		if (arena_free) {
-			VG_(printf)("Release expression arena.\n");
 			if (a->prev)
 				a->prev->next = a->next;
 			if (a->next)
@@ -805,7 +804,7 @@ mk_expr(b, B)
 static void
 send_expression(const struct expression *e)
 {
-	VG_(printf)("WRITE ME %s\n", __func__);
+#warning WRITE ME
 }
 
 static void
@@ -1031,8 +1030,6 @@ interpreter_do_load(struct expression_result *er,
 	er->lo.origin = find_origin_expression(head_interpret_mem_lookaside,
 					       size,
 					       addr);
-	VG_(printf)("Load %d bytes from %lx -> %lx:%lx\n", size, addr,
-		    er->lo.v, er->hi.v);
 }
 
 static void
@@ -2053,14 +2050,10 @@ interpret_log_control_flow(VexGuestArchState *state)
 				VG_(printf)("Put %lx:%lx to %x\n",
 					    data.lo.v, data.hi.v, stmt->Ist.Put.offset);
 				tl_assert(byte_offset == 0);
-				VG_(printf)("dest %p xmm2 %p\n",
-					    dest, &istate->xmm[4]);
 				*dest = data.lo;
 				*get_aiv_for_offset(istate,
 						    stmt->Ist.Put.offset + 8) =
 					data.hi;
-				VG_(printf)("xmm2a %lx, xmm2b %lx\n",
-					    istate->xmm[4].v, istate->xmm[5].v);
 				break;
 			default:
 				VG_(tool_panic)((Char *)"put to strange-sized location");
