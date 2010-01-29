@@ -224,7 +224,7 @@ parseExpression =
              do ptr <- parseExpression
                 val <- parseExpression
                 return $ ExpressionMem (fromIntegral sz) (ExpressionCoord (fromIntegral rec) (fromIntegral acc)) ptr val
-         [3] -> return ExpressionImported
+         [3, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression
                                return $ ExpressionBinop (parseBinop r) a1 a2

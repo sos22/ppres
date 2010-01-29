@@ -377,9 +377,11 @@ expr_not(const struct expression *e)
 }
 
 const struct expression *
-expr_imported(void)
+expr_imported(unsigned long val)
 {
-	return _new_expression(EXPR_IMPORTED);
+	struct expression *e = _new_expression(EXPR_IMPORTED);
+	e->u.imported.val = val;
+	return e;
 }
 
 static const struct expression *
@@ -515,7 +517,7 @@ send_expression(const struct expression *e)
 			send_expression(e->u.mem.val);
 			break;
 		case EXPR_IMPORTED:
-			expr();
+			expr(e->u.imported.val);
 			break;
 		case EXPR_NOT:
 			expr();

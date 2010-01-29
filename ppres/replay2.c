@@ -718,10 +718,10 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_control(), fr->rip, args[0]);
 #define CHECK_REG(i)							\
 		replay_assert_eq(					\
-			reason_data(expr_imported(),			\
-				    expr_const(fr-> FOOTSTEP_REG_ ## i ## _NAME ) ), \
-			fr-> FOOTSTEP_REG_ ## i ## _NAME,		\
-			args[i+1])
+				 reason_data(expr_imported(args[i+1]),	\
+					     expr_const(fr-> FOOTSTEP_REG_ ## i ## _NAME ) ), \
+				 fr-> FOOTSTEP_REG_ ## i ## _NAME,	\
+				 args[i+1])
 		CHECK_REG(0);
 		CHECK_REG(1);
 		CHECK_REG(2);
@@ -760,40 +760,40 @@ validate_event(const struct record_header *rec,
 				 rec->size - sizeof(*rec) - sizeof(*mrr),
 				 args[1]);
 		switch (args[1]) {
-		case 1:
-			replay_assert_eq(reason_data(expr_mem1(expr_const(mrr->ptr), expr_imported()),
-						     expr_const(*(unsigned char *)mp)),
-					 *(unsigned char *)mp,
-					 *(unsigned char *)args[2]);
-			break;
-		case 2:
-			replay_assert_eq(reason_data(expr_mem2(expr_const(mrr->ptr), expr_imported()),
-						     expr_const(*(unsigned short *)mp)),
-					 *(unsigned short *)mp,
-					 *(unsigned short *)args[2]);
-			break;
-		case 4:
-			replay_assert_eq(reason_data(expr_mem4(expr_const(mrr->ptr), expr_imported()),
-						     expr_const(*(unsigned *)mp)),
-					 *(unsigned *)mp,
-					 *(unsigned *)args[2]);
-			break;
-		case 8:
-			replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr), expr_imported()),
-						     expr_const(*(unsigned long *)mp)),
-					 *(unsigned long *)mp,
-					 *(unsigned long *)args[2]);
-			break;
-		case 16:
-			replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr), expr_imported()),
-						     expr_const(((unsigned long *)mp)[0])),
-					 ((unsigned long *)mp)[0],
-					 ((unsigned long *)args[2])[0]);
-			replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr + 8), expr_imported()),
-						     expr_const(((unsigned long *)mp)[1])),
-					 ((unsigned long *)mp)[1],
-					 ((unsigned long *)args[2])[1]);
-			break;
+#define do_case(sz, typ)						\
+			case sz: {					\
+				typ *_args = (typ *)args[2];		\
+				typ *_buf = (typ *)mp;			\
+				replay_assert_eq(			\
+					reason_data(			\
+						expr_mem ## sz (	\
+							expr_const(mrr->ptr), \
+							expr_imported(*_args)), \
+						expr_const(*_buf)),	\
+					*_buf,				\
+					*_args);			\
+				break;					\
+			}
+			do_case(1, unsigned char)
+			do_case(2, unsigned short)
+			do_case(4, unsigned)
+			do_case(8, unsigned long)
+#undef do_case
+		case 16: {
+				unsigned long *_args = (unsigned long *)args[2];
+				unsigned long *_buf = (unsigned long *)mp;
+				replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr),
+								       expr_imported(_args[1])),
+							     expr_const(_buf[0])),
+						 _args[0],
+						 _buf[0]);
+				replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr+8),
+								       expr_imported(_args[1])),
+							     expr_const(_buf[1])),
+						 _args[1],
+						 _buf[1]);
+				break;
+			}
 		default:
 			ASSUME(0);
 		}

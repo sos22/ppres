@@ -107,7 +107,7 @@ data ExpressionCoord = ExpressionCoord Integer Integer
 data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
                 | ExpressionMem Int ExpressionCoord Expression Expression
-                | ExpressionImported
+                | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression
 

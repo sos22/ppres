@@ -136,6 +136,9 @@ struct expression {
 			struct expression *next, *prev;
 		} cnst;
 		struct {
+			unsigned long val;
+		} imported;
+		struct {
 			unsigned record_nr;
 			unsigned mem_access_nr;
 			unsigned size;
@@ -221,7 +224,7 @@ const struct expression *expr_mem(unsigned size, const struct expression *ptr,
 #define expr_mem4(p, v) expr_mem(4, (p), (v))
 #define expr_mem8(p, v) expr_mem(8, (p), (v))
 const struct expression *expr_not(const struct expression *e);
-const struct expression *expr_imported(void);
+const struct expression *expr_imported(unsigned long value);
 #define BINOP_EXPR(n)							\
 	const struct expression *expr_ ## n(const struct expression *,	\
 					    const struct expression *)

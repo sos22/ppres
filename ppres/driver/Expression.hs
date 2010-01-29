@@ -49,7 +49,8 @@ instance Show Expression where
     showsPrec _ (ExpressionConst x) = showHex x
     showsPrec p (ExpressionMem _ when ptr val) =
         showParen (p <= 11) $ shows when . showString "[" . showsPrec 0 ptr . showString "]" . showsPrec 11 val
-    showsPrec _ (ExpressionImported) = showString "imported"
+    showsPrec p (ExpressionImported val) =
+        showParen (p <= 10) $ showString "imported" . showHex val
     showsPrec p (ExpressionBinop op l r) =
         let prec = binopPrec op
         in showParen (p <= prec) $ showsPrec prec l . showString " " . shows op . showString " " . showsPrec prec r

@@ -153,6 +153,7 @@ find_origin_expression(struct interpret_mem_lookaside *iml,
 		       unsigned size,
 		       unsigned long addr)
 {
+	unsigned long t;
 	while (iml) {
 		if (iml->ptr == addr && iml->size == size)
 			return iml->aiv.origin;
@@ -175,7 +176,8 @@ find_origin_expression(struct interpret_mem_lookaside *iml,
 		}
 		iml = iml->next;
 	}
-	return expr_imported();
+	VG_(memcpy)(&t, (void *)addr, size);
+	return expr_imported(t);
 }
 
 static void
@@ -1210,7 +1212,7 @@ do_dirty_call_cswitch(struct interpret_state *is,
 		if (details->tmp != IRTemp_INVALID) {
 			is->temporaries[details->tmp].lo.v = res;
 			is->temporaries[details->tmp].lo.origin =
-				expr_imported();
+				expr_imported(res);
 			is->temporaries[details->tmp].hi.v = 0;
 			is->temporaries[details->tmp].hi.origin = NULL;
 		}
@@ -1426,7 +1428,8 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		   analyses. :) */
 		tl_assert(res);
 
-		istate->registers[REG_RDX].origin = expr_imported();
+		istate->registers[REG_RDX].origin =
+			expr_imported(istate->registers[REG_RDX].v);
 	}
 
 finished_block:
