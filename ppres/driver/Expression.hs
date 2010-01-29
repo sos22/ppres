@@ -53,5 +53,5 @@ instance Show Expression where
         let prec = binopPrec op
         in showParen (p <= prec) $ showsPrec prec l . showString " " . shows op . showString " " . showsPrec prec r
     showsPrec p (ExpressionNot e) =
-        showParen (p <= 1) $ showString "-" . showsPrec 2 e
+        showParen (p <= 1) $ showString "~" . showsPrec 2 e
     
