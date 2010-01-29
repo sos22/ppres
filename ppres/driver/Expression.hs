@@ -44,7 +44,8 @@ instance Show ExpressionCoord where
     show (ExpressionCoord rec acc) = "{" ++ (show rec) ++ "," ++ (show acc) ++ "}"
 
 instance Show Expression where
-    showsPrec _ (ExpressionRegister n when val) = shows when . shows n . showsPrec 11 val
+    showsPrec p (ExpressionRegister n when val) =
+        showParen (p <= 11) $ shows when . shows n . showsPrec 11 val
     showsPrec _ (ExpressionConst x) = showHex x
     showsPrec p (ExpressionMem sz when ptr val) =
         showParen (p <= 11) $ shows when . showString "[" . showsPrec 0 ptr . showString "]" . showsPrec 11 val
