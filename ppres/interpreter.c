@@ -22,7 +22,7 @@
 
 #include "replay2.h"
 
-#define NOISY_AFTER_RECORD 1890045
+#define NOISY_AFTER_RECORD 1
 
 extern void VG_(init_vex)(void);
 extern void vexSetAllocModeTEMP_and_clear ( void );
@@ -237,7 +237,8 @@ do_ccall_calculate_condition(struct interpret_state *state,
 		case AMD64G_CC_OP_LOGICL:
 		case AMD64G_CC_OP_LOGICQ:
 			dest->lo.v = dep1.lo.v == 0;
-			dest->lo.origin = dep1.lo.origin;
+			dest->lo.origin = expr_eq(dep1.lo.origin,
+						  expr_const(0));
 			break;
 		case AMD64G_CC_OP_SUBB:
 		case AMD64G_CC_OP_SUBW:
