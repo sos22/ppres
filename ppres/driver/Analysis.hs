@@ -1,4 +1,4 @@
-module Analysis(findRacingAccesses) where
+module Analysis(findRacingAccesses, findControlFlowRaces) where
 
 import Types
 
@@ -21,3 +21,23 @@ findRacingAccesses a b =
                (trc_load_val $ trc_trc load) /= (trc_store_val $ trc_trc store)
               ]
     in res
+
+{- Given a list of pairs of racing accesses and a list of expressions
+   on which control flow depends, find all of the races which might
+   have influenced control flow. -}
+
+findControlFlowRaces :: [(TraceRecord, TraceRecord)] -> [Expression] -> [(TraceRecord, TraceRecord)]
+findControlFlowRaces races expressions =
+    filter isRelevant races
+    where isRelevant (load, _) = or $ map (expressionMentionsLoad load) expressions
+          expressionMentionsLoad _ (ExpressionRegister _ _) = False
+          expressionMentionsLoad _ (ExpressionConst _) = False
+          expressionMentionsLoad _ (ExpressionImported _ ) = False
+          expressionMentionsLoad e (ExpressionBinop _ x y) = expressionMentionsLoad e x || expressionMentionsLoad e y
+          expressionMentionsLoad e (ExpressionNot x) = expressionMentionsLoad e x
+          expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) (TraceLocation rec acc _))
+                                     (ExpressionMem _ (ExpressionCoord rec' acc') _ _) =
+                                         rec == rec' && acc == acc'
+          expressionMentionsLoad _ _ = error "confused"
+
+              

@@ -32,6 +32,7 @@ data UIExpression = UIDummyFunction
                   | UIFindRacingAccesses UIExpression UIExpression
                   | UIReplayState UIExpression
                   | UIControlTrace UIExpression Integer
+                  | UIFindControlRaces UIExpression UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -59,6 +60,11 @@ expressionParser =
     let oneExprArgParser name constructor =
             do keyword name
                liftM constructor $ expressionParser
+        twoExprArgParser name constructor =
+            do keyword name
+               a <- expressionParser
+               b <- expressionParser
+               return $ constructor a b
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
@@ -88,14 +94,9 @@ expressionParser =
                   t <- thread_id_parser
                   n <- P.integer command_lexer
                   return $ UIRunMemory snap t n,
-               do keyword "pair"
-                  a <- expressionParser
-                  b <- expressionParser
-                  return $ UIPair a b,
-               do keyword "findraces"
-                  a <- expressionParser
-                  b <- expressionParser
-                  return $ UIFindRacingAccesses a b,
+               twoExprArgParser "pair" UIPair,
+               twoExprArgParser "findraces" UIFindRacingAccesses,
+               twoExprArgParser "findcontrolraces" UIFindControlRaces,
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
@@ -175,6 +176,10 @@ evalExpression ws f =
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
                     return $ findRacingAccesses a' b'
+      UIFindControlRaces a b ->
+          toUI $ do a' <- fromUI $ evalExpression ws a
+                    b' <- fromUI $ evalExpression ws b
+                    return $ findControlFlowRaces a' b'
       UIRemoveFootsteps e ->
           toUI $ do es <- fromUI $ evalExpression ws e
                     let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
