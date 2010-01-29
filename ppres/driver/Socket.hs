@@ -57,7 +57,8 @@ recvArray s sock nr_items =
                     return $ i:rest
          in allocaBytes len $ \ptr ->
              do (r, _) <- recvBufFrom sock ptr len
-                peekArray ptr nr_items
+                if r /= len then error "other end hung up on us?"
+                   else peekArray ptr nr_items
 
 recvStringBytes :: Socket -> Int32 -> IO String
 recvStringBytes sock len =

@@ -43,6 +43,6 @@ catch_pthread.o: catch_pthread.c
 	gcc -Wall -I/usr/local/include -I../include -shared -c -fPIC catch_pthread.c
 
 driver/UI:
-	cd driver && ghc --make -Wall UI.hs
+	cd driver && ghc --make -Wall -fno-warn-orphans UI.hs
 
 .PHONY: driver/UI
