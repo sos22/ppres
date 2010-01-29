@@ -403,6 +403,12 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 		switch (op) {
 		case EXPR_ADD:
 			return expr_const(e1->u.cnst.val + e2->u.cnst.val);
+		case EXPR_AND:
+			return expr_const(e1->u.cnst.val & e2->u.cnst.val);
+		case EXPR_OR:
+			return expr_const(e1->u.cnst.val | e2->u.cnst.val);
+		case EXPR_XOR:
+			return expr_const(e1->u.cnst.val ^ e2->u.cnst.val);
 		default:
 			break;
 		}
