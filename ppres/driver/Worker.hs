@@ -185,6 +185,10 @@ parseRegister 12 = REG_R12
 parseRegister 13 = REG_R13
 parseRegister 14 = REG_R14
 parseRegister 15 = REG_R15
+parseRegister 16 = REG_CC_OP
+parseRegister 17 = REG_CC_DEP1
+parseRegister 18 = REG_CC_DEP2
+parseRegister 19 = REG_CC_NDEP
 parseRegister r = error $ "bad register encoding " ++ (show r)
 
 isBinop :: Word64 -> Bool

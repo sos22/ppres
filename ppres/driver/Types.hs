@@ -79,6 +79,10 @@ data RegisterName = REG_RAX
                   | REG_R13
                   | REG_R14
                   | REG_R15
+                  | REG_CC_OP
+                  | REG_CC_DEP1
+                  | REG_CC_DEP2
+                  | REG_CC_NDEP
                     deriving Show
 
 data Binop = BinopCombine
