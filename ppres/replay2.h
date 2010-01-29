@@ -128,10 +128,8 @@ struct expression {
 	unsigned type;
 	union {
 		struct {
-			unsigned record_nr;
-			unsigned mem_access_nr;
 			unsigned name;
-			const struct expression *val;
+			unsigned long val;
 		} reg;
 		struct {
 			unsigned long val;
@@ -214,7 +212,7 @@ size_t recvmsg(int sockfd, struct msghdr *msg, int flags);
 size_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
 
 
-const struct expression *expr_reg(unsigned reg, const struct expression *val);
+const struct expression *expr_reg(unsigned reg, unsigned long val);
 const struct expression *expr_const(unsigned long c);
 const struct expression *expr_mem(unsigned size, const struct expression *ptr,
 				  const struct expression *val);

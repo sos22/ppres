@@ -104,7 +104,7 @@ data Binop = BinopCombine
 
 data ExpressionCoord = ExpressionCoord Integer Integer
 
-data Expression = ExpressionRegister RegisterName ExpressionCoord Expression
+data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
                 | ExpressionMem Int ExpressionCoord Expression Expression
                 | ExpressionImported

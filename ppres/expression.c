@@ -144,10 +144,8 @@ gc_explore_expression(const struct expression *e)
 		switch (e->type) {
 		case EXPR_CONST:
 		case EXPR_IMPORTED:
-			break;
 		case EXPR_REG:
-			gc_explore_expression(e->u.reg.val);
-			return;
+			break;
 		case EXPR_MEM:
 			gc_explore_expression(e->u.mem.ptr_e);
 			gc_explore_expression(e->u.mem.val);
@@ -320,12 +318,10 @@ _new_expression(unsigned code)
 }
 
 const struct expression *
-expr_reg(unsigned reg, const struct expression *val)
+expr_reg(unsigned reg, unsigned long val)
 {
 	struct expression *e;
 	e = _new_expression(EXPR_REG);
-	e->u.reg.record_nr = record_nr;
-	e->u.reg.mem_access_nr = access_nr;
 	e->u.reg.name = reg;
 	e->u.reg.val = val;
 	return e;
@@ -511,11 +507,10 @@ send_expression(const struct expression *e)
 			expr(e->u.cnst.val);
 			break;
 		case EXPR_REG:
-			expr(e->u.reg.name, e->u.reg.record_nr, e->u.reg.mem_access_nr);
-			send_expression(e->u.reg.val);
+			expr(e->u.reg.name, e->u.reg.val);
 			break;
 		case EXPR_MEM:
-			expr(e->u.mem.size, e->u.reg.record_nr, e->u.reg.mem_access_nr);
+			expr(e->u.mem.size, e->u.mem.record_nr, e->u.mem.mem_access_nr);
 			send_expression(e->u.mem.ptr_e);
 			send_expression(e->u.mem.val);
 			break;

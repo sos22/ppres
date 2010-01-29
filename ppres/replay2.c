@@ -733,16 +733,16 @@ validate_event(const struct record_header *rec,
 	case EVENT_syscall: {
 		const struct syscall_record *sr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_syscall);
-		replay_assert_eq(reason_data(expr_reg(REG_RAX, expr_imported()),
+		replay_assert_eq(reason_data(expr_reg(REG_RAX, args[0]),
 					     expr_const(sr->syscall_nr)),
 				 sr->syscall_nr, args[0]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDI, expr_imported()),
+		replay_assert_eq(reason_data(expr_reg(REG_RDI, args[1]),
 					     expr_const(sr->arg1)),
 				 sr->arg1, args[1]);
-		replay_assert_eq(reason_data(expr_reg(REG_RSI, expr_imported()),
+		replay_assert_eq(reason_data(expr_reg(REG_RSI, args[2]),
 					     expr_const(sr->arg2)),
 				 sr->arg2, args[2]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDX, expr_imported()),
+		replay_assert_eq(reason_data(expr_reg(REG_RDX, args[3]),
 					     expr_const(sr->arg3)),
 				 sr->arg3, args[3]);
 		return;

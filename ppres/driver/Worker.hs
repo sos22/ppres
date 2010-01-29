@@ -219,9 +219,7 @@ parseExpression =
        let (ResponseDataAncillary 12 params) = d
        case params of
          [0, val] -> return $ ExpressionConst val
-         [1, reg, rec, acc] ->
-             do val <- parseExpression
-                return $ ExpressionRegister (parseRegister reg) (ExpressionCoord (fromIntegral rec) (fromIntegral acc)) val
+         [1, reg, val] -> return $ ExpressionRegister (parseRegister reg) val
          [2, sz, rec, acc] ->
              do ptr <- parseExpression
                 val <- parseExpression

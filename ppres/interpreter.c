@@ -33,10 +33,11 @@ static void eval_expression(struct interpret_state *state,
 
 static void
 init_register(struct abstract_interpret_value *aiv,
+	      unsigned name,
 	      unsigned long value)
 {
 	aiv->v = value;
-	aiv->origin = expr_imported();
+	aiv->origin = expr_reg(name, value);
 }
 
 static void
@@ -45,7 +46,7 @@ initialise_is_for_vex_state(struct interpret_state *is,
 {
 	unsigned x;
 	for (x = 0; x <= REG_LAST; x++)
-		init_register(&is->registers[x], (&state->guest_RAX)[x]);
+		init_register(&is->registers[x], x, (&state->guest_RAX)[x]);
 }
 
 void
@@ -128,7 +129,7 @@ read_reg(struct interpret_state *state, unsigned offset, unsigned long *v)
 {
 	struct abstract_interpret_value *aiv = get_aiv_for_offset(state, offset);
 	*v = aiv->v;
-	return expr_reg(offset / 8, aiv->origin);
+	return aiv->origin;
 }
 
 static void
