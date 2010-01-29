@@ -22,7 +22,7 @@
 
 #include "replay2.h"
 
-#define NOISY_AFTER_RECORD 1
+#define NOISY_AFTER_RECORD 10000000
 
 extern void VG_(init_vex)(void);
 extern void vexSetAllocModeTEMP_and_clear ( void );
@@ -97,7 +97,6 @@ commit_interpreter_state(void)
 	}
 	/* Actual memory is already correct, so this just needs to
 	   release all the slots. */
-	VG_(printf)("Committing interpreter memory...\n");
 	for (iml = head_interpret_mem_lookaside;
 	     iml != NULL;
 	     iml = next) {
@@ -105,7 +104,6 @@ commit_interpreter_state(void)
 		VG_(free)(iml);
 	}
 	head_interpret_mem_lookaside = NULL;
-	VG_(printf)("Done commit.\n");
 }
 
 static Bool
@@ -696,9 +694,6 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.hi.v + arg2.hi.v;
 			dest->lo.origin = expr_add(arg1.lo.origin, arg2.lo.origin);
 			dest->hi.origin = expr_add(arg1.hi.origin, arg2.hi.origin);
-			VG_(printf)("Add64x %lx:%lx + %lx:%lx -> %lx:%lx\n",
-				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
-				    dest->lo.v, dest->hi.v);
 			break;
 		case Iop_Add32:
 			dest->lo.v = (arg1.lo.v + arg2.lo.v) & 0xffffffff;
@@ -875,8 +870,6 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.hi.v;
 			dest->lo.origin = arg2.hi.origin;
 			dest->hi.origin = arg1.hi.origin;
-			VG_(printf)("Interleave hi 64x2 %lx %lx -> %lx:%lx\n",
-				    arg2.hi.v, arg1.hi.v, dest->hi.v, dest->lo.v);
 			break;
 
 		case Iop_InterleaveLO32x4:
@@ -890,9 +883,6 @@ eval_expression(struct interpret_state *state,
 							    expr_const(32)),
 						  expr_and(arg1.lo.origin,
 							   expr_const(0xffffffff00000000ul)));
-			VG_(printf)("Interleave lo32x4 %lx:%lx %lx:%lx -> %lx:%lx\n",
-				    arg1.hi.v, arg1.lo.v, arg2.hi.v, arg2.lo.v,
-				    dest->hi.v, dest->lo.v);
 			break;
 
 		case Iop_InterleaveHI32x4:
@@ -906,9 +896,6 @@ eval_expression(struct interpret_state *state,
 							    expr_const(32)),
 						  expr_and(arg1.hi.origin,
 							   expr_const(0xffffffff00000000ul)));
-			VG_(printf)("Interleave hi32x4 %lx:%lx %lx:%lx -> %lx:%lx\n",
-				    arg1.hi.v, arg1.lo.v, arg2.hi.v, arg2.lo.v,
-				    dest->hi.v, dest->lo.v);
 			break;
 
 		case Iop_ShrN64x2:
@@ -923,9 +910,6 @@ eval_expression(struct interpret_state *state,
 			dest->hi.v = arg1.hi.v << arg2.lo.v;
 			dest->lo.origin = expr_shl(arg1.lo.origin, arg2.lo.origin);
 			dest->hi.origin = expr_shl(arg1.hi.origin, arg2.lo.origin);
-			VG_(printf)("shln64x2 %lx:%lx %lx:%lx -> %lx:%lx\n",
-				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
-				    dest->lo.v, dest->hi.v);
 			break;
 
 		case Iop_CmpGT32Sx4:
@@ -941,9 +925,6 @@ eval_expression(struct interpret_state *state,
 				dest->hi.v |= 0xffffffff00000000;
 			dest->lo.origin = expr_combine(arg1.lo.origin, arg2.lo.origin);
 			dest->hi.origin = expr_combine(arg1.hi.origin, arg2.hi.origin);
-			VG_(printf)("%lx:%lx > %lx:%lx -> %lx:%lx\n",
-				    arg1.lo.v, arg1.hi.v, arg2.lo.v, arg2.hi.v,
-				    dest->lo.v, dest->hi.v);
 			break;
 
 		default:
@@ -1122,6 +1103,58 @@ do_helper_store_cswitch(unsigned size,
 		    rsp.v);
 }
 
+static struct expression_result
+do_helper_cas_cswitch(struct interpret_state *is,
+		      unsigned size,
+		      struct abstract_interpret_value addr,
+		      struct expression_result expected,
+		      struct expression_result data,
+		      struct abstract_interpret_value rsp)
+{
+	struct expression_result seen;
+	struct expression_result new;
+	const struct expression *pred;
+
+	seen = do_helper_load_cswitch(is, size, addr, rsp);
+	pred = expr_eq(seen.lo.origin, expected.lo.origin);
+	if (seen.hi.origin)
+		pred = expr_and(pred,
+				expr_eq(seen.hi.origin,
+					expected.hi.origin));
+	if (seen.lo.v == expected.lo.v && seen.hi.v == expected.hi.v) {
+		new.lo.v = data.lo.v;
+		new.hi.v = data.hi.v;
+		new.lo.origin = expr_combine(pred, data.lo.origin);
+		if (data.hi.origin)
+			new.hi.origin = expr_combine(pred, data.hi.origin);
+		else
+			new.hi.origin = NULL;
+
+		do_helper_store_cswitch(size,
+					addr,
+					new,
+					rsp);
+	} else {
+		new.lo.v = seen.lo.v;
+		new.hi.v = seen.hi.v;
+		new.lo.origin = expr_combine(pred,
+					     seen.lo.origin);
+		if (seen.hi.origin)
+			new.hi.origin = expr_combine(pred, seen.hi.origin);
+		else
+			new.hi.origin = NULL;
+
+		if (size == 16) {
+			interpret_create_mem_lookaside(addr.v, 8, new.lo);
+			interpret_create_mem_lookaside(addr.v+8, 8, new.hi);
+		} else {
+			interpret_create_mem_lookaside(addr.v, size, new.lo);
+		}
+	}
+
+	return seen;
+}
+
 #define strcmp(x, y) VG_(strcmp)((Char *)(x), (Char *)y)
 
 /* XXX We don't track dependencies through dirty calls at all.  Oh
@@ -1182,6 +1215,22 @@ do_dirty_call_cswitch(struct interpret_state *is,
 	} else if (!strcmp(details->cee->name, "helper_store_128")) {
 		args[1].hi = args[2].lo;
 		do_helper_store_cswitch(16, args[0].lo, args[1], args[3].lo);
+	} else if (!strcmp(details->cee->name, "helper_cas_8")) {
+		is->temporaries[details->tmp] =
+			do_helper_cas_cswitch(is, 1, args[0].lo, args[1], args[2],
+					      args[3].lo);
+	} else if (!strcmp(details->cee->name, "helper_cas_16")) {
+		is->temporaries[details->tmp] =
+			do_helper_cas_cswitch(is, 2, args[0].lo, args[1], args[2],
+					      args[3].lo);
+	} else if (!strcmp(details->cee->name, "helper_cas_32")) {
+		is->temporaries[details->tmp] =
+			do_helper_cas_cswitch(is, 4, args[0].lo, args[1], args[2],
+					      args[3].lo);
+	} else if (!strcmp(details->cee->name, "helper_cas_64")) {
+		is->temporaries[details->tmp] =
+			do_helper_cas_cswitch(is, 8, args[0].lo, args[1], args[2],
+					      args[3].lo);
 	} else {
 		VG_(printf)("Unknown dirty call %s\n", details->cee->name);
 		commit_interpreter_state();
@@ -1416,13 +1465,11 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		Bool res;
 		UWord *args;
 		args = (UWord *)istate->registers[0].v;
-		VG_(printf)("Client request %lx %lx\n", args[0], args[1]);
 		VG_(in_generated_code) = False;
 		res = client_request_event(current_thread->id,
 					   args,
 					   &istate->registers[REG_RDX].v);
 		VG_(in_generated_code) = True;
-		VG_(printf)("Done client request.\n");
 
 		/* Don't try to combine this with other Valgrind
 		   analyses. :) */
