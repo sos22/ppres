@@ -598,10 +598,10 @@ eval_expression(struct interpret_state *state,
 		case Ity_V128:
 			tl_assert(!sub_word_offset);
 			dest->lo.v = v1;
-			dest->lo.origin = read_reg(state,
+			dest->lo.origin = src1;
+			dest->hi.origin = read_reg(state,
 						   expr->Iex.Get.offset - sub_word_offset,
 						   &dest->hi.v);
-			dest->lo.origin = src1;
 			break;
 		case Ity_I32:
 			tl_assert(!(sub_word_offset % 4));
@@ -1389,7 +1389,8 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 	tl_assert(irsb->jumpkind == Ijk_Boring ||
 		  irsb->jumpkind == Ijk_Call ||
 		  irsb->jumpkind == Ijk_Ret ||
-		  irsb->jumpkind == Ijk_Sys_syscall);
+		  irsb->jumpkind == Ijk_Sys_syscall ||
+		  irsb->jumpkind == Ijk_ClientReq);
 
 	{
 		struct expression_result next_addr;
@@ -1405,6 +1406,24 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		initialise_interpreter_state();
 	}
 
+	if (irsb->jumpkind == Ijk_ClientReq) {
+		Bool res;
+		UWord *args;
+		args = (UWord *)istate->registers[0].v;
+		VG_(printf)("Client request %lx %lx\n", args[0], args[1]);
+		VG_(in_generated_code) = False;
+		res = client_request_event(current_thread->id,
+					   args,
+					   &istate->registers[REG_RDX].v);
+		VG_(in_generated_code) = True;
+		VG_(printf)("Done client request.\n");
+
+		/* Don't try to combine this with other Valgrind
+		   analyses. :) */
+		tl_assert(res);
+
+		istate->registers[REG_RDX].origin = expr_imported();
+	}
 finished_block:
 	VG_(free)(istate->temporaries);
 	istate->temporaries = NULL;

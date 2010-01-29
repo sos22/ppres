@@ -120,6 +120,7 @@ struct response_string {
 #define EXPR_NOT 20
 
 
+extern Bool VG_(in_generated_code);
 
 
 
@@ -259,6 +260,8 @@ void store_event(void *ptr, unsigned size, const void *written_bytes,
 void footstep_event(Addr rip, Word rdx, Word rcx, Word rax,
 		    unsigned long xmm3a, unsigned long xmm0a);
 void syscall_event(VexGuestAMD64State *state);
+Bool client_request_event(ThreadId tid, UWord *arg_block, UWord *ret);
+
 void send_expression(const struct expression *e);
 void send_non_const_expression(const struct expression *e);
 

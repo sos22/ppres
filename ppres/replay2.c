@@ -27,7 +27,6 @@
 #include "replay.h"
 #include "replay2.h"
 
-extern Bool VG_(in_generated_code);
 extern ThreadId VG_(running_tid);
 extern Bool VG_(tool_handles_synchronisation);
 extern ULong (*tool_provided_rdtsc)(void);
@@ -506,7 +505,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 	}
 }
 
-static Bool
+Bool
 client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 {
 	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
