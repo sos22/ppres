@@ -159,13 +159,16 @@ struct abstract_interpret_value {
 	const struct expression *origin;
 };
 
-struct interpret_state {
-	struct expression_result *temporaries;
+struct expression_result {
+	struct abstract_interpret_value lo;
+	struct abstract_interpret_value hi;
+};
 
-	/* Update commit_is_to_vex_state, initialise_is_for_vex_state,
-	   get_aiv_for_offset, and gc_explore_interpret_state when
-	   changing these. */
+struct interpret_state {
+	unsigned nr_temporaries;
+	struct expression_result *temporaries;
 	struct abstract_interpret_value registers[REG_LAST+1];
+	const struct expression *hazard[2];
 };
 
 struct replay_thread {
@@ -264,6 +267,10 @@ Bool client_request_event(ThreadId tid, UWord *arg_block, UWord *ret);
 
 void send_expression(const struct expression *e);
 void send_non_const_expression(const struct expression *e);
+void ref_expression_result(struct interpret_state *is,
+			   const struct expression_result *er);
+void deref_expression_result(struct interpret_state *is,
+			     const struct expression_result *er);
 
 void _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args);
 #define send_ancillary(_code, ...)                         \

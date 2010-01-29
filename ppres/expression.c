@@ -172,7 +172,13 @@ gc_explore_interpret_state(const struct interpret_state *is)
 {
 	unsigned x;
 
-	tl_assert(is->temporaries == NULL);
+	gc_explore_expression(is->hazard[0]);
+	gc_explore_expression(is->hazard[1]);
+
+	for (x = 0; x < is->nr_temporaries; x++) {
+		gc_explore_aiv(&is->temporaries[x].lo);
+		gc_explore_aiv(&is->temporaries[x].hi);
+	}
 	for (x = 0; x <= REG_LAST; x++)
 		gc_explore_aiv(&is->registers[x]);
 }
@@ -532,4 +538,24 @@ send_non_const_expression(const struct expression *e)
 {
 	if (e->type != EXPR_CONST)
 		send_expression(e);
+}
+
+void
+ref_expression_result(struct interpret_state *is,
+		      const struct expression_result *er)
+{
+	tl_assert(!is->hazard[0]);
+	tl_assert(!is->hazard[1]);
+	is->hazard[0] = er->lo.origin;
+	is->hazard[1] = er->hi.origin;
+}
+
+void
+deref_expression_result(struct interpret_state *is,
+			const struct expression_result *er)
+{
+	tl_assert(is->hazard[0] == er->lo.origin);
+	tl_assert(is->hazard[1] == er->hi.origin);
+	is->hazard[0] = NULL;
+	is->hazard[1] = NULL;
 }

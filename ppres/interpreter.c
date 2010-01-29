@@ -27,11 +27,6 @@
 extern void VG_(init_vex)(void);
 extern void vexSetAllocModeTEMP_and_clear ( void );
 
-struct expression_result {
-	struct abstract_interpret_value lo;
-	struct abstract_interpret_value hi;
-};
-
 static void eval_expression(struct interpret_state *state,
 			    struct expression_result *dest,
 			    IRExpr *expr);
@@ -1081,25 +1076,28 @@ eval_expression(struct interpret_state *state,
 }
 
 static struct expression_result
-do_helper_load(unsigned size,
-	       struct abstract_interpret_value addr,
-	       struct abstract_interpret_value rsp)
+do_helper_load_cswitch(struct interpret_state *is,
+		       unsigned size,
+		       struct abstract_interpret_value addr,
+		       struct abstract_interpret_value rsp)
 {
 	struct expression_result res;
 	unsigned char dummy_buf[16];
 
 	interpreter_do_load(&res, size, addr);
 
+	ref_expression_result(is, &res);
 	load_event((const void *)addr.v, size, dummy_buf, rsp.v);
+	deref_expression_result(is, &res);
 
 	return res;
 }
 
 static void
-do_helper_store(unsigned size,
-		struct abstract_interpret_value addr,
-		struct expression_result data,
-		struct abstract_interpret_value rsp)
+do_helper_store_cswitch(unsigned size,
+			struct abstract_interpret_value addr,
+			struct expression_result data,
+			struct abstract_interpret_value rsp)
 {
 	unsigned long buf[2];
 
@@ -1123,10 +1121,10 @@ do_helper_store(unsigned size,
 /* XXX We don't track dependencies through dirty calls at all.  Oh
  * well. */
 static void
-do_dirty_call(struct interpret_state *is,
-	      VexGuestAMD64State *state,
-	      IRSB *irsb,
-	      IRDirty *details)
+do_dirty_call_cswitch(struct interpret_state *is,
+		      VexGuestAMD64State *state,
+		      IRSB *irsb,
+		      IRDirty *details)
 {
 	struct expression_result guard;
 	struct expression_result args[6];
@@ -1154,30 +1152,30 @@ do_dirty_call(struct interpret_state *is,
 			       args[5].lo.v);
 	} else if (!strcmp(details->cee->name, "helper_load_8")) {
 		is->temporaries[details->tmp] =
-			do_helper_load(1, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 1, args[0].lo, args[1].lo);
 	} else if (!strcmp(details->cee->name, "helper_load_16")) {
 		is->temporaries[details->tmp] =
-			do_helper_load(2, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 2, args[0].lo, args[1].lo);
 	} else if (!strcmp(details->cee->name, "helper_load_32")) {
 		is->temporaries[details->tmp] =
-			do_helper_load(4, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 4, args[0].lo, args[1].lo);
 	} else if (!strcmp(details->cee->name, "helper_load_64")) {
 		is->temporaries[details->tmp] =
-			do_helper_load(8, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 8, args[0].lo, args[1].lo);
 	} else if (!strcmp(details->cee->name, "helper_load_128")) {
 		is->temporaries[details->tmp] =
-			do_helper_load(16, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 16, args[0].lo, args[1].lo);
 	} else if (!strcmp(details->cee->name, "helper_store_8")) {
-		do_helper_store(1, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(1, args[0].lo, args[1], args[2].lo);
 	} else if (!strcmp(details->cee->name, "helper_store_16")) {
-		do_helper_store(2, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(2, args[0].lo, args[1], args[2].lo);
 	} else if (!strcmp(details->cee->name, "helper_store_32")) {
-		do_helper_store(4, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(4, args[0].lo, args[1], args[2].lo);
 	} else if (!strcmp(details->cee->name, "helper_store_64")) {
-		do_helper_store(8, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(8, args[0].lo, args[1], args[2].lo);
 	} else if (!strcmp(details->cee->name, "helper_store_128")) {
 		args[1].hi = args[2].lo;
-		do_helper_store(16, args[0].lo, args[1], args[3].lo);
+		do_helper_store_cswitch(16, args[0].lo, args[1], args[3].lo);
 	} else {
 		VG_(printf)("Unknown dirty call %s\n", details->cee->name);
 		commit_interpreter_state();
@@ -1280,13 +1278,14 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		ppIRSB(irsb);
 
 	tl_assert(istate->temporaries == NULL);
+	istate->nr_temporaries = irsb->tyenv->types_used;
 	istate->temporaries = VG_(malloc)("interpreter temporaries",
 					  sizeof(istate->temporaries[0]) *
-					  irsb->tyenv->types_used);
+					  istate->nr_temporaries);
 	VG_(memset)(istate->temporaries,
 		    0,
 		    sizeof(istate->temporaries[0]) *
-		    irsb->tyenv->types_used);
+		    istate->nr_temporaries);
 	for (stmt_nr = 0; stmt_nr < irsb->stmts_used; stmt_nr++) {
 		stmt = irsb->stmts[stmt_nr];
 		if (record_nr > NOISY_AFTER_RECORD) {
@@ -1345,8 +1344,6 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 
 			case Ity_I128:
 			case Ity_V128:
-				VG_(printf)("Put %lx:%lx to %x\n",
-					    data.lo.v, data.hi.v, stmt->Ist.Put.offset);
 				tl_assert(byte_offset == 0);
 				*dest = data.lo;
 				*get_aiv_for_offset(istate,
@@ -1360,7 +1357,7 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		}
 
 		case Ist_Dirty: {
-			do_dirty_call(istate, state, irsb, stmt->Ist.Dirty.details);
+			do_dirty_call_cswitch(istate, state, irsb, stmt->Ist.Dirty.details);
 			break;
 		}
 
@@ -1400,6 +1397,9 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		istate->registers[REG_RIP].v = next_addr.lo.v;
 	}
 
+	/* Careful: these can force context switches, so any
+	   expressions not stored in the interpreter state or to
+	   memory might get garbage collected. */
 	if (irsb->jumpkind == Ijk_Sys_syscall) {
 		commit_interpreter_state();
 		syscall_event(state);
@@ -1424,9 +1424,11 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 
 		istate->registers[REG_RDX].origin = expr_imported();
 	}
+
 finished_block:
 	VG_(free)(istate->temporaries);
 	istate->temporaries = NULL;
+	istate->nr_temporaries = 0;
 
 	gc_expressions();
 
