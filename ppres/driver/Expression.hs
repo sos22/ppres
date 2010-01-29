@@ -44,16 +44,10 @@ instance Show ExpressionCoord where
     show (ExpressionCoord rec acc) = "{" ++ (show rec) ++ "," ++ (show acc) ++ "}"
 
 instance Show Expression where
-    showsPrec p (ExpressionRegister n val) =
-        showParen (p <= 11) $ shows n . showHex val
-    showsPrec _ (ExpressionConst x) = showHex x
-    showsPrec p (ExpressionMem _ when ptr val) =
-        showParen (p <= 11) $ shows when . showString "[" . showsPrec 0 ptr . showString "]" . showsPrec 11 val
-    showsPrec p (ExpressionImported val) =
-        showParen (p <= 10) $ showString "imported" . showHex val
-    showsPrec p (ExpressionBinop op l r) =
-        let prec = binopPrec op
-        in showParen (p <= prec) $ showsPrec prec l . showString " " . shows op . showString " " . showsPrec prec r
-    showsPrec p (ExpressionNot e) =
-        showParen (p <= 1) $ showString "~" . showsPrec 2 e
-    
+    show (ExpressionRegister n val) = "(" ++ (show n) ++ ": " ++ (showHex val ")")
+    show (ExpressionConst x) = showHex x ""
+    show (ExpressionMem _ when ptr val) = "(" ++ (show when) ++ "MEM[" ++ (show ptr) ++ "]:" ++ (show val) ++ ")"
+    show (ExpressionImported val) = "(imported:" ++ (showHex val ")")
+    show (ExpressionBinop op l r) =
+        "(" ++ (show l) ++ " " ++ (show op) ++ " " ++ (show r) ++ ")"
+    show (ExpressionNot e) = "~(" ++ (show e) ++ ")"    
