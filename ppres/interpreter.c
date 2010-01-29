@@ -746,6 +746,8 @@ eval_expression(struct interpret_state *state,
 			dest->lo.v = arg1.lo.v == arg2.lo.v;
 			ORIGIN(expr_eq(arg1.lo.origin, arg2.lo.origin));
 			break;
+		case Iop_CmpNE32:
+		case Iop_CasCmpNE32:
 		case Iop_CmpNE64:
 			dest->lo.v = arg1.lo.v != arg2.lo.v;
 			ORIGIN(expr_not(expr_eq(arg1.lo.origin, arg2.lo.origin)));
