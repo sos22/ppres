@@ -111,7 +111,7 @@ fixControlHistory' start =
               criticalExpressions = controlTrace prefix (-1)
               otherThreads = [x | x <- [1,2], x /= dead_thread]
               otherStoresForThread t =
-                  [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread start t]
+                  [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
               storeSatisfiesExpression (ptr,val,_) expr =
                   case fmap (1 .&.) $ evalExpressionWithStore expr [(ptr,val)] of
                     Nothing -> False
