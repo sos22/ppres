@@ -5,12 +5,14 @@ import Types
 import WorkerCache
 import Expression()
 import History
+import ReplayState()
 
 import Debug.Trace
 import Data.Bits
 import Data.Word
+import Data.List
 
-dt :: Show a => a -> b -> b
+dt :: String -> b -> b
 dt = const id
 
 
@@ -123,21 +125,36 @@ fixControlHistory' start =
               interestingStores =
                   concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
                           | t <- otherThreads]
+              tryStore ((_, _, (TraceLocation _ acc thr)), _) =
+                  let (Just probe) = run (fst $ runMemory prefix thr (acc + 1)) (-1)
+                  in (probe, dt ("Trying probe " ++ (show probe)) replayState probe)
+              allProbes = map tryStore interestingStores
+              probeIsGood (_, ReplayStateOkay) = True
+              probeIsGood (_, ReplayStateFailed _ (FailureReasonControl progress _)) =
+                  progress > nr_records
+              goodProbes = filter probeIsGood allProbes
+              probeIsVeryGood (_, ReplayStateOkay) = True
+              probeIsVeryGood (_, ReplayStateFailed _ (FailureReasonControl progress _)) =
+                  progress > nr_records + 100
+              compareFailureReasons ReplayStateOkay _ = LT
+              compareFailureReasons _ ReplayStateOkay = GT
+              compareFailureReasons (ReplayStateFailed _ (FailureReasonControl proga _))
+                                    (ReplayStateFailed _ (FailureReasonControl progb _)) =
+                                        compare proga progb
+              sortedProbes = sortBy ordering goodProbes
+                             where ordering (_, ra) (_, rb) = compareFailureReasons ra rb
           in dt ("critical expressions " ++ (show criticalExpressions)) $
              dt ("otherStoresForThread 1 " ++ (show $ otherStoresForThread 1)) $
              dt ("otherStoresForThread 2 " ++ (show $ otherStoresForThread 2)) $
              dt ("interestingStores " ++ (show interestingStores)) $
-             case interestingStores of
-               [] -> Nothing
-               (((_, _, (TraceLocation _ acc thr)),_):_) ->
-                   {- Pick the first one pretty much arbitrarily -}
-                   let (Just probe) = run (fst $ runMemory prefix thr (acc+1)) (-1)
-                   in dt ("probe " ++ (show probe)) $
-                      case replayState probe of
-                        ReplayStateOkay -> Just probe
-                        (ReplayStateFailed _ (FailureReasonControl prog _)) ->
-                            if prog > nr_records then Just probe
-                            else Debug.Trace.trace "no progress" $ Nothing
+             dt ("probes " ++ (show allProbes)) $
+             dt ("sortedProbes " ++ (show sortedProbes)) $
+             case find probeIsVeryGood goodProbes of
+               Just (x, _) -> Just x
+               Nothing ->
+                   case sortedProbes of
+                     [] -> Nothing
+                     ((x,_):_) -> Just x
 
 fixControlHistory :: History -> History
 fixControlHistory start =
