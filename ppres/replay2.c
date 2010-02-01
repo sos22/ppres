@@ -1139,7 +1139,6 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_okay();
 		break;
 	case WORKER_CONTROL_TRACE:
-		initialise_interpreter_state();
 		run_for_n_records(logfile, cmd->u.control_trace.nr, True);
 		commit_interpreter_state();
 		send_okay();
