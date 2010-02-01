@@ -1068,7 +1068,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 			continue;
 		if (cer.type != EVENT_load &&
 		    cer.type != EVENT_store) {
-			replay_failed(reason_other(),
+			replay_failed(reason_control(),
 				      "%d: Client made unexpected event %x\n",
 				      record_nr,
 				      cer.type);
