@@ -33,6 +33,7 @@ data UIExpression = UIDummyFunction
                   | UIReplayState UIExpression
                   | UIControlTrace UIExpression Integer
                   | UIFindControlRaces UIExpression UIExpression
+                  | UIFixHist UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -101,6 +102,7 @@ expressionParser =
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
                oneExprArgParser "replay_state" UIReplayState,
+               oneExprArgParser "fixhist" UIFixHist,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -156,6 +158,7 @@ evalExpression ws f =
           case evalExpression ws a of
             UIValuePair _ a'' -> a''
             _ -> UIValueError "needed a pair for second"
+      UIFixHist a -> withSnapshot ws a $ \s -> fixControlHistory s
       UIDir ->
           uiValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->

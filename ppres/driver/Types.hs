@@ -111,7 +111,7 @@ data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression
 
-data ReplayFailureReason = FailureReasonControl ThreadId deriving Show
+data ReplayFailureReason = FailureReasonControl Integer ThreadId deriving Show
 
 data ReplayState = ReplayStateOkay
                  | ReplayStateFailed String ReplayFailureReason

@@ -362,7 +362,6 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer,
 
 	tl_assert(!VG_(in_generated_code));
 	tl_assert(client_event == NULL);
-	tl_assert(current_thread == NULL);
 	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
 	tl_assert(!rt->dead);
 
@@ -384,7 +383,6 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer,
 	tl_assert(cer == client_event);
 	tl_assert(rt == current_thread);
 	client_event = NULL;
-	current_thread = NULL;
 	VG_(running_tid) = VG_INVALID_THREADID;
 
 	tl_assert(cer->type != EVENT_nothing);
@@ -674,7 +672,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			do_thread_state_command();
 			break;
 		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, failure_reason->tid);
+			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, record_nr, failure_reason->tid);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
