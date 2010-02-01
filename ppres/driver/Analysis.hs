@@ -106,10 +106,10 @@ truncateHistory (History hs) cntr =
    cause an expression to become true.  If they do, we try running
    those accesses before running the failed thread.  If that succeeds,
    we return the resulting history. -}
-fixControlHistory :: History -> History
-fixControlHistory start =
+fixControlHistory' :: History -> Maybe History
+fixControlHistory' start =
     case replayState start of
-      ReplayStateOkay -> start
+      ReplayStateOkay -> Nothing
       ReplayStateFailed _ (FailureReasonControl nr_records dead_thread) ->
           let prefix = truncateHistory start (nr_records-1)
               criticalExpressions = controlTrace prefix (-1)
@@ -127,14 +127,20 @@ fixControlHistory start =
               interestingStores =
                   concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
                           | t <- otherThreads]
-          in case interestingStores of
-               [] -> start {- Failed -}
+          in
+             case interestingStores of
+               [] -> Nothing
                (((_, _, (TraceLocation _ acc thr)),_):_) ->
                    {- Pick the first one pretty much arbitrarily -}
                    let (Just probe) = run (fst $ runMemory prefix thr (acc+1)) (-1)
                    in case replayState probe of
-                        ReplayStateOkay -> probe
+                        ReplayStateOkay -> Just probe
                         (ReplayStateFailed _ (FailureReasonControl prog _)) ->
-                            if prog > nr_records then probe
-                            else Debug.Trace.trace "no progress" probe
+                            if prog > nr_records then Just probe
+                            else Debug.Trace.trace "no progress" $ Nothing
 
+fixControlHistory :: History -> History
+fixControlHistory start =
+    case fixControlHistory' start of
+      Nothing -> start
+      Just x -> fixControlHistory x
