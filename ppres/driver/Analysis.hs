@@ -88,15 +88,14 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
                   BinopCombine -> error "Can't happen"
 
 truncateHistory :: History -> Integer -> History
-truncateHistory (History hs) cntr' =
-    History $ worker hs cntr'
-    where worker _ 0 = []
-          worker [HistoryRun (-1)] cntr = [HistoryRun cntr]
-          worker ((HistoryRun c):hs') cntr =
-              if c < cntr then worker hs' (cntr - c)
+truncateHistory (History hs) cntr =
+    History $ worker hs
+    where worker [HistoryRun (-1)] = [HistoryRun cntr]
+          worker ((HistoryRun c):hs') =
+              if c <= cntr then (HistoryRun c):(worker hs')
               else [HistoryRun cntr]
-          worker ((h@(HistoryRunMemory _ _)):hs') cntr = h:(worker hs' cntr)
-          worker _ _ = error $ "truncate bad history " ++ (show hs)
+          worker ((h@(HistoryRunMemory _ _)):hs') = h:(worker hs')
+          worker _ = error $ "truncate bad history " ++ (show hs)
 
 {- One of the strategies for fixing replays which don't work.  Back up
    to the previous non-failing record, then do a control trace forward
