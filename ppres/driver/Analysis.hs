@@ -3,6 +3,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory) whe
 import Types
 import WorkerCache
 import Expression()
+import History
 
 import Debug.Trace
 import Data.Bits
@@ -86,16 +87,6 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
                   BinopEq -> if l == r then 1 else 0
                   BinopB -> if l < r then 1 else 0
                   BinopCombine -> error "Can't happen"
-
-truncateHistory :: History -> Integer -> History
-truncateHistory (History hs) cntr =
-    History $ worker hs
-    where worker [HistoryRun (-1)] = [HistoryRun cntr]
-          worker ((HistoryRun c):hs') =
-              if c <= cntr then (HistoryRun c):(worker hs')
-              else [HistoryRun cntr]
-          worker ((h@(HistoryRunMemory _ _)):hs') = h:(worker hs')
-          worker _ = error $ "truncate bad history " ++ (show hs)
 
 {- One of the strategies for fixing replays which don't work.  Back up
    to the previous non-failing record, then do a control trace forward

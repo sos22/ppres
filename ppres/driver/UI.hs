@@ -15,6 +15,7 @@ import WorldState
 import WorkerCache
 import UIValue
 import Analysis
+import History
 
 data UIExpression = UIDummyFunction
                   | UIRun UIExpression Integer
@@ -34,6 +35,7 @@ data UIExpression = UIDummyFunction
                   | UIControlTrace UIExpression Integer
                   | UIFindControlRaces UIExpression UIExpression
                   | UIFixHist UIExpression
+                  | UITruncHist UIExpression Integer
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -95,6 +97,10 @@ expressionParser =
                   t <- thread_id_parser
                   n <- P.integer command_lexer
                   return $ UIRunMemory snap t n,
+               do keyword "trunc"
+                  hist <- expressionParser
+                  n <- P.integer command_lexer
+                  return $ UITruncHist hist n,
                twoExprArgParser "pair" UIPair,
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
@@ -159,6 +165,8 @@ evalExpression ws f =
             UIValuePair _ a'' -> a''
             _ -> UIValueError "needed a pair for second"
       UIFixHist a -> withSnapshot ws a $ \s -> fixControlHistory s
+      UITruncHist hist n ->
+          withSnapshot ws hist $ \s -> truncateHistory s n
       UIDir ->
           uiValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UIRun name cntr ->

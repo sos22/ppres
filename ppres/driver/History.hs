@@ -1,5 +1,5 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
-               appendHistory) where
+               appendHistory, truncateHistory) where
 
 import Types
 import Worker
@@ -66,3 +66,15 @@ fixupWorkerForHist w current desired =
 appendHistory :: History -> HistoryEntry -> History
 appendHistory (History e) he =
     History $ e ++ [he]
+
+{- Truncate a history so that it only runs to a particular record number -}
+truncateHistory :: History -> Integer -> History
+truncateHistory (History hs) cntr =
+    History $ worker hs
+    where worker [HistoryRun (-1)] = [HistoryRun cntr]
+          worker ((HistoryRun c):hs') =
+              if c <= cntr then (HistoryRun c):(worker hs')
+              else [HistoryRun cntr]
+          worker ((h@(HistoryRunMemory _ _)):hs') = h:(worker hs')
+          worker _ = error $ "truncate bad history " ++ (show hs)
+
