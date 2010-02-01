@@ -20,9 +20,13 @@ stripSharedPrefix (History aa) (History bb) =
               if a == b then worker as bs
               else case (a, b) of
                      (HistoryRun an, HistoryRun bn) ->
-                         if an < bn
-                         then worker as ((HistoryRun $ bn - an):bs)
-                         else worker ((HistoryRun $ an - bn):as) bs
+                         if an == (-1)
+                         then worker (a:as) bs
+                         else if bn == (-1)
+                              then worker as (b:bs)
+                              else if an < bn
+                                   then worker as ((HistoryRun $ bn - an):bs)
+                                   else worker ((HistoryRun $ an - bn):as) bs
                      (HistoryRunMemory atid acntr,
                       HistoryRunMemory btid bcntr) | atid == btid ->
                          if acntr < bcntr
