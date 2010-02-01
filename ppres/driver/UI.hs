@@ -35,6 +35,7 @@ data UIExpression = UIDummyFunction
                   | UIControlTrace UIExpression Integer
                   | UIFindControlRaces UIExpression UIExpression
                   | UIFixHist UIExpression
+                  | UIFixHist2 UIExpression
                   | UITruncHist UIExpression Integer
                     deriving Show
 
@@ -109,6 +110,7 @@ expressionParser =
                oneExprArgParser "defootstep" UIRemoveFootsteps,
                oneExprArgParser "replay_state" UIReplayState,
                oneExprArgParser "fixhist" UIFixHist,
+               oneExprArgParser "fixhist2" UIFixHist2,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -165,6 +167,7 @@ evalExpression ws f =
             UIValuePair _ a'' -> a''
             _ -> UIValueError "needed a pair for second"
       UIFixHist a -> withSnapshot ws a $ \s -> fixControlHistory s
+      UIFixHist2 a -> withSnapshot ws a $ \s -> fixControlHistory' s
       UITruncHist hist n ->
           withSnapshot ws hist $ \s -> truncateHistory s n
       UIDir ->

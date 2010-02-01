@@ -1,4 +1,5 @@
-module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory) where
+module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
+                fixControlHistory') where
 
 import Types
 import WorkerCache
@@ -8,6 +9,10 @@ import History
 import Debug.Trace
 import Data.Bits
 import Data.Word
+
+dt :: Show a => a -> b -> b
+dt = const id
+
 
 {- We have two traces, A and B.  A represents what actually happened,
    and B an estimate of what we could have done by running some other
@@ -118,13 +123,17 @@ fixControlHistory' start =
               interestingStores =
                   concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
                           | t <- otherThreads]
-          in
+          in dt ("critical expressions " ++ (show criticalExpressions)) $
+             dt ("otherStoresForThread 1 " ++ (show $ otherStoresForThread 1)) $
+             dt ("otherStoresForThread 2 " ++ (show $ otherStoresForThread 2)) $
+             dt ("interestingStores " ++ (show interestingStores)) $
              case interestingStores of
                [] -> Nothing
                (((_, _, (TraceLocation _ acc thr)),_):_) ->
                    {- Pick the first one pretty much arbitrarily -}
                    let (Just probe) = run (fst $ runMemory prefix thr (acc+1)) (-1)
-                   in case replayState probe of
+                   in dt ("probe " ++ (show probe)) $
+                      case replayState probe of
                         ReplayStateOkay -> Just probe
                         (ReplayStateFailed _ (FailureReasonControl prog _)) ->
                             if prog > nr_records then Just probe
