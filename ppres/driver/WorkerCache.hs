@@ -53,10 +53,7 @@ getWorker hist =
                            Nothing ->
                                error $ "cannot snapshot " ++ (show best_hist)
                            Just new_worker'' -> new_worker''
-       r <- fixupWorkerForHist new_worker' best_hist hist
-       case r of
-         False -> error $ "failed to move worker from history " ++ (show best_hist) ++ " to " ++ (show hist)
-         True -> return ()
+       fixupWorkerForHist new_worker' best_hist hist
        return new_worker'
     where findBestWorker :: IO (History, Worker)
           findBestWorker =
