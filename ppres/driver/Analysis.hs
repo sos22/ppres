@@ -110,16 +110,13 @@ fixControlHistory' start =
       ReplayStateOkay -> Nothing
       ReplayStateFailed _ (FailureReasonControl nr_records dead_thread) ->
           let prefix = truncateHistory start (nr_records-1)
-              criticalExpressions = controlTrace prefix (-1)
+              criticalExpressions' = controlTrace prefix (-1)
+              criticalExpressions = [(e, evalExpressionWithStore e []) | e <- criticalExpressions']
               otherThreads = [x | x <- [1,2], x /= dead_thread]
               otherStoresForThread t =
                   [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
-              storeSatisfiesExpression (ptr,val,_) expr =
-                  case fmap (1 .&.) $ evalExpressionWithStore expr [(ptr,val)] of
-                    Nothing -> False
-                    Just 0 -> False
-                    Just 1 -> True
-                    _ -> error "Huh?"
+              storeSatisfiesExpression (ptr,val,_) (expr, v) =
+                  evalExpressionWithStore expr [(ptr,val)] /= v
               satisfiedExpressions st =
                   [ind | (ind, expr) <- zip [0..] criticalExpressions, storeSatisfiesExpression st expr]
               interestingStores =
