@@ -126,6 +126,9 @@ head_thread;
 struct interpret_mem_lookaside *
 head_interpret_mem_lookaside;
 
+static Bool
+want_to_interpret;
+
 static void
 my_mprotect(void *base, size_t len, int prot)
 {
@@ -355,8 +358,7 @@ get_control_command(struct control_command *cmd)
 /* Run the client thread until it generates an event, and figure out
    what that event was. */
 static void
-run_thread(struct replay_thread *rt, struct client_event_record *cer,
-	   Bool trace_control)
+run_thread(struct replay_thread *rt, struct client_event_record *cer)
 {
 	static ThreadId last_run;
 
@@ -371,7 +373,7 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer,
 	client_event = cer;
 	VG_(running_tid) = rt->id;
 
-	if (trace_control) {
+	if (want_to_interpret && !rt->in_monitor) {
 		VG_(interpret) = interpret_log_control_flow;
 	} else {
 		VG_(interpret) = NULL;
@@ -525,9 +527,13 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		if ((arg_block[0] & 0xffff) == 0) {
 			TRACE(ENTER_MONITOR);
 			current_thread->in_monitor = True;
+			if (want_to_interpret)
+				VG_(interpret) = NULL;
 		} else {
 			TRACE(EXIT_MONITOR);
 			current_thread->in_monitor = False;
+			if (want_to_interpret)
+				VG_(interpret) = interpret_log_control_flow;
 		}
 	}
 	return False;
@@ -559,9 +565,10 @@ do_trace_thread_command(long thread)
 		return;
 	}
 	trace_mode = True;
+	want_to_interpret = False;
 	access_nr = 0;
 	do {
-		run_thread(rt, &cer, False);
+		run_thread(rt, &cer);
 	} while (cer.type == EVENT_footstep ||
 		 cer.type == EVENT_load ||
 		 cer.type == EVENT_store);
@@ -1053,9 +1060,10 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 	struct client_event_record cer;
 
 	trace_mode = True;
+	want_to_interpret = False;
 	access_nr = 0;
 	while (access_nr < nr_accesses) {
-		run_thread(thr, &cer, False);
+		run_thread(thr, &cer);
 		if (cer.type == EVENT_footstep)
 			continue;
 		if (cer.type != EVENT_load &&
@@ -1071,8 +1079,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 
 static void
 run_for_n_records(struct record_consumer *logfile,
-		  unsigned nr_records,
-		  Bool trace_control)
+		  unsigned nr_records)
 {
 	const struct record_header *rec;
 	struct replay_thread *thr;
@@ -1103,7 +1110,7 @@ run_for_n_records(struct record_consumer *logfile,
 		tl_assert(thr != NULL);
 
 		do {
-			run_thread(thr, &thread_event, trace_control);
+			run_thread(thr, &thread_event);
 		} while (!(use_memory ||
 			   (thread_event.type != EVENT_load &&
 			    thread_event.type != EVENT_store)));
@@ -1128,17 +1135,19 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
-		run_for_n_records(logfile, cmd->u.run.nr, False);
+		run_for_n_records(logfile, cmd->u.run.nr);
 		send_okay();
 		break;
 	case WORKER_TRACE:
 		trace_mode = True;
-		run_for_n_records(logfile, cmd->u.trace.nr, False);
+		run_for_n_records(logfile, cmd->u.trace.nr);
 		trace_mode = False;
 		send_okay();
 		break;
 	case WORKER_CONTROL_TRACE:
-		run_for_n_records(logfile, cmd->u.control_trace.nr, True);
+		want_to_interpret = True;
+		run_for_n_records(logfile, cmd->u.control_trace.nr);
+		want_to_interpret = False;
 		commit_interpreter_state();
 		send_okay();
 		break;
@@ -1160,7 +1169,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
-		run_for_n_records(logfile, -1, False);
+		run_for_n_records(logfile, -1);
 		send_okay();
 		break;
 	case WORKER_THREAD_STATE:
