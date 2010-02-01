@@ -1465,18 +1465,13 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 	}
 
 	if (irsb->jumpkind == Ijk_ClientReq) {
-		Bool res;
 		UWord *args;
 		args = (UWord *)istate->registers[0].v;
 		VG_(in_generated_code) = False;
-		res = client_request_event(current_thread->id,
-					   args,
-					   &istate->registers[REG_RDX].v);
+		client_request_event(current_thread->id,
+				     args,
+				     &istate->registers[REG_RDX].v);
 		VG_(in_generated_code) = True;
-
-		/* Don't try to combine this with other Valgrind
-		   analyses. :) */
-		tl_assert(res);
 
 		istate->registers[REG_RDX].origin =
 			expr_imported(istate->registers[REG_RDX].v);

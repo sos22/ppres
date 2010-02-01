@@ -521,7 +521,6 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		}
 		event(EVENT_client_request, arg_block[0], arg_block[1]);
 		VG_(in_generated_code) = False;
-		return True;
 	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
 		if ((arg_block[0] & 0xffff) == 0) {
 			TRACE(ENTER_MONITOR);
@@ -530,10 +529,8 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 			TRACE(EXIT_MONITOR);
 			current_thread->in_monitor = False;
 		}
-		return True;
-	} else {
-		return False;
 	}
+	return False;
 }
 
 #define included_for_replay
