@@ -39,5 +39,3 @@ findControlFlowRaces races expressions =
                                      (ExpressionMem _ (ExpressionCoord rec' acc') _ _) =
                                          rec == rec' && acc == acc'
           expressionMentionsLoad _ _ = error "confused"
-
-              

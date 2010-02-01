@@ -126,8 +126,8 @@ threadStateWorker worker =
  
 parseReplayState :: [ResponseData] -> ReplayState
 parseReplayState [ResponseDataAncillary 10 []] = ReplayStateOkay
-parseReplayState [ResponseDataAncillary 11 [0], ResponseDataString s] =
-    ReplayStateFailed s FailureReasonControl
+parseReplayState [ResponseDataAncillary 11 [0, tid], ResponseDataString s] =
+    ReplayStateFailed s $ FailureReasonControl (fromIntegral tid)
 parseReplayState x = error $ "bad replay state " ++ (show x)
 
 replayStateWorker :: Worker -> IO ReplayState

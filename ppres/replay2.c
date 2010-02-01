@@ -85,6 +85,7 @@ struct control_command {
 
 struct failure_reason {
 	unsigned reason;
+	unsigned tid;
 	const struct expression *arg1;
 	const struct expression *arg2;
 };
@@ -615,6 +616,7 @@ reason_control(void)
 	fr = VG_(malloc)("reason_control", sizeof(*fr));
 	VG_(memset)(fr, 0, sizeof(*fr));
 	fr->reason = REASON_CONTROL;
+	fr->tid = current_thread->id;
 	return fr;
 }
 
@@ -627,6 +629,7 @@ reason_data(const struct expression *e1, const struct expression *e2)
 	fr->reason = REASON_DATA;
 	fr->arg1 = e1;
 	fr->arg2 = e2;
+	fr->tid = current_thread->id;
 	return fr;
 }
 
@@ -637,6 +640,7 @@ reason_other(void)
 	fr = VG_(malloc)("reason_other", sizeof(*fr));
 	VG_(memset)(fr, 0, sizeof(*fr));
 	fr->reason = REASON_OTHER;
+	fr->tid = current_thread->id;
 	return fr;
 }
 
@@ -670,7 +674,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			do_thread_state_command();
 			break;
 		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason);
+			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, failure_reason->tid);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
