@@ -143,6 +143,7 @@ struct expression {
 		struct {
 			unsigned record_nr;
 			unsigned mem_access_nr;
+			unsigned threadid;
 			unsigned size;
 			const struct expression *ptr_e;
 			const struct expression *val;

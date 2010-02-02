@@ -22,13 +22,10 @@ instance Show Binop where
     show BinopEq = "=="
     show BinopB = "<"
 
-instance Show ExpressionCoord where
-    show (ExpressionCoord rec acc) = "{" ++ (show rec) ++ "," ++ (show acc) ++ "}"
-
 instance Show Expression where
     show (ExpressionRegister n val) = "(" ++ (show n) ++ ": " ++ (showHex val ")")
     show (ExpressionConst x) = showHex x ""
-    show (ExpressionMem _ when ptr val) = "(" ++ (show when) ++ "MEM[" ++ (show ptr) ++ "]:" ++ (show val) ++ ")"
+    show (ExpressionMem _ when ptr val) = "({" ++ (show when) ++ "}MEM[" ++ (show ptr) ++ "]:" ++ (show val) ++ ")"
     show (ExpressionImported val) = "(imported:" ++ (showHex val ")")
     show (ExpressionBinop op l r) =
         "(" ++ (show l) ++ " " ++ (show op) ++ " " ++ (show r) ++ ")"

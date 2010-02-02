@@ -49,9 +49,8 @@ findControlFlowRaces races expressions =
           expressionMentionsLoad _ (ExpressionImported _ ) = False
           expressionMentionsLoad e (ExpressionBinop _ x y) = expressionMentionsLoad e x || expressionMentionsLoad e y
           expressionMentionsLoad e (ExpressionNot x) = expressionMentionsLoad e x
-          expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) (TraceLocation rec acc _))
-                                     (ExpressionMem _ (ExpressionCoord rec' acc') _ _) =
-                                         rec == rec' && acc == acc'
+          expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) loc1)
+                                     (ExpressionMem _ loc2 _ _) = loc1 == loc2
           expressionMentionsLoad _ _ = error "confused"
 
 

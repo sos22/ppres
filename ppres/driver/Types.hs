@@ -18,7 +18,7 @@ data Worker = Worker { worker_fd :: Socket }
 
 data TraceLocation = TraceLocation { trc_record :: Integer,
                                      trc_access :: Integer,
-                                     trc_thread :: ThreadId }
+                                     trc_thread :: ThreadId } deriving Eq
 
 instance Show TraceLocation where
     show tl = (show $ trc_record tl) ++ ":" ++ (show $ trc_access tl) ++ ":" ++ (show $ trc_thread tl)
@@ -102,11 +102,9 @@ data Binop = BinopCombine
            | BinopEq
            | BinopB
 
-data ExpressionCoord = ExpressionCoord Integer Integer
-
 data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
-                | ExpressionMem Int ExpressionCoord Expression Expression
+                | ExpressionMem Int TraceLocation Expression Expression
                 | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression
