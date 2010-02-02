@@ -1,5 +1,5 @@
 module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
-                fixControlHistory') where
+                fixControlHistory', findCritPairs) where
 
 import Types
 import WorkerCache
@@ -61,6 +61,27 @@ wordSigned w =
     then (fromIntegral w) - 0x10000000000000000
     else (fromIntegral w)
 
+binopFunc :: Binop -> Word64 -> Word64 -> Word64
+binopFunc op = case op of
+                 BinopSub -> (-)
+                 BinopAdd -> (+)
+                 BinopMull -> (*)
+                 BinopAnd -> (.&.)
+                 BinopOr -> (.|.)
+                 BinopXor -> xor
+                 _ -> \l r -> case op of
+                                BinopMullHi -> fromInteger $ (toInteger l * toInteger r) `shiftR` 64
+                                BinopShrl -> fromInteger $ (toInteger l) `shiftR` (fromIntegral r)
+                                BinopShl -> l `shiftL` (fromIntegral r)
+                                BinopShra -> l `shiftR` (fromIntegral r)
+                                BinopLe -> if wordSigned l <= wordSigned r then 1 else 0
+                                BinopBe -> if l <= r then 1 else 0
+                                BinopEq -> if l == r then 1 else 0
+                                BinopB -> if l < r then 1 else 0
+                                BinopMullS -> error "Write me"
+                                BinopCombine -> error "can't eval combine"
+                                _ -> error "can't happen"
+
 evalExpressionWithStore :: Expression -> [(Word64, Word64)] -> Maybe Word64
 evalExpressionWithStore (ExpressionRegister _ n) _ = Just n
 evalExpressionWithStore (ExpressionConst n) _ = Just n
@@ -77,23 +98,10 @@ evalExpressionWithStore (ExpressionBinop BinopCombine _ _) _ = Nothing
 evalExpressionWithStore (ExpressionBinop op l' r') st =
     do l <- evalExpressionWithStore l' st
        r <- evalExpressionWithStore r' st
-       return $ case op of
-                  BinopSub -> l - r
-                  BinopAdd -> l + r
-                  BinopMull -> l * r
-                  BinopMullHi -> fromInteger $ (toInteger l * toInteger r) `shiftR` 64
-                  BinopMullS -> error "write me"
-                  BinopShrl -> fromInteger $ ((toInteger l) `shiftR` (fromIntegral r))
-                  BinopShl -> l `shiftL` (fromIntegral r)
-                  BinopShra -> l `shiftR` (fromIntegral r)
-                  BinopAnd -> l .&. r
-                  BinopOr -> l .|. r
-                  BinopXor -> l `xor` r
-                  BinopLe -> if wordSigned l <= wordSigned r then 1 else 0
-                  BinopBe -> if l <= r then 1 else 0
-                  BinopEq -> if l == r then 1 else 0
-                  BinopB -> if l < r then 1 else 0
-                  BinopCombine -> error "Can't happen"
+       return $ binopFunc op l r
+
+live_threads :: History -> [ThreadId]
+live_threads _ = [1,2]
 
 {- One of the strategies for fixing replays which don't work.  Back up
    to the previous non-failing record, then do a control trace forward
@@ -112,7 +120,7 @@ fixControlHistory' start =
           let prefix = truncateHistory start (nr_records-1)
               criticalExpressions' = controlTrace prefix (-1)
               criticalExpressions = [(e, evalExpressionWithStore e []) | e <- criticalExpressions']
-              otherThreads = [x | x <- [1,2], x /= dead_thread]
+              otherThreads = [x | x <- live_threads start, x /= dead_thread]
               otherStoresForThread t =
                   [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
               storeSatisfiesExpression (ptr,val,_) (expr, v) =
@@ -158,3 +166,41 @@ fixControlHistory start =
     case fixControlHistory' start of
       Nothing -> start
       Just x -> fixControlHistory x
+
+fetchMemory8 :: History -> Word64 -> Maybe Word64
+fetchMemory8 hist addr =
+    do bytes <- fetchMemory hist addr 8
+       return $ fromInteger $ foldr (\a b -> b * 256 + a) 0 $ map toInteger bytes
+
+evalExpressionInSnapshot :: Expression -> History -> [(Word64, Word64)] -> Maybe Word64
+evalExpressionInSnapshot (ExpressionRegister _ n) _ _ = Just n
+evalExpressionInSnapshot (ExpressionConst n) _ _ = Just n
+evalExpressionInSnapshot (ExpressionMem _ _ addr _) hist stores =
+    do addr' <- evalExpressionInSnapshot addr hist stores
+       case lookup addr' stores of
+         Nothing -> fetchMemory8 hist addr'
+         Just v -> Just v
+evalExpressionInSnapshot (ExpressionImported v) _ _ = Just v
+evalExpressionInSnapshot (ExpressionBinop BinopCombine _ _) _ _ = Nothing
+evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
+    do l <- evalExpressionInSnapshot l' hist  st
+       r <- evalExpressionInSnapshot r' hist st
+       return $ binopFunc op l r
+evalExpressionInSnapshot (ExpressionNot l) hist st =
+    fmap complement $ evalExpressionInSnapshot l hist st
+
+findCritPairs :: History -> [(TraceLocation, Expression)]
+findCritPairs hist =
+    case replayState hist of
+      ReplayStateOkay -> []
+      ReplayStateFailed _ (FailureReasonControl nr_records dead_thread) ->
+          let prefix1 = truncateHistory hist (nr_records - 1)
+              prefix2 = truncateHistory hist (nr_records - 2)
+              ctrl_expressions = controlTrace prefix1 (-1)
+              other_threads = filter ((/=) dead_thread) $ live_threads hist
+              store_trace t = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ traceThread prefix2 t]
+              store_changes_expr expr (ptr, val, _) =
+                  evalExpressionInSnapshot expr prefix2 [] /= evalExpressionInSnapshot expr prefix2 [(ptr, val)]
+              critical_pairs = [(st, expr) | expr <- ctrl_expressions, t <- other_threads, st <- store_trace t,
+                                             store_changes_expr expr st]
+          in [(l, e) | ((_, _, l), e) <- critical_pairs]

@@ -38,6 +38,7 @@ data UIExpression = UIDummyFunction
                   | UIFixHist2 UIExpression
                   | UITruncHist UIExpression Integer
                   | UIFetchMemory UIExpression Word64 Word64
+                  | UIFindCritPairs UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -117,6 +118,7 @@ expressionParser =
                oneExprArgParser "replay_state" UIReplayState,
                oneExprArgParser "fixhist" UIFixHist,
                oneExprArgParser "fixhist2" UIFixHist2,
+               oneExprArgParser "findcritpairs" UIFindCritPairs,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -207,6 +209,8 @@ evalExpression ws f =
                     return [trc | trc <- es, not $ isFootstep trc ]
       UIFetchMemory hist addr size ->
           withSnapshot ws hist $ \s -> fetchMemory s addr size
+      UIFindCritPairs hist ->
+          withSnapshot ws hist findCritPairs
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =

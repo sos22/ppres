@@ -126,6 +126,7 @@ data UIValue = UIValueNull
              | UIValueReplayState ReplayState
              | UIValueExpression Expression
              | UIValueByte Word8
+             | UIValueInteger Integer
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }

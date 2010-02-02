@@ -26,7 +26,8 @@ instance Show UIValue where
     show (UIValueTrace t) = "TRC " ++ show t
     show (UIValueReplayState rs) = "RS " ++ show rs
     show (UIValueExpression e) = "EXPR " ++ (show e)
-    show (UIValueByte b) = "0x" ++ (showHex b "")
+    show (UIValueByte b) = "BYTE 0x" ++ (showHex b "")
+    show (UIValueInteger r) = "0x" ++ (showHex r "")
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
@@ -97,3 +98,13 @@ instance AvailInUI Word8 where
     toUI = UIValueByte
     fromUI (UIValueByte b) = Right b
     fromUI e = coerceError "byte" e
+
+instance AvailInUI TraceLocation where
+    toUI (TraceLocation r a t) = toUI ((r, a), t)
+    fromUI u = do ((r, a), t) <- fromUI u
+                  return $ TraceLocation r a t
+
+instance AvailInUI Integer where
+    toUI = UIValueInteger
+    fromUI (UIValueInteger i) = Right i
+    fromUI e = coerceError "integer" e
