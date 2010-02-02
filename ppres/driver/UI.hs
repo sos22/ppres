@@ -36,6 +36,7 @@ data UIExpression = UIDummyFunction
                   | UIFindControlRaces UIExpression UIExpression
                   | UIFixHist UIExpression
                   | UIFixHist2 UIExpression
+                  | UIAdvHist UIExpression
                   | UITruncHist UIExpression (Topped Integer)
                   | UIFetchMemory UIExpression Word64 Word64
                   | UIFindCritPairs UIExpression
@@ -130,6 +131,7 @@ expressionParser =
                oneExprArgParser "defootstep" UIRemoveFootsteps,
                oneExprArgParser "replay_state" UIReplayState,
                oneExprArgParser "fixhist" UIFixHist,
+               oneExprArgParser "advhist" UIAdvHist,
                oneExprArgParser "fixhist2" UIFixHist2,
                oneExprArgParser "findcritpairs" UIFindCritPairs,
                do ident <- P.identifier command_lexer
@@ -188,6 +190,7 @@ evalExpression ws f =
             UIValuePair _ a'' -> a''
             _ -> UIValueError "needed a pair for second"
       UIFixHist a -> withSnapshot ws a $ \s -> fixControlHistory s
+      UIAdvHist a -> withSnapshot ws a $ \s -> advanceHist s
       UIFixHist2 a -> withSnapshot ws a $ \s -> fixControlHistory' s
       UITruncHist hist n ->
           withSnapshot ws hist $ \s -> truncateHistory s n

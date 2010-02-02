@@ -83,13 +83,13 @@ registerWorker hist worker =
        mapM_ (killWorker . snd) dead_workers
 
 
-cmd :: HistoryEntry -> History -> (Worker -> IO a) -> Maybe History
+cmd :: HistoryEntry -> History -> (Worker -> IO a) -> History
 cmd he start w =
     let newHist = appendHistory start he
     in unsafePerformIO $ do worker <- getWorker start
                             w worker
                             registerWorker newHist worker
-                            return $ Just newHist
+                            return newHist
 
 traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
 traceCmd he start w =
@@ -99,7 +99,7 @@ traceCmd he start w =
                             registerWorker newHist worker
                             return (newHist, r)
 
-run :: History -> (Topped Integer) -> Maybe History
+run :: History -> (Topped Integer) -> History
 run start cntr =
     cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
 

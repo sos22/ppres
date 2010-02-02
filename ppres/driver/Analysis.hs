@@ -1,5 +1,5 @@
 module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
-                fixControlHistory', findCritPairs, flipPair) where
+                fixControlHistory', findCritPairs, flipPair, advanceHist) where
 
 import Types
 import WorkerCache
@@ -102,6 +102,26 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 live_threads :: History -> [ThreadId]
 live_threads _ = [1,2]
 
+fixControlHistoryL :: History -> [History]
+fixControlHistoryL start =
+    let (ReplayStateFailed _ (FailureReasonControl nr_records dead_thread)) = replayState start
+        prefix = truncateHistory start $ Finite (nr_records - 1)
+        criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
+        otherThreads = [x | x <- live_threads start, x /= dead_thread]
+        otherStoresForThread t =
+            [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
+        storeSatisfiesExpression (ptr,val,_) (expr, v) =
+            evalExpressionWithStore expr [(ptr,val)] /= v
+        satisfiedExpressions st =
+            [ind | (ind, expr) <- zip [0..] criticalExpressions, storeSatisfiesExpression st expr]
+        interestingStores =
+            concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
+                    | t <- otherThreads]
+        tryStore ((_, _, (TraceLocation _ acc thr)), _) =
+            run (fst $ runMemory prefix thr (acc + 1)) Infinity
+        allProbes = map tryStore interestingStores
+    in allProbes
+
 {- One of the strategies for fixing replays which don't work.  Back up
    to the previous non-failing record, then do a control trace forward
    in the failing thread.  That'll give us a bunch of expressions such
@@ -115,24 +135,9 @@ fixControlHistory' :: History -> Maybe History
 fixControlHistory' start =
     case replayState start of
       ReplayStateOkay -> Nothing
-      ReplayStateFailed _ (FailureReasonControl nr_records dead_thread) ->
-          let prefix = truncateHistory start $ Finite (nr_records - 1)
-              criticalExpressions' = controlTrace prefix Infinity
-              criticalExpressions = [(e, evalExpressionWithStore e []) | e <- criticalExpressions']
-              otherThreads = [x | x <- live_threads start, x /= dead_thread]
-              otherStoresForThread t =
-                  [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
-              storeSatisfiesExpression (ptr,val,_) (expr, v) =
-                  evalExpressionWithStore expr [(ptr,val)] /= v
-              satisfiedExpressions st =
-                  [ind | (ind, expr) <- zip [0..] criticalExpressions, storeSatisfiesExpression st expr]
-              interestingStores =
-                  concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
-                          | t <- otherThreads]
-              tryStore ((_, _, (TraceLocation _ acc thr)), _) =
-                  let (Just probe) = run (fst $ runMemory prefix thr (acc + 1)) Infinity
-                  in (probe, dt ("Trying probe " ++ (show probe)) replayState probe)
-              allProbes = map tryStore interestingStores
+      ReplayStateFailed _ (FailureReasonControl nr_records _) ->
+          let probes = fixControlHistoryL start
+              allProbes = [(p, replayState p) | p <- probes]
               probeIsGood (_, ReplayStateOkay) = True
               probeIsGood (_, ReplayStateFailed _ (FailureReasonControl progress _)) =
                   progress > nr_records
@@ -147,11 +152,7 @@ fixControlHistory' start =
                                         compare proga progb
               sortedProbes = sortBy ordering goodProbes
                              where ordering (_, ra) (_, rb) = compareFailureReasons ra rb
-          in dt ("critical expressions " ++ (show criticalExpressions)) $
-             dt ("otherStoresForThread 1 " ++ (show $ otherStoresForThread 1)) $
-             dt ("otherStoresForThread 2 " ++ (show $ otherStoresForThread 2)) $
-             dt ("interestingStores " ++ (show interestingStores)) $
-             dt ("probes " ++ (show allProbes)) $
+          in dt ("probes " ++ (show allProbes)) $
              dt ("sortedProbes " ++ (show sortedProbes)) $
              case find probeIsVeryGood goodProbes of
                Just (x, _) -> Just x
@@ -237,3 +238,54 @@ flipPair start (post, pre) =
        dt ("trc1 " ++ (show trc)) $
        dt ("trc2 " ++ (show trc2)) $
        res
+
+type Goodness a = a -> Topped Integer
+type Explorer a = a -> [a]
+
+historyGoodness :: Goodness History
+historyGoodness hist =
+    case replayState hist of
+      ReplayStateOkay -> Infinity
+      ReplayStateFailed _ (FailureReasonControl x _) -> Finite x
+
+explorePairs :: Explorer History
+explorePairs start =
+    let pairs = findCritPairs start
+    in [run (flipPair start pair) Infinity | pair <- pairs]
+
+exploreEither :: (Explorer a) -> (Explorer a) -> (Explorer a)
+exploreEither a b s = (a s) ++ (b s)
+
+exploreStep :: Show a => Explorer a -> Goodness a -> [(Topped Integer, a)] -> Maybe ((Topped Integer, a), [(Topped Integer, a)])
+exploreStep _ _ [] = Nothing
+exploreStep worker goodness ((startingGood,startingPoint):others) =
+    let newHistories = worker startingPoint
+        newItems = [(goodness hist, hist) | hist <- newHistories]
+        newFringe = sortBy (\a b -> (fst a) `compare` (fst b)) (others ++ newItems)
+    in 
+       case newFringe of
+         [] -> Nothing
+         ((bestGoodness,_):_) ->
+             {- Drop anything which is more than 1000 records behind,
+                because it's not likely to be terribly useful any
+                more. -}
+             Just ((startingGood, startingPoint), filter (\x -> fst x > bestGoodness - 1000) newFringe)
+
+{- Explorer from a given starting point and return the best thing we
+   find -}
+explore :: Show a => Explorer a -> Goodness a -> a -> a
+explore worker goodness start =
+    doIt (gstart, start) [(gstart, start)]
+    where gstart = goodness start
+          doIt (_, res) [] = dt "c4" $ res
+          doIt (previousBestGoodness, previousBest) fringe =
+              case exploreStep worker goodness fringe of
+                Nothing -> previousBest
+                Just ((Infinity, res), _) -> res
+                Just ((thisGood, this), newFringe) ->
+                    doIt (if thisGood > previousBestGoodness
+                          then (thisGood, this)
+                          else (previousBestGoodness, previousBest)) newFringe
+
+advanceHist :: History -> History
+advanceHist = explore (exploreEither fixControlHistoryL explorePairs) historyGoodness

@@ -150,6 +150,11 @@ instance Num x => Num (Topped x) where
     _ + Infinity = Infinity
     (Finite x) + (Finite y) = Finite $ x + y
 
+    Infinity - Infinity = error "difference of two infinities"
+    Infinity - (Finite _) = Infinity
+    (Finite _) - Infinity = error "negative infinity"
+    (Finite x) - (Finite y) = Finite $ x - y
+
     Infinity * (Finite 0) = error "multiply infinity by zero"
     (Finite 0) * Infinity = error "multiply infinity by zero"
     Infinity * _ = Infinity
