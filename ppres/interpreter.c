@@ -6,7 +6,9 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcprint.h"
+#include "pub_tool_libcsignal.h"
 #include "pub_tool_mallocfree.h"
+#include "pub_tool_signals.h"
 #include "pub_tool_tooliface.h"
 #include "libvex_guest_amd64.h"
 #include "libvex_guest_offsets.h"
@@ -1489,3 +1491,77 @@ finished_block:
 	return VG_TRC_BORING;
 }
 
+static jmp_buf
+disassemble_jmpbuf;
+
+static void
+disassemble_sighandler(Int signo, Addr addr)
+{
+	if (signo == VKI_SIGBUS || signo == VKI_SIGSEGV) {
+		/* Something bad has happened, and we can't replay the
+		   memory record which we captured.  This shouldn't
+		   happen if we follow the script, but it's possible
+		   if we've diverged. */
+		__builtin_longjmp(disassemble_jmpbuf, 1);
+	}
+}
+
+void
+disassemble_addr(unsigned long addr)
+{
+	vki_sigset_t sigmask;
+	VexGuestExtents vge;
+	VexArch vex_arch;
+	VexArchInfo vex_archinfo;
+	VexAbiInfo vex_abiinfo;
+	IRSB *irsb;
+
+	VG_(init_vex)();
+	VG_(machine_get_VexArchInfo)(&vex_arch, &vex_archinfo);
+	LibVEX_default_VexAbiInfo(&vex_abiinfo);
+	vex_abiinfo.guest_stack_redzone_size = VG_STACK_REDZONE_SZB;
+	vex_abiinfo.guest_amd64_assume_fs_is_zero  = True;
+
+	vexSetAllocModeTEMP_and_clear();
+
+	if (__builtin_setjmp(&disassemble_jmpbuf)) {
+		VG_(set_fault_catcher)(NULL);
+		VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+		VG_(printf)("Failed to disassemble from %lx due to signal\n",
+			    addr);
+		return;
+	}
+	VG_(sigprocmask)(VKI_SIG_SETMASK, NULL, &sigmask);
+	VG_(set_fault_catcher)(disassemble_sighandler);
+	irsb = bb_to_IR ( &vge,
+			  NULL,
+			  disInstr_AMD64,
+			  ULong_to_Ptr(addr),
+			  (Addr64)addr,
+			  chase_into_ok,
+			  False,
+			  vex_arch,
+			  &vex_archinfo,
+			  &vex_abiinfo,
+			  Ity_I64,
+			  0,
+			  NULL,
+			  offsetof(VexGuestAMD64State, guest_TISTART),
+			  offsetof(VexGuestAMD64State, guest_TILEN) );
+	VG_(set_fault_catcher)(NULL);
+	VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+
+	irsb = do_iropt_BB (irsb, guest_amd64_spechelper,
+			    guest_amd64_state_requires_precise_mem_exns,
+			    addr );
+
+	irsb = instrument_func(NULL, irsb, &amd64guest_layout, &vge,
+			       Ity_I64, Ity_I64);
+
+	irsb = do_iropt_BB (irsb, guest_amd64_spechelper,
+			    guest_amd64_state_requires_precise_mem_exns,
+			    addr );
+
+
+	ppIRSB(irsb);
+}

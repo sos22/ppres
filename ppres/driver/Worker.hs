@@ -1,6 +1,7 @@
 module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
               takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
-              replayStateWorker, controlTraceWorker, fetchMemoryWorker)
+              replayStateWorker, controlTraceWorker, fetchMemoryWorker,
+              vgIntermediateWorker)
     where
 
 import Data.Word
@@ -37,6 +38,9 @@ controlTracePacket cntr = ControlPacket 0x123d [fromInteger cntr]
 
 fetchMemoryPacket :: Word64 -> Word64 -> ControlPacket
 fetchMemoryPacket addr size = ControlPacket 0x123e [addr, size]
+
+vgIntermediatePacket :: Word64 -> ControlPacket
+vgIntermediatePacket addr = ControlPacket 0x123f [addr]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -254,3 +258,7 @@ fetchMemoryWorker worker addr size =
                   (ResponsePacket True [ResponseDataBytes s]) -> Just s
                   _ -> Nothing
 
+vgIntermediateWorker :: Worker -> Word64 -> IO (Maybe String)
+vgIntermediateWorker worker addr =
+    do sendWorkerCommand worker $ vgIntermediatePacket addr
+       return Nothing

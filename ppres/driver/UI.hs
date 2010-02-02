@@ -41,6 +41,7 @@ data UIExpression = UIDummyFunction
                   | UIFindCritPairs UIExpression
                   | UIFlipPair UIExpression UIExpression
                   | UIIndex UIExpression Int
+                  | UIVGIntermediate UIExpression Word64
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -115,6 +116,10 @@ expressionParser =
                   addr <- P.integer command_lexer
                   size <- P.integer command_lexer
                   return $ UIFetchMemory hist (fromInteger addr) (fromInteger size),
+               do keyword "vginter"
+                  hist <- expressionParser
+                  addr <- P.integer command_lexer
+                  return $ UIVGIntermediate hist (fromInteger addr),
                twoExprArgParser "pair" UIPair,
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
@@ -220,6 +225,8 @@ evalExpression ws f =
                     return [trc | trc <- es, not $ isFootstep trc ]
       UIFetchMemory hist addr size ->
           withSnapshot ws hist $ \s -> fetchMemory s addr size
+      UIVGIntermediate hist addr ->
+          withSnapshot ws hist $ \s -> vgIntermediate s addr
       UIFindCritPairs hist ->
           withSnapshot ws hist findCritPairs
       UIIndex lst idx ->

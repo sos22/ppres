@@ -12,6 +12,7 @@
 #define WORKER_REPLAY_STATE 0x123c
 #define WORKER_CONTROL_TRACE 0x123d
 #define WORKER_GET_MEMORY 0x123e
+#define WORKER_VG_INTERMEDIATE 0x123f
 
 struct command_header {
 	unsigned command;
@@ -253,6 +254,7 @@ void gc_expressions(void);
 UInt interpret_log_control_flow(VexGuestAMD64State *state);
 void initialise_interpreter_state(void);
 void commit_interpreter_state(void);
+void disassemble_addr(unsigned long addr);
 IRSB *instrument_func(VgCallbackClosure *closure,
 		      IRSB *sb_in,
 		      VexGuestLayout *layout,

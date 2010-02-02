@@ -84,6 +84,9 @@ struct control_command {
 			unsigned long addr;
 			unsigned long size;
 		} get_memory;
+		struct {
+			unsigned long addr;
+		} vg_intermediate;
 	} u;
 };
 
@@ -367,6 +370,10 @@ get_control_command(struct control_command *cmd)
 	case WORKER_TRACE_ADDRESS:
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.trace_mem.address, 8);
+		break;
+	case WORKER_VG_INTERMEDIATE:
+		tl_assert(ch.nr_args == 1);
+		safeish_read(control_process_socket, &cmd->u.vg_intermediate.addr, 8);
 		break;
 	case WORKER_RUNM:
 		tl_assert(ch.nr_args == 2);
@@ -691,6 +698,13 @@ reason_other(void)
 }
 
 static void
+do_vg_intermediate_command(unsigned long addr)
+{
+	disassemble_addr(addr);
+	send_okay();
+}
+
+static void
 replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 {
 	va_list args;
@@ -730,6 +744,9 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			break;
 		case WORKER_GET_MEMORY:
 			send_bytes(cmd.u.get_memory.size, (const void *)cmd.u.get_memory.addr);
+			break;
+		case WORKER_VG_INTERMEDIATE:
+			do_vg_intermediate_command(cmd.u.vg_intermediate.addr);
 			break;
 		default:
 			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
@@ -1228,6 +1245,9 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_GET_MEMORY:
 		send_bytes(cmd->u.get_memory.size, (const void *)cmd->u.get_memory.addr);
+		break;
+	case WORKER_VG_INTERMEDIATE:
+		do_vg_intermediate_command(cmd->u.vg_intermediate.addr);
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");
