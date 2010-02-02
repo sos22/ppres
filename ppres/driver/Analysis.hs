@@ -188,7 +188,7 @@ evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
 evalExpressionInSnapshot (ExpressionNot l) hist st =
     fmap complement $ evalExpressionInSnapshot l hist st
 
-findCritPairs :: History -> [(TraceLocation, Expression)]
+findCritPairs :: History -> [(TraceLocation, TraceLocation)]
 findCritPairs hist =
     case replayState hist of
       ReplayStateOkay -> []
@@ -200,6 +200,21 @@ findCritPairs hist =
               store_trace t = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ traceThread prefix2 t]
               store_changes_expr expr (ptr, val, _) =
                   evalExpressionInSnapshot expr prefix2 [] /= evalExpressionInSnapshot expr prefix2 [(ptr, val)]
-              critical_pairs = [(st, expr) | expr <- ctrl_expressions, t <- other_threads, st <- store_trace t,
-                                             store_changes_expr expr st]
+              expressionLocations p@(ptr, _, _) expr =
+                  case expr of
+                    ExpressionRegister _ _ -> []
+                    ExpressionConst _ -> []
+                    ExpressionMem _ loc ptr' _ ->
+                        (case evalExpressionInSnapshot ptr' prefix2 [] of
+                           Just ptr'' | ptr'' == ptr ->
+                                         ((:) loc)
+                           _ -> id) $ expressionLocations p ptr'
+                    ExpressionImported _ -> []
+                    ExpressionBinop _ l r -> (expressionLocations p l) ++ (expressionLocations p r)
+                    ExpressionNot x -> expressionLocations p x
+              critical_pairs = [(st, exprloc) | expr <- ctrl_expressions,
+                                                t <- other_threads,
+                                                st <- store_trace t,
+                                                exprloc <- expressionLocations st expr,
+                                                store_changes_expr expr st]
           in [(l, e) | ((_, _, l), e) <- critical_pairs]
