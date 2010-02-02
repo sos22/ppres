@@ -116,8 +116,8 @@ fixControlHistory' start =
     case replayState start of
       ReplayStateOkay -> Nothing
       ReplayStateFailed _ (FailureReasonControl nr_records dead_thread) ->
-          let prefix = truncateHistory start (nr_records-1)
-              criticalExpressions' = controlTrace prefix (-1)
+          let prefix = truncateHistory start $ Finite (nr_records - 1)
+              criticalExpressions' = controlTrace prefix Infinity
               criticalExpressions = [(e, evalExpressionWithStore e []) | e <- criticalExpressions']
               otherThreads = [x | x <- live_threads start, x /= dead_thread]
               otherStoresForThread t =
@@ -130,7 +130,7 @@ fixControlHistory' start =
                   concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
                           | t <- otherThreads]
               tryStore ((_, _, (TraceLocation _ acc thr)), _) =
-                  let (Just probe) = run (fst $ runMemory prefix thr (acc + 1)) (-1)
+                  let (Just probe) = run (fst $ runMemory prefix thr (acc + 1)) Infinity
                   in (probe, dt ("Trying probe " ++ (show probe)) replayState probe)
               allProbes = map tryStore interestingStores
               probeIsGood (_, ReplayStateOkay) = True
@@ -193,10 +193,10 @@ findCritPairs hist =
     case replayState hist of
       ReplayStateOkay -> []
       ReplayStateFailed _ (FailureReasonControl nr_records _) ->
-          let prefix1 = truncateHistory hist (nr_records - 1)
-              prefix2 = truncateHistory hist (nr_records - 2)
-              ctrl_expressions = controlTrace prefix1 (-1)
-              store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 (nr_records - 1)]
+          let prefix1 = truncateHistory hist $ Finite (nr_records - 1)
+              prefix2 = truncateHistory hist $ Finite (nr_records - 2)
+              ctrl_expressions = controlTrace prefix1 Infinity
+              store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 $ Finite (nr_records - 1)]
               store_changes_expr expr (ptr, val, _) =
                   evalExpressionInSnapshot expr prefix2 [] /= evalExpressionInSnapshot expr prefix2 [(ptr, val)]
               expressionLocations p@(ptr, _, _) expr =
@@ -229,7 +229,7 @@ findCritPairs hist =
 flipPair :: History -> (TraceLocation, TraceLocation) -> History
 flipPair start (post, pre) =
     let (prefix, trc) =
-            runMemory (truncateHistory start (trc_record post - 1))
+            runMemory (truncateHistory start $ Finite (trc_record post - 1))
                           (trc_thread post) (trc_access post)
         (res, trc2) =
             runMemory prefix (trc_thread pre) (trc_access pre + 1)

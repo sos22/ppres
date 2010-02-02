@@ -99,12 +99,12 @@ traceCmd he start w =
                             registerWorker newHist worker
                             return (newHist, r)
 
-run :: History -> Integer -> Maybe History
+run :: History -> (Topped Integer) -> Maybe History
 run start cntr =
     cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
 
 
-trace :: History -> Integer -> (History, [TraceRecord])
+trace :: History -> Topped Integer -> (History, [TraceRecord])
 trace start cntr =
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
@@ -114,7 +114,7 @@ traceThread start thr =
 
 traceAddress :: History -> Word64 -> (History, [TraceRecord])
 traceAddress start addr =
-    traceCmd (HistoryRun $ -1) start $ \worker -> traceAddressWorker worker addr
+    traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr
 
 runMemory :: History -> ThreadId -> Integer -> (History, [TraceRecord])
 runMemory start tid cntr =
@@ -134,7 +134,7 @@ threadState hist = queryCmd hist threadStateWorker
 replayState :: History -> ReplayState
 replayState hist = queryCmd hist replayStateWorker
 
-controlTrace :: History -> Integer -> [Expression]
+controlTrace :: History -> Topped Integer -> [Expression]
 controlTrace hist cntr =
     queryCmd hist $ \worker -> controlTraceWorker worker cntr
 

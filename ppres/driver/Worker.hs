@@ -15,14 +15,18 @@ sendWorkerCommand :: Worker -> ControlPacket -> IO ResponsePacket
 sendWorkerCommand worker cp =
     sendSocketCommand (worker_fd worker) cp
 
+fromTI :: Topped Integer -> Word64
+fromTI Infinity = -1
+fromTI (Finite x) = fromInteger x
+
 killPacket :: ControlPacket
 killPacket = ControlPacket 0x1235 []
 
-runPacket :: Integer -> ControlPacket
-runPacket cntr = ControlPacket 0x1236 [fromInteger cntr]
+runPacket :: (Topped Integer) -> ControlPacket
+runPacket cntr = ControlPacket 0x1236 [fromTI cntr]
 
-tracePacket :: Integer -> ControlPacket
-tracePacket cntr = ControlPacket 0x1237 [fromInteger cntr]
+tracePacket :: Topped Integer -> ControlPacket
+tracePacket cntr = ControlPacket 0x1237 [fromTI cntr]
 
 runMemoryPacket :: ThreadId -> Integer -> ControlPacket
 runMemoryPacket tid cntr = ControlPacket 0x1238 [fromIntegral tid, fromInteger cntr]
@@ -33,8 +37,8 @@ traceThreadPacket tid = ControlPacket 0x1239 [fromInteger tid]
 traceAddressPacket :: Word64 -> ControlPacket
 traceAddressPacket addr = ControlPacket 0x123a [addr]
 
-controlTracePacket :: Integer -> ControlPacket
-controlTracePacket cntr = ControlPacket 0x123d [fromInteger cntr]
+controlTracePacket :: Topped Integer -> ControlPacket
+controlTracePacket cntr = ControlPacket 0x123d [fromTI cntr]
 
 fetchMemoryPacket :: Word64 -> Word64 -> ControlPacket
 fetchMemoryPacket addr size = ControlPacket 0x123e [addr, size]
@@ -55,7 +59,7 @@ killWorker worker =
           else return ()
        return s
 
-runWorker :: Worker -> Integer -> IO Bool
+runWorker :: Worker -> (Topped Integer) -> IO Bool
 runWorker worker = trivCommand worker . runPacket
 
 ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
@@ -102,7 +106,7 @@ traceCmd worker pkt =
     do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
        return $ ancillaryDataToTrace args
 
-traceWorker :: Worker -> Integer -> IO [TraceRecord]
+traceWorker :: Worker -> Topped Integer -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
 
 traceThreadWorker :: Worker -> ThreadId -> IO [TraceRecord]
@@ -245,7 +249,7 @@ parseExpressions :: [ResponseData] -> [Expression]
 parseExpressions items =
     evalConsumer items $ consumeMany parseExpression
 
-controlTraceWorker :: Worker -> Integer -> IO [Expression]
+controlTraceWorker :: Worker -> Topped Integer -> IO [Expression]
 controlTraceWorker worker cntr =
     do (ResponsePacket _ params) <-
            sendWorkerCommand worker $ controlTracePacket cntr

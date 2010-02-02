@@ -18,8 +18,8 @@ import Analysis
 import History
 
 data UIExpression = UIDummyFunction
-                  | UIRun UIExpression Integer
-                  | UITrace UIExpression Integer
+                  | UIRun UIExpression (Topped Integer)
+                  | UITrace UIExpression (Topped Integer)
                   | UITraceThread UIExpression ThreadId
                   | UITraceAddress UIExpression Word64
                   | UIRunMemory UIExpression ThreadId Integer
@@ -32,11 +32,11 @@ data UIExpression = UIDummyFunction
                   | UIRemoveFootsteps UIExpression
                   | UIFindRacingAccesses UIExpression UIExpression
                   | UIReplayState UIExpression
-                  | UIControlTrace UIExpression Integer
+                  | UIControlTrace UIExpression (Topped Integer)
                   | UIFindControlRaces UIExpression UIExpression
                   | UIFixHist UIExpression
                   | UIFixHist2 UIExpression
-                  | UITruncHist UIExpression Integer
+                  | UITruncHist UIExpression (Topped Integer)
                   | UIFetchMemory UIExpression Word64 Word64
                   | UIFindCritPairs UIExpression
                   | UIFlipPair UIExpression UIExpression
@@ -74,21 +74,22 @@ expressionParser =
                a <- expressionParser
                b <- expressionParser
                return $ constructor a b
+        topped_int = option Infinity (liftM Finite $ P.integer command_lexer)
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
                oneExprArgParser "thread_state" UIThreadState,
                do keyword "run"
                   snap <- expressionParser
-                  cntr <- option (-1) (P.integer command_lexer)
+                  cntr <- topped_int
                   return $ UIRun snap cntr,
                do keyword "trace"
                   snap <- expressionParser
-                  cntr <- option (-1) (P.integer command_lexer)
+                  cntr <- topped_int
                   return $ UITrace snap cntr,
                do keyword "control_trace"
                   snap <- expressionParser
-                  cntr <- option (-1) (P.integer command_lexer)
+                  cntr <- topped_int
                   return $ UIControlTrace snap cntr,
                do keyword "tracet"
                   snap <- expressionParser
@@ -105,7 +106,7 @@ expressionParser =
                   return $ UIRunMemory snap t n,
                do keyword "trunc"
                   hist <- expressionParser
-                  n <- P.integer command_lexer
+                  n <- topped_int
                   return $ UITruncHist hist n,
                do keyword "index"
                   hist <- expressionParser

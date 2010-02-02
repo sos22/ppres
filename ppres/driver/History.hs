@@ -20,13 +20,9 @@ stripSharedPrefix (History aa) (History bb) =
               if a == b then worker as bs
               else case (a, b) of
                      (HistoryRun an, HistoryRun bn) ->
-                         if an == (-1)
-                         then worker (a:as) bs
-                         else if bn == (-1)
-                              then worker as (b:bs)
-                              else if an < bn
-                                   then worker as ((HistoryRun $ bn - an):bs)
-                                   else worker ((HistoryRun $ an - bn):as) bs
+                         if an < bn
+                         then worker as ((HistoryRun $ bn - an):bs)
+                         else worker ((HistoryRun $ an - bn):as) bs
                      (HistoryRunMemory atid acntr,
                       HistoryRunMemory btid bcntr) | atid == btid ->
                          if acntr < bcntr
@@ -68,10 +64,10 @@ appendHistory (History e) he =
     History $ e ++ [he]
 
 {- Truncate a history so that it only runs to a particular record number -}
-truncateHistory :: History -> Integer -> History
+truncateHistory :: History -> Topped Integer -> History
 truncateHistory (History hs) cntr =
     History $ worker hs
-    where worker [HistoryRun (-1)] = [HistoryRun cntr]
+    where worker [HistoryRun Infinity] = [HistoryRun cntr]
           worker ((HistoryRun c):hs') =
               if c <= cntr then (HistoryRun c):(worker hs')
               else [HistoryRun cntr]

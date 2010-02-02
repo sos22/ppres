@@ -7,7 +7,7 @@ import Numeric
 type ThreadId = Integer
 type VariableName = String
 
-data HistoryEntry = HistoryRun Integer
+data HistoryEntry = HistoryRun (Topped Integer)
                   | HistoryRunThread ThreadId
                   | HistoryRunMemory ThreadId Integer
                     deriving (Eq, Show)
@@ -138,3 +138,34 @@ instance Monad (Either a) where
     (Right x) >>= f = f x
     (Left x) >>= _ = Left x
     
+data Topped x = Infinity
+              | Finite x deriving Eq
+
+instance Show x => Show (Topped x) where
+    show Infinity = "{inf}"
+    show (Finite x) = show x
+
+instance Num x => Num (Topped x) where
+    Infinity + _ = Infinity
+    _ + Infinity = Infinity
+    (Finite x) + (Finite y) = Finite $ x + y
+
+    Infinity * (Finite 0) = error "multiply infinity by zero"
+    (Finite 0) * Infinity = error "multiply infinity by zero"
+    Infinity * _ = Infinity
+    _ * Infinity = Infinity
+    (Finite x) * (Finite y) = Finite $ x * y
+
+    abs Infinity = Infinity
+    abs (Finite x) = Finite x
+
+    signum Infinity = Finite 1
+    signum (Finite x) = Finite $ signum x
+
+    fromInteger x = Finite $ fromInteger x
+
+instance Ord x => Ord (Topped x) where
+    compare (Finite _) Infinity = LT
+    compare Infinity (Finite _) = GT
+    compare Infinity Infinity = EQ
+    compare (Finite x) (Finite y) = compare x y
