@@ -1,5 +1,5 @@
 module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
-                fixControlHistory', findCritPairs) where
+                fixControlHistory', findCritPairs, flipPair) where
 
 import Types
 import WorkerCache
@@ -7,13 +7,13 @@ import Expression()
 import History
 import ReplayState()
 
-import Debug.Trace
+import qualified Debug.Trace
 import Data.Bits
 import Data.Word
 import Data.List
 
 dt :: String -> b -> b
-dt = const id
+dt = Debug.Trace.trace
 
 
 {- We have two traces, A and B.  A represents what actually happened,
@@ -192,12 +192,11 @@ findCritPairs :: History -> [(TraceLocation, TraceLocation)]
 findCritPairs hist =
     case replayState hist of
       ReplayStateOkay -> []
-      ReplayStateFailed _ (FailureReasonControl nr_records dead_thread) ->
+      ReplayStateFailed _ (FailureReasonControl nr_records _) ->
           let prefix1 = truncateHistory hist (nr_records - 1)
               prefix2 = truncateHistory hist (nr_records - 2)
               ctrl_expressions = controlTrace prefix1 (-1)
-              other_threads = filter ((/=) dead_thread) $ live_threads hist
-              store_trace t = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ traceThread prefix2 t]
+              store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 (nr_records - 1)]
               store_changes_expr expr (ptr, val, _) =
                   evalExpressionInSnapshot expr prefix2 [] /= evalExpressionInSnapshot expr prefix2 [(ptr, val)]
               expressionLocations p@(ptr, _, _) expr =
@@ -213,8 +212,28 @@ findCritPairs hist =
                     ExpressionBinop _ l r -> (expressionLocations p l) ++ (expressionLocations p r)
                     ExpressionNot x -> expressionLocations p x
               critical_pairs = [(st, exprloc) | expr <- ctrl_expressions,
-                                                t <- other_threads,
-                                                st <- store_trace t,
+                                                st <- store_trace,
                                                 exprloc <- expressionLocations st expr,
                                                 store_changes_expr expr st]
           in [(l, e) | ((_, _, l), e) <- critical_pairs]
+
+
+{- flipPair hist (acc1, acc2) -> tweak hist so that it runs up to the
+   record before acc1, then runs acc1's thread until the access
+   immediately before acc1, then run acc2's thread until the access
+   immediately after acc2.  If acc2 is an access shortly after acc1
+   then this has the effect or reordering them so that acc2 happens
+   immediately before acc1. -}
+{- This really only makes sense if the acc2's thread is actually
+   runnable and if acc2 is in the next record which it has to run. -}
+flipPair :: History -> (TraceLocation, TraceLocation) -> History
+flipPair start (post, pre) =
+    let (prefix, trc) =
+            runMemory (truncateHistory start (trc_record post - 1))
+                          (trc_thread post) (trc_access post)
+        (res, trc2) =
+            runMemory prefix (trc_thread pre) (trc_access pre + 1)
+    in dt ("flipPair " ++ (show post) ++ " " ++ (show pre)) $
+       dt ("trc1 " ++ (show trc)) $
+       dt ("trc2 " ++ (show trc2)) $
+       res

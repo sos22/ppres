@@ -39,6 +39,8 @@ data UIExpression = UIDummyFunction
                   | UITruncHist UIExpression Integer
                   | UIFetchMemory UIExpression Word64 Word64
                   | UIFindCritPairs UIExpression
+                  | UIFlipPair UIExpression UIExpression
+                  | UIIndex UIExpression Int
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -104,6 +106,10 @@ expressionParser =
                   hist <- expressionParser
                   n <- P.integer command_lexer
                   return $ UITruncHist hist n,
+               do keyword "index"
+                  hist <- expressionParser
+                  n <- P.integer command_lexer
+                  return $ UIIndex hist (fromInteger n),
                do keyword "fetchmem"
                   hist <- expressionParser
                   addr <- P.integer command_lexer
@@ -112,6 +118,7 @@ expressionParser =
                twoExprArgParser "pair" UIPair,
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
+               twoExprArgParser "flippair" UIFlipPair,
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
@@ -198,6 +205,10 @@ evalExpression ws f =
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
                     return $ findRacingAccesses a' b'
+      UIFlipPair a b ->
+          toUI $ do a' <- fromUI $ evalExpression ws a
+                    b' <- fromUI $ evalExpression ws b
+                    return $ flipPair a' b'
       UIFindControlRaces a b ->
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
@@ -211,7 +222,13 @@ evalExpression ws f =
           withSnapshot ws hist $ \s -> fetchMemory s addr size
       UIFindCritPairs hist ->
           withSnapshot ws hist findCritPairs
-
+      UIIndex lst idx ->
+          case evalExpression ws lst of
+            UIValueList lst' ->
+                if idx >= length lst'
+                then UIValueError $ "index " ++ (show idx) ++ " greater than length of list " ++ (show $ length lst')
+                else lst'!!idx
+            e -> UIValueError $ "wanted a list to index, got a " ++(show e)
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
