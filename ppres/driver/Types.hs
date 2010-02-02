@@ -125,6 +125,7 @@ data UIValue = UIValueNull
              | UIValueExpression Expression
              | UIValueByte Word8
              | UIValueInteger Integer
+             | UIValueTraceLocation TraceLocation
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }
