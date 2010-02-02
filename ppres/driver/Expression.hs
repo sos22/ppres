@@ -4,24 +4,6 @@ import Numeric
 
 import Types
 
-binopPrec :: Binop -> Int
-binopPrec BinopCombine = 1
-binopPrec BinopSub = 2
-binopPrec BinopAdd = 3
-binopPrec BinopMull = 4
-binopPrec BinopMullHi = 4
-binopPrec BinopMullS = 4
-binopPrec BinopShrl = 5
-binopPrec BinopShl = 6
-binopPrec BinopShra = 7
-binopPrec BinopAnd = 8
-binopPrec BinopXor = 8
-binopPrec BinopOr = 8
-binopPrec BinopLe = 9
-binopPrec BinopBe = 9
-binopPrec BinopEq = 9
-binopPrec BinopB = 9
-
 instance Show Binop where
     show BinopCombine = "comb"
     show BinopSub = "-"
