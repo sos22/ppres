@@ -80,6 +80,10 @@ struct control_command {
 		struct {
 			long address;
 		} trace_mem;
+		struct {
+			unsigned long addr;
+			unsigned long size;
+		} get_memory;
 	} u;
 };
 
@@ -167,7 +171,7 @@ safeish_write(int fd, const void *buffer, size_t buffer_size)
 	unsigned x;
 	Int this_time;
 
-	for (x = 0; x < buffer_size; x++) {
+	for (x = 0; x < buffer_size; ) {
 		this_time = VG_(write)(fd, buffer + x, buffer_size - x);
 		if (this_time <= 0)
 			VG_(tool_panic)((Char *)"writing");
@@ -182,7 +186,7 @@ safeish_read(int fd, void *buffer, size_t buffer_size)
 	unsigned x;
 	Int this_time;
 
-	for (x = 0; x < buffer_size; x++) {
+	for (x = 0; x < buffer_size; ) {
 		this_time = VG_(read)(fd, buffer + x, buffer_size - x);
 		if (this_time <= 0)
 			VG_(tool_panic)((Char *)"reading");
@@ -284,15 +288,51 @@ _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args)
 }
 
 static void
-send_string(unsigned size, const void *buf)
+send_string(const char *buf)
 {
 	struct response_message msg;
 	struct response_string rs;
 	msg.response = RESPONSE_STRING;
+	rs.len = VG_(strlen)((Char *)buf);
+	safeish_write(control_process_socket, &msg, sizeof(msg));
+	safeish_write(control_process_socket, &rs, sizeof(rs));
+	safeish_write(control_process_socket, buf, rs.len);
+}
+
+/* This can handle the case where buf isn't a valid pointer.  It
+ * automatically sends either an OK or an error. */
+static void
+send_bytes(unsigned size, const void *buf)
+{
+	struct response_message msg;
+	struct response_string rs;
+	unsigned x;
+	Int this_time;
+
+	msg.response = RESPONSE_BYTES;
 	rs.len = size;
 	safeish_write(control_process_socket, &msg, sizeof(msg));
 	safeish_write(control_process_socket, &rs, sizeof(rs));
-	safeish_write(control_process_socket, buf, size);
+
+	for (x = 0; x < size; ) {
+		this_time = VG_(write)(control_process_socket,
+				       buf + x, size - x);
+		if (this_time <= 0) {
+			/* Failed; probably a bad pointer.  Output
+			 * zeroes to regain synchronisation, and then
+			 * report an error. */
+			unsigned char zero = 0;
+			while (x < size) {
+				/* Ignore errors */
+				VG_(write)(control_process_socket, &zero, 1);
+				x++;
+			}
+			send_error();
+			return;
+		}
+		x += this_time;
+	}
+	send_okay();
 }
 
 static void
@@ -332,6 +372,11 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 2);
 		safeish_read(control_process_socket, &cmd->u.runm.thread, 8);
 		safeish_read(control_process_socket, &cmd->u.runm.nr, 8);
+		break;
+	case WORKER_GET_MEMORY:
+		tl_assert(ch.nr_args == 2);
+		safeish_read(control_process_socket, &cmd->u.get_memory.addr, 8);
+		safeish_read(control_process_socket, &cmd->u.get_memory.size, 8);
 		break;
 	default:
 		VG_(tool_panic)((Char *)"bad worker command");
@@ -518,8 +563,7 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 				_TRACE(CALLING);
 			else
 				_TRACE(CALLED);
-			send_string(VG_(strlen)((Char *)arg_block[1]),
-				    (const char *)arg_block[1]);
+			send_string((const char *)arg_block[1]);
 		}
 		event(EVENT_client_request, arg_block[0], arg_block[1]);
 		VG_(in_generated_code) = False;
@@ -584,7 +628,7 @@ do_thread_state_command(void)
 	for (rt = head_thread; rt; rt = rt->next) {
 		VG_(sprintf)((Char *)buf, "%d: dead %d, last record %d",
 			     rt->id, rt->dead, rt->last_record_nr);
-		send_string(VG_(strlen)((Char *)buf), buf);
+		send_string(buf);
 	}
 	send_okay();
 }
@@ -681,8 +725,11 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
 				send_expression(failure_reason->arg2);
-			send_string(VG_(strlen)((Char *)msg), msg);
+			send_string(msg);
 			send_okay();
+			break;
+		case WORKER_GET_MEMORY:
+			send_bytes(cmd.u.get_memory.size, (const void *)cmd.u.get_memory.addr);
 			break;
 		default:
 			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
@@ -1178,6 +1225,9 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 	case WORKER_REPLAY_STATE:
 		send_ancillary(ANCILLARY_REPLAY_SUCCESS);
 		send_okay();
+		break;
+	case WORKER_GET_MEMORY:
+		send_bytes(cmd->u.get_memory.size, (const void *)cmd->u.get_memory.addr);
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");

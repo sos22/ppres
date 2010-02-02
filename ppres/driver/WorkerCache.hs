@@ -5,7 +5,8 @@
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    trace, traceThread, traceAddress, runMemory,
-                   threadState, replayState, controlTrace) where
+                   threadState, replayState, controlTrace,
+                   fetchMemory) where
 
 import Data.Word
 import Control.Monad.State
@@ -136,3 +137,7 @@ replayState hist = queryCmd hist replayStateWorker
 controlTrace :: History -> Integer -> [Expression]
 controlTrace hist cntr =
     queryCmd hist $ \worker -> controlTraceWorker worker cntr
+
+fetchMemory :: History -> Word64 -> Word64 -> Maybe [Word8]
+fetchMemory hist addr size =
+    queryCmd hist $ \worker -> fetchMemoryWorker worker addr size

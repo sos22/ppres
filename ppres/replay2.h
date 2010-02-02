@@ -11,6 +11,7 @@
 #define WORKER_THREAD_STATE 0x123b
 #define WORKER_REPLAY_STATE 0x123c
 #define WORKER_CONTROL_TRACE 0x123d
+#define WORKER_GET_MEMORY 0x123e
 
 struct command_header {
 	unsigned command;
@@ -21,6 +22,7 @@ struct command_header {
 #define RESPONSE_ERR 1
 #define RESPONSE_ANCILLARY 2
 #define RESPONSE_STRING 3
+#define RESPONSE_BYTES 4
 struct response_message {
 	unsigned response;
 };

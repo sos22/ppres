@@ -1,6 +1,6 @@
 module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
               takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
-              replayStateWorker, controlTraceWorker)
+              replayStateWorker, controlTraceWorker, fetchMemoryWorker)
     where
 
 import Data.Word
@@ -35,6 +35,9 @@ traceAddressPacket addr = ControlPacket 0x123a [addr]
 controlTracePacket :: Integer -> ControlPacket
 controlTracePacket cntr = ControlPacket 0x123d [fromInteger cntr]
 
+fetchMemoryPacket :: Word64 -> Word64 -> ControlPacket
+fetchMemoryPacket addr size = ControlPacket 0x123e [addr, size]
+
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
     do (ResponsePacket s _) <- sendWorkerCommand worker cmd
@@ -54,6 +57,7 @@ runWorker worker = trivCommand worker . runPacket
 ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
 ancillaryDataToTrace [] = []
 ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
+ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
     let (loc', other_args) = splitAt 3 args
         loc = TraceLocation { trc_record = toInteger $ loc'!!0,
@@ -242,3 +246,11 @@ controlTraceWorker worker cntr =
     do (ResponsePacket _ params) <-
            sendWorkerCommand worker $ controlTracePacket cntr
        return $ parseExpressions params
+
+fetchMemoryWorker :: Worker -> Word64 -> Word64 -> IO (Maybe [Word8])
+fetchMemoryWorker worker addr size =
+    do r <- sendWorkerCommand worker $ fetchMemoryPacket addr size
+       return $ case r of
+                  (ResponsePacket True [ResponseDataBytes s]) -> Just s
+                  _ -> Nothing
+

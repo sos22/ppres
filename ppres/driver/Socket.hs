@@ -18,6 +18,7 @@ foreign import ccall unsafe "send"
 
 data ControlPacket = ControlPacket Word32 [Word64]
 data ResponseData = ResponseDataString String
+                  | ResponseDataBytes [Word8]
                   | ResponseDataAncillary Word32 [Word64]
                     deriving Show
 data ResponsePacket = ResponsePacket Bool [ResponseData]
@@ -90,6 +91,9 @@ getResponse handle =
                          worker $ anc:acc_data
                  3 -> do s <- getString
                          worker $ s:acc_data
+                 4 -> do bytes <- getInt32
+                         s <- recvArray 1 handle (fromIntegral bytes)
+                         worker $ (ResponseDataBytes s):acc_data
                  _ -> error $ "strange response type " ++ (show rm)
     in worker []
 

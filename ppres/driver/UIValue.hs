@@ -2,6 +2,8 @@
 module UIValue(uiValueString, AvailInUI(..)) where
 
 import Control.Monad.Instances
+import Data.Word
+import Numeric
 
 import Types
 import ReplayState()
@@ -24,6 +26,7 @@ instance Show UIValue where
     show (UIValueTrace t) = "TRC " ++ show t
     show (UIValueReplayState rs) = "RS " ++ show rs
     show (UIValueExpression e) = "EXPR " ++ (show e)
+    show (UIValueByte b) = "0x" ++ (showHex b "")
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
@@ -89,3 +92,8 @@ instance AvailInUI Expression where
     toUI = UIValueExpression
     fromUI (UIValueExpression e) = Right e
     fromUI e = coerceError "expression" e
+
+instance AvailInUI Word8 where
+    toUI = UIValueByte
+    fromUI (UIValueByte b) = Right b
+    fromUI e = coerceError "byte" e

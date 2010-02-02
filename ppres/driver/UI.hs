@@ -37,6 +37,7 @@ data UIExpression = UIDummyFunction
                   | UIFixHist UIExpression
                   | UIFixHist2 UIExpression
                   | UITruncHist UIExpression Integer
+                  | UIFetchMemory UIExpression Word64 Word64
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -102,6 +103,11 @@ expressionParser =
                   hist <- expressionParser
                   n <- P.integer command_lexer
                   return $ UITruncHist hist n,
+               do keyword "fetchmem"
+                  hist <- expressionParser
+                  addr <- P.integer command_lexer
+                  size <- P.integer command_lexer
+                  return $ UIFetchMemory hist (fromInteger addr) (fromInteger size),
                twoExprArgParser "pair" UIPair,
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
@@ -199,7 +205,9 @@ evalExpression ws f =
                     let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
                         isFootstep _ = False
                     return [trc | trc <- es, not $ isFootstep trc ]
-                   
+      UIFetchMemory hist addr size ->
+          withSnapshot ws hist $ \s -> fetchMemory s addr size
+
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
