@@ -55,13 +55,12 @@ trivCommand worker cmd =
     do (ResponsePacket s _) <- sendWorkerCommand worker cmd
        return s
 
-killWorker :: Worker -> IO Bool
+killWorker :: Worker -> IO ()
 killWorker worker =
     do s <- trivCommand worker killPacket
        if s
           then liftIO $ sClose $ worker_fd worker
-          else return ()
-       return s
+          else error "can't kill worker?"
 
 runWorker :: Worker -> (Topped RecordNr) -> IO Bool
 runWorker worker = trivCommand worker . runPacket

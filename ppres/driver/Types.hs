@@ -15,7 +15,7 @@ data HistoryEntry = HistoryRun (Topped RecordNr)
                   | HistoryRunMemory ThreadId Integer
                     deriving (Eq, Show)
 
-data History = History [HistoryEntry] deriving Show
+data History = History [HistoryEntry] deriving (Show, Eq)
 
 data Worker = Worker { worker_fd :: Socket }
 

@@ -46,7 +46,7 @@ destroyWorkerCache =
        killWorker $ wc_start wc
        return ()
 
-getWorker :: History -> IO Worker
+getWorker :: History -> IO (Bool, Worker)
 getWorker hist =
     do (best_hist, best_worker) <- findBestWorker 
        new_worker <- takeSnapshot best_worker
@@ -55,7 +55,7 @@ getWorker hist =
                                error $ "cannot snapshot " ++ (show best_hist)
                            Just new_worker'' -> new_worker''
        fixupWorkerForHist new_worker' best_hist hist
-       return new_worker'
+       return (best_hist /= hist, new_worker')
     where findBestWorker :: IO (History, Worker)
           findBestWorker =
               do wc <- workerCache
@@ -86,7 +86,7 @@ registerWorker hist worker =
 cmd :: HistoryEntry -> History -> (Worker -> IO a) -> History
 cmd he start w =
     let newHist = appendHistory start he
-    in unsafePerformIO $ do worker <- getWorker start
+    in unsafePerformIO $ do (_, worker) <- getWorker start
                             w worker
                             registerWorker newHist worker
                             return newHist
@@ -94,7 +94,7 @@ cmd he start w =
 traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
 traceCmd he start w =
     let newHist = appendHistory start he
-    in unsafePerformIO $ do worker <- getWorker start
+    in unsafePerformIO $ do (_, worker) <- getWorker start
                             r <- w worker
                             registerWorker newHist worker
                             return (newHist, r)
@@ -123,9 +123,11 @@ runMemory start tid cntr =
 
 queryCmd :: History -> (Worker -> IO a) -> a
 queryCmd hist w =
-    unsafePerformIO $ do worker <- getWorker hist
+    unsafePerformIO $ do (register, worker) <- getWorker hist
                          res <- w worker
-                         killWorker worker
+                         if register
+                          then registerWorker hist worker
+                          else killWorker worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
@@ -136,7 +138,7 @@ replayState hist = queryCmd hist replayStateWorker
 
 controlTrace :: History -> Topped Integer -> [Expression]
 controlTrace hist cntr =
-    queryCmd hist $ \worker -> controlTraceWorker worker cntr
+    snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
 
 fetchMemory :: History -> Word64 -> Word64 -> Maybe [Word8]
 fetchMemory hist addr size =
