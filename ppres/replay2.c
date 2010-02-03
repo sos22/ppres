@@ -1165,6 +1165,7 @@ replay_record(const struct record_header *rec, struct replay_thread *thr,
 		break;
 	case RECORD_thread_unblocked:
 		thr->blocked = False;
+		finish_this_record(logfile);
 		break;
 	default:
 		finish_this_record(logfile);
