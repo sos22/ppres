@@ -187,6 +187,7 @@ struct replay_thread {
 	ULong rdtsc_result;
 
 	unsigned last_record_nr;
+	unsigned last_but_one_record_nr;
 	Bool dead;
 	Bool in_monitor;
 

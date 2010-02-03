@@ -654,7 +654,8 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->last_record_nr);
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->last_record_nr,
+			       rt->last_but_one_record_nr);
 	send_okay();
 }
 
@@ -1201,6 +1202,7 @@ run_for_n_records(struct record_consumer *logfile,
 
 		replay_record(rec, thr, &thread_event, logfile); /* Finishes the record */
 
+		thr->last_but_one_record_nr = thr->last_record_nr;
 		thr->last_record_nr = logfile->record_nr;
 	}
 }

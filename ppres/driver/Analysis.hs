@@ -204,6 +204,12 @@ lastSucceedingRecordAnyThread hist =
         (tid, ts) = foldl1 myMax $ threadState hist
     in (tid, ts_last_record ts)
 
+threadState' :: History -> ThreadId -> ThreadState
+threadState' hist thr =
+    case lookup thr $ threadState hist of
+      Nothing -> error "lost a thread"
+      Just ts -> ts
+
 {- This is trying to fix races assuming that we've just transitioned
    from thread A to thread B and then failed in the first record of
    thread B.  We try to fix it by moving some of the thread B accesses
@@ -216,7 +222,7 @@ findCritPairs hist =
       ReplayStateFailed _ (FailureReasonControl _ threadB) ->
           let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
               prefix1 = truncateHistory hist $ Finite $ threadALastSuccess
-              prefix2 = truncateHistory hist $ Finite $ previousRecord threadALastSuccess
+              prefix2 = truncateHistory hist $ Finite $ ts_last_but_one_record_nr $ threadState' hist threadA
               ctrl_expressions = controlTrace prefix1 Infinity
               store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 $ Finite threadALastSuccess]
               store_changes_expr expr (ptr, val, _) =
@@ -261,7 +267,7 @@ previousRecord (RecordNr x) = RecordNr $ x - 1
 flipPair :: History -> (TraceLocation, TraceLocation) -> History
 flipPair start (post, pre) =
     let (prefix, trc) =
-            runMemory (truncateHistory start $ Finite $ previousRecord $ trc_record post)
+            runMemory (truncateHistory start $ Finite $ trc_record post)
                           (trc_thread post) (trc_access post)
         (res, trc2) =
             runMemory prefix (trc_thread pre) (trc_access pre + 1)
