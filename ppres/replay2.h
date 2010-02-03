@@ -190,6 +190,7 @@ struct replay_thread {
 	unsigned last_but_one_record_nr;
 	Bool dead;
 	Bool in_monitor;
+	Bool blocked;
 
 	struct interpret_state interpret_state;
 };

@@ -1,4 +1,5 @@
 #include <asm/unistd.h>
+#include <linux/futex.h>
 #include <setjmp.h>
 #include <stddef.h>
 
@@ -49,7 +50,9 @@ struct client_event_record {
 	       EVENT_rdtsc,
 	       EVENT_load,
 	       EVENT_store,
-	       EVENT_client_request } type;
+	       EVENT_client_request,
+	       EVENT_blocking,
+	       EVENT_unblocked } type;
 	unsigned nr_args;
 
 	/* Careful: this is on the stack of the thread which generated
@@ -510,6 +513,24 @@ syscall_event(VexGuestAMD64State *state)
 		VG_(client_syscall)(VG_(running_tid), VEX_TRC_JMP_SYS_SYSCALL);
 	} else {
 		TRACE(SYSCALL, state->guest_RAX);
+		/* sys futex needs special handling so that we
+		   generate block and unblock events in the right
+		   places. */
+		if (state->guest_RAX == __NR_futex) {
+			unsigned long futex_cmd = state->guest_RSI & FUTEX_CMD_MASK;
+			if (futex_cmd == FUTEX_WAIT ||
+			    futex_cmd == FUTEX_WAIT_BITSET) {
+				int expected = state->guest_RDX;
+				int observed = *(int *)state->guest_RDI;
+				if (expected == observed) {
+					event(EVENT_blocking);
+					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
+					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
+					event(EVENT_unblocked);
+					return;
+				}
+			}
+		}
 		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	}
@@ -655,7 +676,7 @@ do_thread_state_command(void)
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
 		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->last_record_nr,
-			       rt->last_but_one_record_nr);
+			       rt->last_but_one_record_nr, rt->blocked);
 	send_okay();
 }
 
@@ -934,6 +955,14 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_control(), args[0], crr->flavour);
 		return;
 	}
+	case EVENT_blocking: {
+		replay_assert_eq(reason_control(), rec->cls, RECORD_thread_blocking);
+		return;
+	}
+	case EVENT_unblocked: {
+		replay_assert_eq(reason_control(), rec->cls, RECORD_thread_unblocked);
+		return;
+	}
 	case EVENT_nothing:
 		VG_(tool_panic)((Char *)"validate event when no event present?");
 	}
@@ -1130,6 +1159,13 @@ replay_record(const struct record_header *rec, struct replay_thread *thr,
 		replay_syscall(sr, thr, event, logfile);
 		break;
 	}
+	case RECORD_thread_blocking:
+		thr->blocked = True;
+		finish_this_record(logfile);
+		break;
+	case RECORD_thread_unblocked:
+		thr->blocked = False;
+		break;
 	default:
 		finish_this_record(logfile);
 		break;
@@ -1173,8 +1209,6 @@ run_for_n_records(struct record_consumer *logfile,
 		if (!rec)
 			break;
 		if (rec->cls == RECORD_new_thread ||
-		    rec->cls == RECORD_thread_blocking ||
-		    rec->cls == RECORD_thread_unblocked ||
 		    (!use_footsteps &&
 		     rec->cls == RECORD_footstep) ||
 		    (!use_memory &&

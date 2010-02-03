@@ -118,6 +118,7 @@ data ReplayState = ReplayStateOkay
                  | ReplayStateFailed String ReplayFailureReason
 
 data ThreadState = ThreadState { ts_dead :: Bool,
+                                 ts_blocked :: Bool,
                                  ts_last_record :: RecordNr,
                                  ts_last_but_one_record_nr :: RecordNr } deriving Show
 
