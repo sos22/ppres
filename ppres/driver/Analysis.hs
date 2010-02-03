@@ -102,10 +102,16 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 live_threads :: History -> [ThreadId]
 live_threads _ = [1,2]
 
+lastSucceedingRecord :: History -> ThreadId -> RecordNr
+lastSucceedingRecord hist thread =
+    case lookup thread $ threadState hist of
+      Nothing -> error $ "lost thread " ++ (show thread)
+      Just ts -> ts_last_record ts
+
 fixControlHistoryL :: History -> [History]
 fixControlHistoryL start =
-    let (ReplayStateFailed _ (FailureReasonControl nr_records dead_thread)) = replayState start
-        prefix = truncateHistory start $ Finite $ previousRecord nr_records
+    let (ReplayStateFailed _ (FailureReasonControl _ dead_thread)) = replayState start
+        prefix = truncateHistory start $ Finite $ lastSucceedingRecord start dead_thread
         criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
         otherThreads = [x | x <- live_threads start, x /= dead_thread]
         otherStoresForThread t =
