@@ -40,6 +40,7 @@ struct response_message {
 #define ANCILLARY_REPLAY_SUCCESS 10
 #define ANCILLARY_REPLAY_FAILED 11
 #define ANCILLARY_EXPRESSION 12
+#define ANCILLARY_THREAD_STATE 13
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;

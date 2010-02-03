@@ -29,6 +29,7 @@ instance Show UIValue where
     show (UIValueByte b) = "BYTE 0x" ++ (showHex b "")
     show (UIValueInteger r) = "0x" ++ (showHex r "")
     show (UIValueTraceLocation tr) = "{" ++ (show tr) ++ "}"
+    show (UIValueThreadState ts) = show ts
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
@@ -109,3 +110,8 @@ instance AvailInUI Integer where
     toUI = UIValueInteger
     fromUI (UIValueInteger i) = Right i
     fromUI e = coerceError "integer" e
+
+instance AvailInUI ThreadState where
+    toUI = UIValueThreadState
+    fromUI (UIValueThreadState i) = Right i
+    fromUI e = coerceError "thread state" e

@@ -648,12 +648,8 @@ static void
 do_thread_state_command(void)
 {
 	struct replay_thread *rt;
-	char buf[128];
-	for (rt = head_thread; rt; rt = rt->next) {
-		VG_(sprintf)((Char *)buf, "%d: dead %d, last record %d",
-			     rt->id, rt->dead, rt->last_record_nr);
-		send_string(buf);
-	}
+	for (rt = head_thread; rt; rt = rt->next)
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->last_record_nr);
 	send_okay();
 }
 

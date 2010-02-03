@@ -117,6 +117,9 @@ data ReplayFailureReason = FailureReasonControl RecordNr ThreadId deriving Show
 data ReplayState = ReplayStateOkay
                  | ReplayStateFailed String ReplayFailureReason
 
+data ThreadState = ThreadState { ts_dead :: Bool,
+                                 ts_last_record :: RecordNr } deriving Show
+
 data UIValue = UIValueNull
              | UIValueSnapshot History
              | UIValuePair UIValue UIValue
@@ -129,6 +132,7 @@ data UIValue = UIValueNull
              | UIValueByte Word8
              | UIValueInteger Integer
              | UIValueTraceLocation TraceLocation
+             | UIValueThreadState ThreadState
 
 data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
                                  wc_start :: Worker }
