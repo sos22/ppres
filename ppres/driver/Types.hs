@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Types where
 
 import Data.Word
@@ -7,7 +8,9 @@ import Numeric
 type ThreadId = Integer
 type VariableName = String
 
-data HistoryEntry = HistoryRun (Topped Integer)
+newtype RecordNr = RecordNr Integer deriving (Num, Eq, Show, Integral, Real, Enum, Ord)
+
+data HistoryEntry = HistoryRun (Topped RecordNr)
                   | HistoryRunThread ThreadId
                   | HistoryRunMemory ThreadId Integer
                     deriving (Eq, Show)
@@ -16,7 +19,7 @@ data History = History [HistoryEntry] deriving Show
 
 data Worker = Worker { worker_fd :: Socket }
 
-data TraceLocation = TraceLocation { trc_record :: Integer,
+data TraceLocation = TraceLocation { trc_record :: RecordNr,
                                      trc_access :: Integer,
                                      trc_thread :: ThreadId } deriving Eq
 
@@ -109,7 +112,7 @@ data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression
 
-data ReplayFailureReason = FailureReasonControl Integer ThreadId deriving Show
+data ReplayFailureReason = FailureReasonControl RecordNr ThreadId deriving Show
 
 data ReplayState = ReplayStateOkay
                  | ReplayStateFailed String ReplayFailureReason
@@ -140,6 +143,10 @@ instance Monad (Either a) where
     
 data Topped x = Infinity
               | Finite x deriving Eq
+
+instance Functor Topped where
+    fmap _ Infinity = Infinity
+    fmap f (Finite x) = Finite $ f x
 
 instance Show x => Show (Topped x) where
     show Infinity = "{inf}"

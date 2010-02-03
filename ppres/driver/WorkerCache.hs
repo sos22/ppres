@@ -99,12 +99,12 @@ traceCmd he start w =
                             registerWorker newHist worker
                             return (newHist, r)
 
-run :: History -> (Topped Integer) -> History
+run :: History -> (Topped RecordNr) -> History
 run start cntr =
     cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
 
 
-trace :: History -> Topped Integer -> (History, [TraceRecord])
+trace :: History -> Topped RecordNr -> (History, [TraceRecord])
 trace start cntr =
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 

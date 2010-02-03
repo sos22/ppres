@@ -246,7 +246,7 @@ historyGoodness :: Goodness History
 historyGoodness hist =
     case replayState hist of
       ReplayStateOkay -> Infinity
-      ReplayStateFailed _ (FailureReasonControl x _) -> Finite x
+      ReplayStateFailed _ (FailureReasonControl (RecordNr x) _) -> Finite x
 
 explorePairs :: Explorer History
 explorePairs start =

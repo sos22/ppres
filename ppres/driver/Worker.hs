@@ -19,14 +19,18 @@ fromTI :: Topped Integer -> Word64
 fromTI Infinity = -1
 fromTI (Finite x) = fromInteger x
 
+fromRN :: Topped RecordNr -> Word64
+fromRN Infinity = -1
+fromRN (Finite x) = fromIntegral x
+
 killPacket :: ControlPacket
 killPacket = ControlPacket 0x1235 []
 
-runPacket :: (Topped Integer) -> ControlPacket
-runPacket cntr = ControlPacket 0x1236 [fromTI cntr]
+runPacket :: (Topped RecordNr) -> ControlPacket
+runPacket cntr = ControlPacket 0x1236 [fromRN cntr]
 
-tracePacket :: Topped Integer -> ControlPacket
-tracePacket cntr = ControlPacket 0x1237 [fromTI cntr]
+tracePacket :: Topped RecordNr -> ControlPacket
+tracePacket cntr = ControlPacket 0x1237 [fromRN cntr]
 
 runMemoryPacket :: ThreadId -> Integer -> ControlPacket
 runMemoryPacket tid cntr = ControlPacket 0x1238 [fromIntegral tid, fromInteger cntr]
@@ -59,7 +63,7 @@ killWorker worker =
           else return ()
        return s
 
-runWorker :: Worker -> (Topped Integer) -> IO Bool
+runWorker :: Worker -> (Topped RecordNr) -> IO Bool
 runWorker worker = trivCommand worker . runPacket
 
 ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
@@ -68,7 +72,7 @@ ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
     let (loc', other_args) = splitAt 3 args
-        loc = TraceLocation { trc_record = toInteger $ loc'!!0,
+        loc = TraceLocation { trc_record = fromIntegral $ loc'!!0,
                               trc_access = toInteger $ loc'!!1,
                               trc_thread = fromIntegral $ loc'!!2 }
         (entry, rest) =
@@ -106,7 +110,7 @@ traceCmd worker pkt =
     do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
        return $ ancillaryDataToTrace args
 
-traceWorker :: Worker -> Topped Integer -> IO [TraceRecord]
+traceWorker :: Worker -> Topped RecordNr -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
 
 traceThreadWorker :: Worker -> ThreadId -> IO [TraceRecord]

@@ -64,7 +64,7 @@ appendHistory (History e) he =
     History $ e ++ [he]
 
 {- Truncate a history so that it only runs to a particular record number -}
-truncateHistory :: History -> Topped Integer -> History
+truncateHistory :: History -> Topped RecordNr -> History
 truncateHistory (History hs) cntr =
     History $ worker hs
     where worker [HistoryRun Infinity] = [HistoryRun cntr]
