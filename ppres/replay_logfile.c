@@ -92,6 +92,7 @@ finish_this_record(struct record_consumer *rc)
 	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
 	rc->offset_in_current_chunk += get_current_record(rc)->size;
 	tl_assert(rc->avail_in_current_chunk >= rc->offset_in_current_chunk);
+	rc->record_nr++;
 }
 
 OffT

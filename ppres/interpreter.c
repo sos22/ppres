@@ -24,8 +24,6 @@
 
 #include "replay2.h"
 
-#define NOISY_AFTER_RECORD 10000000
-
 extern void VG_(init_vex)(void);
 extern void vexSetAllocModeTEMP_and_clear ( void );
 
@@ -1332,9 +1330,6 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 			    guest_amd64_state_requires_precise_mem_exns,
 			    addr );
 
-	if (record_nr > NOISY_AFTER_RECORD)
-		ppIRSB(irsb);
-
 	tl_assert(istate->temporaries == NULL);
 	istate->nr_temporaries = irsb->tyenv->types_used;
 	istate->temporaries = VG_(malloc)("interpreter temporaries",
@@ -1346,11 +1341,6 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		    istate->nr_temporaries);
 	for (stmt_nr = 0; stmt_nr < irsb->stmts_used; stmt_nr++) {
 		stmt = irsb->stmts[stmt_nr];
-		if (record_nr > NOISY_AFTER_RECORD) {
-			VG_(printf)("Interpreting record %d ", record_nr);
-			ppIRStmt(stmt);
-			VG_(printf)("\n");
-		}
 		switch (stmt->tag) {
 		case Ist_NoOp:
 			break;

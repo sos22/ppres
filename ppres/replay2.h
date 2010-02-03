@@ -202,8 +202,8 @@ struct interpret_mem_lookaside {
 extern struct replay_thread *head_thread;
 extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
-extern unsigned record_nr;
 extern unsigned access_nr;
+extern struct record_consumer logfile;
 
 int ui_loop(void);
 int do_snapshot(int parent_fd);

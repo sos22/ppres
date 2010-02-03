@@ -4,6 +4,7 @@ struct record_consumer {
 	unsigned avail_in_current_chunk;
 	void *current_chunk;
 	OffT offset_in_file;
+	unsigned record_nr;
 
 	void *peek_chunk;
 	OffT peek_chunk_start;

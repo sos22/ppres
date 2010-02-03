@@ -116,9 +116,6 @@ static int
 control_process_socket;
 
 unsigned
-record_nr;
-
-unsigned
 access_nr;
 
 static Bool
@@ -135,6 +132,9 @@ head_interpret_mem_lookaside;
 
 static Bool
 want_to_interpret;
+
+struct record_consumer
+logfile;
 
 static void
 my_mprotect(void *base, size_t len, int prot)
@@ -410,7 +410,7 @@ get_control_command(struct control_command *cmd)
 
 #define _TRACE(code, args...)                             \
 	send_ancillary(ANCILLARY_TRACE_ ## code,	  \
-		       record_nr,			  \
+		       logfile.record_nr,		  \
 		       access_nr,			  \
 		       current_thread->id,		  \
 		       ## args)
@@ -751,7 +751,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			do_thread_state_command();
 			break;
 		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, record_nr, failure_reason->tid);
+			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, logfile.record_nr, failure_reason->tid);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
@@ -791,7 +791,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 
 static void
 validate_event(const struct record_header *rec,
-	       const struct client_event_record *event)
+	       const struct client_event_record *event,
+	       unsigned record_nr)
 {
 	const void *payload = rec + 1;
 	const unsigned long *args = event->args;
@@ -1049,7 +1050,6 @@ replay_syscall(const struct syscall_record *sr,
 		break;
 
 	case __NR_exit_group:
-		VG_(printf)("%d: Exit group, status %ld.\n", record_nr, event->args[1]);
 		finish_this_record(logfile);
 		break;
 
@@ -1151,7 +1151,7 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 		    cer.type != EVENT_store) {
 			replay_failed(reason_control(),
 				      "%d: Client made unexpected event %x\n",
-				      record_nr,
+				      logfile.record_nr,
 				      cer.type);
 		}
 	}
@@ -1166,7 +1166,7 @@ run_for_n_records(struct record_consumer *logfile,
 	struct replay_thread *thr;
 	struct client_event_record thread_event;
 
-	while (record_nr != nr_records) {
+	while (logfile->record_nr != nr_records) {
 		rec = get_current_record(logfile);
 		if (!rec)
 			break;
@@ -1182,7 +1182,6 @@ run_for_n_records(struct record_consumer *logfile,
 			continue;
 		}
 
-		record_nr++;
 		access_nr = 0;
 
 		tl_assert(rec->cls != RECORD_memory);
@@ -1197,11 +1196,11 @@ run_for_n_records(struct record_consumer *logfile,
 			    thread_event.type != EVENT_store)));
 
 
-		validate_event(rec, &thread_event);
+		validate_event(rec, &thread_event, logfile->record_nr);
 
 		replay_record(rec, thr, &thread_event, logfile); /* Finishes the record */
 
-		thr->last_record_nr = record_nr;
+		thr->last_record_nr = logfile->record_nr;
 	}
 }
 
@@ -1276,7 +1275,6 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 static void
 replay_machine_fn(void)
 {
-	struct record_consumer logfile;
 	struct control_command cmd;
 
 	open_logfile(&logfile, (Char *)"logfile1");
