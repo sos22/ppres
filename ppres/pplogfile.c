@@ -158,6 +158,7 @@ main(int argc, char *argv[])
 		case RECORD_client: {
 			struct client_req_record *crr = payload;
 			printf("client request %lx\n", crr->flavour);
+			break;
 		}
 		default:
 			printf("record cls %d\n", h.cls);
