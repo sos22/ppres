@@ -69,7 +69,7 @@ truncateHistory (History hs) cntr =
     History $ worker hs
     where worker [HistoryRun Infinity] = [HistoryRun cntr]
           worker ((HistoryRun c):hs') =
-              if c <= cntr then (HistoryRun c):(worker hs')
+              if c < cntr then (HistoryRun c):(worker hs')
               else [HistoryRun cntr]
           worker ((h@(HistoryRunMemory _ _)):hs') = h:(worker hs')
           worker _ = error $ "truncate bad history " ++ (show hs)
