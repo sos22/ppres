@@ -115,6 +115,7 @@ data Expression = ExpressionRegister RegisterName Word64
 data ReplayFailureReason = FailureReasonControl RecordNr ThreadId deriving Show
 
 data ReplayState = ReplayStateOkay
+                 | ReplayStateFinished
                  | ReplayStateFailed String ReplayFailureReason
 
 data ThreadState = ThreadState { ts_dead :: Bool,

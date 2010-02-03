@@ -152,6 +152,7 @@ parseReplayState :: [ResponseData] -> ReplayState
 parseReplayState [ResponseDataAncillary 10 []] = ReplayStateOkay
 parseReplayState [ResponseDataAncillary 11 [0, record_nr, tid], ResponseDataString s] =
     ReplayStateFailed s $ FailureReasonControl (RecordNr $ fromIntegral record_nr) (fromIntegral tid)
+parseReplayState [ResponseDataAncillary 14 []] = ReplayStateFinished
 parseReplayState x = error $ "bad replay state " ++ (show x)
 
 replayStateWorker :: Worker -> IO ReplayState

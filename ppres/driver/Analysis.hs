@@ -102,12 +102,6 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 live_threads :: History -> [ThreadId]
 live_threads _ = [1,2]
 
-lastSucceedingRecord :: History -> ThreadId -> RecordNr
-lastSucceedingRecord hist thread =
-    case lookup thread $ threadState hist of
-      Nothing -> error $ "lost thread " ++ (show thread)
-      Just ts -> ts_last_record ts
-
 fixControlHistoryL :: History -> [History]
 fixControlHistoryL start =
     let (ReplayStateFailed _ (FailureReasonControl record_nr dead_thread)) = replayState start
@@ -141,19 +135,24 @@ fixControlHistory' :: History -> Maybe History
 fixControlHistory' start =
     case replayState start of
       ReplayStateOkay -> Nothing
+      ReplayStateFinished -> Nothing
       ReplayStateFailed _ (FailureReasonControl nr_records _) ->
           let probes = fixControlHistoryL start
               allProbes = [(p, replayState p) | p <- probes]
               probeIsGood (_, ReplayStateOkay) = True
+              probeIsGood (_, ReplayStateFinished) = True
               probeIsGood (_, ReplayStateFailed _ (FailureReasonControl progress _)) =
                   progress > nr_records
               goodProbes = filter probeIsGood allProbes
               probeIsVeryGood (_, ReplayStateOkay) = True
+              probeIsVeryGood (_, ReplayStateFinished) = True
               probeIsVeryGood (_, ReplayStateFailed _ (FailureReasonControl (RecordNr progress) _)) =
                   let (RecordNr n) = nr_records
                   in progress > n + 10000
+              compareFailureReasons ReplayStateFinished _ = LT
               compareFailureReasons ReplayStateOkay _ = LT
               compareFailureReasons _ ReplayStateOkay = GT
+              compareFailureReasons _ ReplayStateFinished = GT
               compareFailureReasons (ReplayStateFailed _ (FailureReasonControl proga _))
                                     (ReplayStateFailed _ (FailureReasonControl progb _)) =
                                         compare proga progb
@@ -219,6 +218,7 @@ findCritPairs :: History -> [(TraceLocation, TraceLocation)]
 findCritPairs hist =
     case replayState hist of
       ReplayStateOkay -> []
+      ReplayStateFinished -> []
       ReplayStateFailed _ (FailureReasonControl _ threadB) ->
           let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
               prefix1 = truncateHistory hist $ Finite $ threadALastSuccess
@@ -251,9 +251,6 @@ findCritPairs hist =
              else [(l, e) | ((_, _, l), e) <- critical_pairs]
 
 
-previousRecord :: RecordNr -> RecordNr
-previousRecord (RecordNr x) = RecordNr $ x - 1
-
 {- flipPair hist (acc1, acc2) -> tweak hist so that it runs up to the
    record before acc1, then runs acc1's thread until the access
    immediately before acc1, then run acc2's thread until the access
@@ -283,6 +280,7 @@ historyGoodness :: Goodness History
 historyGoodness hist =
     case replayState hist of
       ReplayStateOkay -> Infinity
+      ReplayStateFinished -> Infinity
       ReplayStateFailed _ (FailureReasonControl (RecordNr x) _) -> Finite x
 
 explorePairs :: Explorer History

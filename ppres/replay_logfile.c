@@ -54,9 +54,10 @@ advance_chunk(struct record_consumer *rc)
 			  to_read);
 	rc->avail_in_current_chunk += actually_read;
 	rc->offset_in_file += actually_read;
-	if (actually_read == 0)
+	if (actually_read == 0) {
+		rc->finished = True;
 		return False;
-	else
+	} else
 		return True;
 }
 

@@ -9,6 +9,8 @@ struct record_consumer {
 	void *peek_chunk;
 	OffT peek_chunk_start;
 	unsigned peek_chunk_size;
+
+	Bool finished;
 };
 
 void finish_this_record(struct record_consumer *rc);

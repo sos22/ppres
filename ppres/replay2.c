@@ -1297,7 +1297,10 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		do_thread_state_command();
 		break;
 	case WORKER_REPLAY_STATE:
-		send_ancillary(ANCILLARY_REPLAY_SUCCESS);
+		if (logfile->finished)
+			send_ancillary(ANCILLARY_REPLAY_FINISHED);
+		else
+			send_ancillary(ANCILLARY_REPLAY_SUCCESS);
 		send_okay();
 		break;
 	case WORKER_GET_MEMORY:
