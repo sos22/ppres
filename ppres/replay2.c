@@ -527,6 +527,7 @@ syscall_event(VexGuestAMD64State *state)
 					event(EVENT_blocking);
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
+					/* Hmm... */
 					if (state->guest_RAX != -EWOULDBLOCK)
 						event(EVENT_unblocked);
 					return;

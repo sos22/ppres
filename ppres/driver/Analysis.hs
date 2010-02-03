@@ -110,8 +110,8 @@ lastSucceedingRecord hist thread =
 
 fixControlHistoryL :: History -> [History]
 fixControlHistoryL start =
-    let (ReplayStateFailed _ (FailureReasonControl _ dead_thread)) = replayState start
-        prefix = truncateHistory start $ Finite $ lastSucceedingRecord start dead_thread
+    let (ReplayStateFailed _ (FailureReasonControl record_nr dead_thread)) = replayState start
+        prefix = truncateHistory start $ Finite record_nr
         criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
         otherThreads = [x | x <- live_threads start, x /= dead_thread]
         otherStoresForThread t =
