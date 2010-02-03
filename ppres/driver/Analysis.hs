@@ -196,15 +196,29 @@ evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
 evalExpressionInSnapshot (ExpressionNot l) hist st =
     fmap complement $ evalExpressionInSnapshot l hist st
 
+lastSucceedingRecordAnyThread :: History -> (ThreadId, RecordNr)
+lastSucceedingRecordAnyThread hist =
+    let myMax a b = if ts_last_record (snd a) <= ts_last_record (snd b)
+                    then b
+                    else a
+        (tid, ts) = foldl1 myMax $ threadState hist
+    in (tid, ts_last_record ts)
+
+{- This is trying to fix races assuming that we've just transitioned
+   from thread A to thread B and then failed in the first record of
+   thread B.  We try to fix it by moving some of the thread B accesses
+   a little bit earlier, so that they overlap with the last thread A
+   record. -}
 findCritPairs :: History -> [(TraceLocation, TraceLocation)]
 findCritPairs hist =
     case replayState hist of
       ReplayStateOkay -> []
-      ReplayStateFailed _ (FailureReasonControl nr_records _) ->
-          let prefix1 = truncateHistory hist $ Finite $ previousRecord nr_records
-              prefix2 = truncateHistory hist $ Finite $ previousRecord $ previousRecord nr_records
+      ReplayStateFailed _ (FailureReasonControl _ threadB) ->
+          let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
+              prefix1 = truncateHistory hist $ Finite $ threadALastSuccess
+              prefix2 = truncateHistory hist $ Finite $ previousRecord threadALastSuccess
               ctrl_expressions = controlTrace prefix1 Infinity
-              store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 $ Finite $ previousRecord nr_records]
+              store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 $ Finite threadALastSuccess]
               store_changes_expr expr (ptr, val, _) =
                   evalExpressionInSnapshot expr prefix2 [] /= evalExpressionInSnapshot expr prefix2 [(ptr, val)]
               expressionLocations p@(ptr, _, _) expr =
@@ -223,7 +237,12 @@ findCritPairs hist =
                                                 st <- store_trace,
                                                 exprloc <- expressionLocations st expr,
                                                 store_changes_expr expr st]
-          in [(l, e) | ((_, _, l), e) <- critical_pairs]
+          in dt ("threadA " ++ (show threadA)) $
+             dt ("threadB " ++ (show threadB)) $
+             dt ("last success " ++ (show threadALastSuccess)) $
+             if threadA == threadB
+             then []
+             else [(l, e) | ((_, _, l), e) <- critical_pairs]
 
 
 previousRecord :: RecordNr -> RecordNr
@@ -236,7 +255,9 @@ previousRecord (RecordNr x) = RecordNr $ x - 1
    then this has the effect or reordering them so that acc2 happens
    immediately before acc1. -}
 {- This really only makes sense if the acc2's thread is actually
-   runnable and if acc2 is in the next record which it has to run. -}
+   runnable and if acc2 is in the next record which it has to run.  It
+   pretty much means to flip one of the races found by
+   findCritPairs. -}
 flipPair :: History -> (TraceLocation, TraceLocation) -> History
 flipPair start (post, pre) =
     let (prefix, trc) =
