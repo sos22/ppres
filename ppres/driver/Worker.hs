@@ -21,7 +21,7 @@ fromTI (Finite x) = fromInteger x
 
 fromRN :: Topped RecordNr -> Word64
 fromRN Infinity = -1
-fromRN (Finite x) = fromIntegral x
+fromRN (Finite (RecordNr x)) = fromInteger x
 
 killPacket :: ControlPacket
 killPacket = ControlPacket 0x1235 []
@@ -72,7 +72,7 @@ ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
     let (loc', other_args) = splitAt 3 args
-        loc = TraceLocation { trc_record = fromIntegral $ loc'!!0,
+        loc = TraceLocation { trc_record = RecordNr $ fromIntegral $ loc'!!0,
                               trc_access = toInteger $ loc'!!1,
                               trc_thread = fromIntegral $ loc'!!2 }
         (entry, rest) =
@@ -143,7 +143,7 @@ threadStateWorker worker =
 parseReplayState :: [ResponseData] -> ReplayState
 parseReplayState [ResponseDataAncillary 10 []] = ReplayStateOkay
 parseReplayState [ResponseDataAncillary 11 [0, record_nr, tid], ResponseDataString s] =
-    ReplayStateFailed s $ FailureReasonControl (fromIntegral record_nr) (fromIntegral tid)
+    ReplayStateFailed s $ FailureReasonControl (RecordNr $ fromIntegral record_nr) (fromIntegral tid)
 parseReplayState x = error $ "bad replay state " ++ (show x)
 
 replayStateWorker :: Worker -> IO ReplayState
@@ -239,7 +239,7 @@ parseExpression =
          [2, sz, rec, acc,  thr] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) (TraceLocation (fromIntegral rec) (fromIntegral acc) (fromIntegral thr)) ptr val
+                return $ ExpressionMem (fromIntegral sz) (TraceLocation (RecordNr $ fromIntegral rec) (fromIntegral acc) (fromIntegral thr)) ptr val
          [3, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression

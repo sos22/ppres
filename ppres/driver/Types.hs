@@ -8,7 +8,7 @@ import Numeric
 type ThreadId = Integer
 type VariableName = String
 
-newtype RecordNr = RecordNr Integer deriving (Num, Eq, Show, Integral, Real, Enum, Ord)
+newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord)
 
 data HistoryEntry = HistoryRun (Topped RecordNr)
                   | HistoryRunThread ThreadId

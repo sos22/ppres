@@ -16,13 +16,13 @@ stripSharedPrefix (History aa) (History bb) =
       (a', b') -> (History a', History b')
     where worker a [] = (a, [])
           worker [] b = ([], b)
-          worker (a:as) (b:bs) =
+          worker aas@(a:as) bbs@(b:bs) =
               if a == b then worker as bs
               else case (a, b) of
                      (HistoryRun an, HistoryRun bn) ->
                          if an < bn
-                         then worker as ((HistoryRun $ bn - an):bs)
-                         else worker ((HistoryRun $ an - bn):as) bs
+                         then worker as bbs
+                         else worker aas bs
                      (HistoryRunMemory atid acntr,
                       HistoryRunMemory btid bcntr) | atid == btid ->
                          if acntr < bcntr
