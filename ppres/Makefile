@@ -1,6 +1,6 @@
 CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef
 
-all: ppres_record ppres_replay2 ppres_audit.so driver/UI
+all: ppres_record ppres_replay2 ppres_audit.so driver/UI pplogfile
 
 ppres_record: record.o
 	gcc  -Wall -fno-stack-protector -o ppres_record -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds record.o ../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a -lgcc                
@@ -44,5 +44,8 @@ catch_pthread.o: catch_pthread.c
 
 driver/UI:
 	cd driver && ghc --make -Wall -fno-warn-orphans UI.hs
+
+pplogfile: pplogfile.c ppres.h
+	gcc pplogfile.c -o pplogfile -Wall -g
 
 .PHONY: driver/UI
