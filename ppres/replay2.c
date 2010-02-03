@@ -1,5 +1,6 @@
 #include <asm/unistd.h>
 #include <linux/futex.h>
+#include <errno.h>
 #include <setjmp.h>
 #include <stddef.h>
 
@@ -526,7 +527,8 @@ syscall_event(VexGuestAMD64State *state)
 					event(EVENT_blocking);
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
-					event(EVENT_unblocked);
+					if (state->guest_RAX != -EWOULDBLOCK)
+						event(EVENT_unblocked);
 					return;
 				}
 			}
