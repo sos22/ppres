@@ -128,7 +128,7 @@ queryCmd hist w =
                          killWorker worker
                          return res
 
-threadState :: History -> Maybe [(ThreadId, ThreadState)]
+threadState :: History -> [(ThreadId, ThreadState)]
 threadState hist = queryCmd hist threadStateWorker
 
 replayState :: History -> ReplayState

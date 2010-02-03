@@ -131,7 +131,7 @@ takeSnapshot worker =
                 return $ Just $ Worker {worker_fd = newFd }
         else return Nothing
 
-threadStateWorker :: Worker -> IO (Maybe [(ThreadId, ThreadState)])
+threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
         parseItem = do (ResponseDataAncillary 13 [tid, is_dead, last_record]) <- consume
@@ -140,8 +140,8 @@ threadStateWorker worker =
       do (ResponsePacket s params) <-
              sendWorkerCommand worker (ControlPacket 0x123b [])
          return $ if s
-                  then Just $ evalConsumer params (consumeMany parseItem)
-                  else Nothing
+                  then evalConsumer params (consumeMany parseItem)
+                  else error "error getting thread state"
 
  
 parseReplayState :: [ResponseData] -> ReplayState
