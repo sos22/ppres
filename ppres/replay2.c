@@ -166,6 +166,23 @@ my_fork(void)
 	return res;
 }
 
+int
+my_sigaction(int sig, const struct vki_sigaction_base *new,
+	     struct vki_sigaction_base *old)
+{
+	int res;
+	register unsigned long sigset_size asm ("r10");
+	sigset_size = sizeof(vki_sigset_t);
+	asm ("syscall"
+	     : "=a" (res)
+	     : "0" (__NR_rt_sigaction),
+	       "D" (sig),
+	       "S" (new),
+	       "d" (old),
+	       "r" (sigset_size));
+	return res;
+}
+
 /* Safe against partial writes, but kills you if it hits any other
    errors. */
 void

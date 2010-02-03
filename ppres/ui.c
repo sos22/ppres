@@ -125,7 +125,18 @@ ui_loop(void)
 
 	child = my_fork();
 	if (child == 0) {
+		struct vki_sigaction_base sa;
+
 		VG_(close)(fds[1]);
+
+		/* We're going to be doing a lot more forking, and
+		   don't want lots of zombies hanging around.  Child
+		   crash is detected when a control socket closes
+		   unexpectedly. */
+		VG_(memset)(&sa, 0, sizeof(sa));
+		sa.ksa_handler = VKI_SIG_IGN;
+		sa.sa_flags = 3; /* SA_NOCLDSTOP|SA_NOCLDWAIT */
+		my_sigaction(VKI_SIGCHLD, &sa, NULL);
 		return fds[0];
 	}
 	VG_(close)(fds[0]);
