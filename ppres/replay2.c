@@ -208,8 +208,13 @@ safeish_read(int fd, void *buffer, size_t buffer_size)
 
 	for (x = 0; x < buffer_size; ) {
 		this_time = VG_(read)(fd, buffer + x, buffer_size - x);
-		if (this_time <= 0)
+		if (this_time <= 0) {
+			if (this_time == 0) {
+				VG_(printf)("Control process hung up on us.\n");
+				my__exit(1);
+			}
 			VG_(tool_panic)((Char *)"reading");
+		}
 		x += this_time;
 	}
 }
