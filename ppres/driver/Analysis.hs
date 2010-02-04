@@ -363,9 +363,7 @@ enumerateHistoriesSmallStep start trailer =
               footstep_is_mem _ = False
               memtrace_for_thread = filter (footstep_is_mem . trc_trc) . trace_for_thread
               thread_can_mem_step t = length (memtrace_for_thread t) /= 0
-              defaultNextThread =
-                  let (_, (t:_)) = trace start $ Finite $ progress + 1
-                  in trc_thread $ trc_loc t
+              defaultNextThread = nextThread start
               defaultThreadAction =
                   if length threads /= 1 && thread_can_mem_step defaultNextThread
                   then fst $ runMemory start defaultNextThread 1

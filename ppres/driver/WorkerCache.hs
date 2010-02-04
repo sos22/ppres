@@ -6,7 +6,7 @@
 module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    trace, traceThread, traceAddress, runMemory,
                    threadState, replayState, controlTrace,
-                   fetchMemory, vgIntermediate) where
+                   fetchMemory, vgIntermediate, nextThread) where
 
 import Data.Word
 import Control.Monad.State
@@ -161,3 +161,7 @@ fetchMemory hist addr size =
 vgIntermediate :: History -> Word64 -> Maybe String
 vgIntermediate hist addr =
     queryCmd hist $ \worker -> vgIntermediateWorker worker addr
+
+nextThread :: History -> ThreadId
+nextThread hist =
+    queryCmd hist nextThreadWorker

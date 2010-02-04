@@ -13,6 +13,7 @@
 #define WORKER_CONTROL_TRACE 0x123d
 #define WORKER_GET_MEMORY 0x123e
 #define WORKER_VG_INTERMEDIATE 0x123f
+#define WORKER_GET_NEXT_THREAD 0x1240
 
 struct command_header {
 	unsigned command;
@@ -42,6 +43,7 @@ struct response_message {
 #define ANCILLARY_EXPRESSION 12
 #define ANCILLARY_THREAD_STATE 13
 #define ANCILLARY_REPLAY_FINISHED 14
+#define ANCILLARY_NEXT_THREAD 15
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;

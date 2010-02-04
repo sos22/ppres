@@ -378,6 +378,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_KILL:
 	case WORKER_THREAD_STATE:
 	case WORKER_REPLAY_STATE:
+	case WORKER_GET_NEXT_THREAD:
 		tl_assert(ch.nr_args == 0);
 		return;
 	case WORKER_RUN:
@@ -1313,6 +1314,10 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_VG_INTERMEDIATE:
 		do_vg_intermediate_command(cmd->u.vg_intermediate.addr);
+		break;
+	case WORKER_GET_NEXT_THREAD:
+		send_ancillary(ANCILLARY_NEXT_THREAD, get_current_record(logfile)->tid);
+		send_okay();
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");
