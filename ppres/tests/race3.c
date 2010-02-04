@@ -29,7 +29,5 @@ main()
   pthread_create(&pthr, NULL, thread, NULL);
   while (1) {
     global++;
-    for (x = 0; x < 10000; x++)
-      ;
   }
 }
