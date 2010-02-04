@@ -283,14 +283,6 @@ historyGoodness hist =
       ReplayStateFinished -> Infinity
       ReplayStateFailed _ (FailureReasonControl (RecordNr x) _) -> Finite x
 
-explorePairs :: Explorer History
-explorePairs start =
-    let pairs = findCritPairs start
-    in [run (flipPair start pair) Infinity | pair <- pairs]
-
-exploreEither :: (Explorer a) -> (Explorer a) -> (Explorer a)
-exploreEither a b s = (a s) ++ (b s)
-
 exploreStep :: Show a => Explorer a -> Goodness a -> [(Topped Integer, a)] -> Maybe ((Topped Integer, a), [(Topped Integer, a)])
 exploreStep _ _ [] = Nothing
 exploreStep worker goodness ((startingGood,startingPoint):others) =
@@ -323,4 +315,4 @@ explore worker goodness start =
                           else (previousBestGoodness, previousBest)) newFringe
 
 advanceHist :: History -> History
-advanceHist = explore (exploreEither fixControlHistoryL explorePairs) historyGoodness
+advanceHist = explore fixControlHistoryL historyGoodness
