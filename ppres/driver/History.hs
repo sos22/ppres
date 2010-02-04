@@ -63,8 +63,8 @@ appendHistory :: History -> HistoryEntry -> History
 appendHistory (History e) he =
     History $ e ++ [he]
 
-{- Truncate a history so that it only runs to a particular record number -}
-truncateHistory :: History -> Topped RecordNr -> History
+{- Truncate a history so that it only runs to a particular epoch number -}
+truncateHistory :: History -> Topped EpochNr -> History
 truncateHistory (History hs) cntr =
     History $ worker hs
     where worker [HistoryRun Infinity] = [HistoryRun cntr]

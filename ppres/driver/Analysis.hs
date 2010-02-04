@@ -104,8 +104,8 @@ live_threads _ = [1,2]
 
 fixControlHistoryL :: History -> [History]
 fixControlHistoryL start =
-    let (ReplayStateFailed _ (FailureReasonControl record_nr dead_thread)) = replayState start
-        prefix = truncateHistory start $ Finite record_nr
+    let (ReplayStateFailed _ (FailureReasonControl _ dead_thread epoch_nr)) = replayState start
+        prefix = truncateHistory start $ Finite $ epoch_nr - 1
         criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
         otherThreads = [x | x <- live_threads start, x /= dead_thread]
         otherStoresForThread t =
@@ -117,7 +117,7 @@ fixControlHistoryL start =
         interestingStores =
             concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
                     | t <- otherThreads]
-        tryStore ((_, _, (TraceLocation _ acc thr)), _) =
+        tryStore ((_, _, (TraceLocation _ _ acc thr)), _) =
             run (fst $ runMemory prefix thr (acc + 1)) Infinity
         allProbes = map tryStore interestingStores
     in allProbes
@@ -136,25 +136,24 @@ fixControlHistory' start =
     case replayState start of
       ReplayStateOkay -> Nothing
       ReplayStateFinished -> Nothing
-      ReplayStateFailed _ (FailureReasonControl nr_records _) ->
+      ReplayStateFailed _ (FailureReasonControl _ _ nr_epochs) ->
           let probes = fixControlHistoryL start
               allProbes = [(p, replayState p) | p <- probes]
               probeIsGood (_, ReplayStateOkay) = True
               probeIsGood (_, ReplayStateFinished) = True
-              probeIsGood (_, ReplayStateFailed _ (FailureReasonControl progress _)) =
-                  progress > nr_records
+              probeIsGood (_, ReplayStateFailed _ (FailureReasonControl _ _ progress)) =
+                  progress > nr_epochs
               goodProbes = filter probeIsGood allProbes
               probeIsVeryGood (_, ReplayStateOkay) = True
               probeIsVeryGood (_, ReplayStateFinished) = True
-              probeIsVeryGood (_, ReplayStateFailed _ (FailureReasonControl (RecordNr progress) _)) =
-                  let (RecordNr n) = nr_records
-                  in progress > n + 10000
+              probeIsVeryGood (_, ReplayStateFailed _ (FailureReasonControl _ _ progress)) =
+                  progress > nr_epochs + 100
               compareFailureReasons ReplayStateFinished _ = LT
               compareFailureReasons ReplayStateOkay _ = LT
               compareFailureReasons _ ReplayStateOkay = GT
               compareFailureReasons _ ReplayStateFinished = GT
-              compareFailureReasons (ReplayStateFailed _ (FailureReasonControl proga _))
-                                    (ReplayStateFailed _ (FailureReasonControl progb _)) =
+              compareFailureReasons (ReplayStateFailed _ (FailureReasonControl proga _ _))
+                                    (ReplayStateFailed _ (FailureReasonControl progb _ _)) =
                                         compare proga progb
               sortedProbes = sortBy ordering goodProbes
                              where ordering (_, ra) (_, rb) = compareFailureReasons ra rb
@@ -195,13 +194,13 @@ evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
 evalExpressionInSnapshot (ExpressionNot l) hist st =
     fmap complement $ evalExpressionInSnapshot l hist st
 
-lastSucceedingRecordAnyThread :: History -> (ThreadId, RecordNr)
+lastSucceedingRecordAnyThread :: History -> (ThreadId, EpochNr)
 lastSucceedingRecordAnyThread hist =
-    let myMax a b = if ts_last_record (snd a) <= ts_last_record (snd b)
+    let myMax a b = if ts_last_epoch (snd a) <= ts_last_epoch (snd b)
                     then b
                     else a
         (tid, ts) = foldl1 myMax $ threadState hist
-    in (tid, ts_last_record ts)
+    in (tid, ts_last_epoch ts)
 
 threadState' :: History -> ThreadId -> ThreadState
 threadState' hist thr =
@@ -219,10 +218,10 @@ findCritPairs hist =
     case replayState hist of
       ReplayStateOkay -> []
       ReplayStateFinished -> []
-      ReplayStateFailed _ (FailureReasonControl _ threadB) ->
+      ReplayStateFailed _ (FailureReasonControl _ threadB _) ->
           let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
               prefix1 = truncateHistory hist $ Finite $ threadALastSuccess
-              prefix2 = truncateHistory hist $ Finite $ ts_last_but_one_record_nr $ threadState' hist threadA
+              prefix2 = truncateHistory hist $ Finite $ (ts_last_epoch $ threadState' hist threadA) - 1
               ctrl_expressions = controlTrace prefix1 Infinity
               store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 $ Finite threadALastSuccess]
               store_changes_expr expr (ptr, val, _) =
@@ -264,7 +263,7 @@ findCritPairs hist =
 flipPair :: History -> (TraceLocation, TraceLocation) -> History
 flipPair start (post, pre) =
     let (prefix, trc) =
-            runMemory (truncateHistory start $ Finite $ trc_record post)
+            runMemory (truncateHistory start $ Finite $ trc_epoch post)
                           (trc_thread post) (trc_access post)
         (res, trc2) =
             runMemory prefix (trc_thread pre) (trc_access pre + 1)
@@ -281,7 +280,7 @@ historyGoodness hist =
     case replayState hist of
       ReplayStateOkay -> Infinity
       ReplayStateFinished -> Infinity
-      ReplayStateFailed _ (FailureReasonControl (RecordNr x) _) -> Finite x
+      ReplayStateFailed _ (FailureReasonControl (RecordNr x) _ _) -> Finite x
 
 exploreStep :: Show a => Explorer a -> Goodness a -> [(Topped Integer, a)] -> Maybe ((Topped Integer, a), [(Topped Integer, a)])
 exploreStep _ _ [] = Nothing

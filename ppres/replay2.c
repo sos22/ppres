@@ -140,6 +140,9 @@ want_to_interpret;
 struct record_consumer
 logfile;
 
+unsigned long
+epoch_nr;
+
 static void
 my_mprotect(void *base, size_t len, int prot)
 {
@@ -419,6 +422,7 @@ get_control_command(struct control_command *cmd)
 
 #define _TRACE(code, args...)                             \
 	send_ancillary(ANCILLARY_TRACE_ ## code,	  \
+		       epoch_nr,			  \
 		       logfile.record_nr,		  \
 		       access_nr,			  \
 		       current_thread->id,		  \
@@ -678,8 +682,7 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_record_nr,
-			       rt->last_but_one_record_nr);
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_epoch_nr);
 	send_okay();
 }
 
@@ -777,7 +780,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			do_thread_state_command();
 			break;
 		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, logfile.record_nr, failure_reason->tid);
+			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, logfile.record_nr, failure_reason->tid,
+				       epoch_nr);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
@@ -804,8 +808,9 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	do {								\
 		if ((a) != (b)) {					\
 			replay_failed(reason,				\
-				      "%d: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
+				      "%ld:%ld: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
 				      record_nr,			\
+				      epoch_nr,				\
 				      __LINE__,				\
 				      #a,				\
 				      (unsigned long)(a),		\
@@ -818,7 +823,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 static void
 validate_event(const struct record_header *rec,
 	       const struct client_event_record *event,
-	       unsigned record_nr)
+	       unsigned long record_nr)
 {
 	const void *payload = rec + 1;
 	const unsigned long *args = event->args;
@@ -1201,14 +1206,14 @@ run_for_n_mem_accesses(struct replay_thread *thr,
 }
 
 static void
-run_for_n_records(struct record_consumer *logfile,
-		  unsigned nr_records)
+run_for_n_epochs(struct record_consumer *logfile,
+		 unsigned long nr_epochs)
 {
 	const struct record_header *rec;
 	struct replay_thread *thr;
 	struct client_event_record thread_event;
 
-	while (logfile->record_nr != nr_records) {
+	while (epoch_nr != nr_epochs) {
 		rec = get_current_record(logfile);
 		if (!rec)
 			break;
@@ -1223,6 +1228,7 @@ run_for_n_records(struct record_consumer *logfile,
 		}
 
 		access_nr = 0;
+		epoch_nr++;
 
 		tl_assert(rec->cls != RECORD_memory);
 
@@ -1240,8 +1246,7 @@ run_for_n_records(struct record_consumer *logfile,
 
 		replay_record(rec, thr, &thread_event, logfile); /* Finishes the record */
 
-		thr->last_but_one_record_nr = thr->last_record_nr;
-		thr->last_record_nr = logfile->record_nr;
+		thr->last_epoch_nr = epoch_nr;
 	}
 }
 
@@ -1256,18 +1261,18 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
-		run_for_n_records(logfile, cmd->u.run.nr);
+		run_for_n_epochs(logfile, cmd->u.run.nr);
 		send_okay();
 		break;
 	case WORKER_TRACE:
 		trace_mode = True;
-		run_for_n_records(logfile, cmd->u.trace.nr);
+		run_for_n_epochs(logfile, cmd->u.trace.nr);
 		trace_mode = False;
 		send_okay();
 		break;
 	case WORKER_CONTROL_TRACE:
 		want_to_interpret = True;
-		run_for_n_records(logfile, cmd->u.control_trace.nr);
+		run_for_n_epochs(logfile, cmd->u.control_trace.nr);
 		want_to_interpret = False;
 		commit_interpreter_state();
 		send_okay();
@@ -1290,7 +1295,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
-		run_for_n_records(logfile, -1);
+		run_for_n_epochs(logfile, -1);
 		send_okay();
 		break;
 	case WORKER_THREAD_STATE:

@@ -19,18 +19,18 @@ fromTI :: Topped Integer -> Word64
 fromTI Infinity = -1
 fromTI (Finite x) = fromInteger x
 
-fromRN :: Topped RecordNr -> Word64
-fromRN Infinity = -1
-fromRN (Finite (RecordNr x)) = fromInteger x
+fromEN :: Topped EpochNr -> Word64
+fromEN Infinity = -1
+fromEN (Finite (EpochNr x)) = fromInteger x
 
 killPacket :: ControlPacket
 killPacket = ControlPacket 0x1235 []
 
-runPacket :: (Topped RecordNr) -> ControlPacket
-runPacket cntr = ControlPacket 0x1236 [fromRN cntr]
+runPacket :: Topped EpochNr -> ControlPacket
+runPacket cntr = ControlPacket 0x1236 [fromEN cntr]
 
-tracePacket :: Topped RecordNr -> ControlPacket
-tracePacket cntr = ControlPacket 0x1237 [fromRN cntr]
+tracePacket :: Topped EpochNr -> ControlPacket
+tracePacket cntr = ControlPacket 0x1237 [fromEN cntr]
 
 runMemoryPacket :: ThreadId -> Integer -> ControlPacket
 runMemoryPacket tid cntr = ControlPacket 0x1238 [fromIntegral tid, fromInteger cntr]
@@ -62,7 +62,7 @@ killWorker worker =
           then liftIO $ sClose $ worker_fd worker
           else error "can't kill worker?"
 
-runWorker :: Worker -> (Topped RecordNr) -> IO Bool
+runWorker :: Worker -> (Topped EpochNr) -> IO Bool
 runWorker worker = trivCommand worker . runPacket
 
 ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
@@ -70,10 +70,11 @@ ancillaryDataToTrace [] = []
 ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
-    let (loc', other_args) = splitAt 3 args
-        loc = TraceLocation { trc_record = RecordNr $ fromIntegral $ loc'!!0,
-                              trc_access = toInteger $ loc'!!1,
-                              trc_thread = fromIntegral $ loc'!!2 }
+    let (loc', other_args) = splitAt 4 args
+        loc = TraceLocation { trc_epoch = EpochNr $ fromIntegral $ loc'!!0,
+                              trc_record = RecordNr $ fromIntegral $ loc'!!1,
+                              trc_access = toInteger $ loc'!!2,
+                              trc_thread = fromIntegral $ loc'!!3 }
         (entry, rest) =
             case code of
               1 -> (TraceFootstep { trc_foot_rip = fromIntegral $ other_args!!0,
@@ -109,7 +110,7 @@ traceCmd worker pkt =
     do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
        return $ ancillaryDataToTrace args
 
-traceWorker :: Worker -> Topped RecordNr -> IO [TraceRecord]
+traceWorker :: Worker -> Topped EpochNr -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
 
 traceThreadWorker :: Worker -> ThreadId -> IO [TraceRecord]
@@ -133,12 +134,11 @@ takeSnapshot worker =
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
-        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_record, last_last_record]) <- consume
+        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_epoch]) <- consume
                        return (fromIntegral $ tid,
                                ThreadState (is_dead /= 0)
                                            (is_blocked /= 0)
-                                           (RecordNr $ fromIntegral last_record)
-                                           (RecordNr $ fromIntegral last_last_record))
+                                           (EpochNr $ fromIntegral last_epoch))
     in
       do (ResponsePacket s params) <-
              sendWorkerCommand worker (ControlPacket 0x123b [])
@@ -149,8 +149,8 @@ threadStateWorker worker =
  
 parseReplayState :: [ResponseData] -> ReplayState
 parseReplayState [ResponseDataAncillary 10 []] = ReplayStateOkay
-parseReplayState [ResponseDataAncillary 11 [0, record_nr, tid], ResponseDataString s] =
-    ReplayStateFailed s $ FailureReasonControl (RecordNr $ fromIntegral record_nr) (fromIntegral tid)
+parseReplayState [ResponseDataAncillary 11 [0, record_nr, tid, epoch_nr], ResponseDataString s] =
+    ReplayStateFailed s $ FailureReasonControl (RecordNr $ fromIntegral record_nr) (fromIntegral tid) (EpochNr $ fromIntegral epoch_nr)
 parseReplayState [ResponseDataAncillary 14 []] = ReplayStateFinished
 parseReplayState x = error $ "bad replay state " ++ (show x)
 
@@ -244,10 +244,13 @@ parseExpression =
        case params of
          [0, val] -> return $ ExpressionConst val
          [1, reg, val] -> return $ ExpressionRegister (parseRegister reg) val
-         [2, sz, rec, acc,  thr] ->
+         [2, sz, epoch, rec, acc,  thr] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) (TraceLocation (RecordNr $ fromIntegral rec) (fromIntegral acc) (fromIntegral thr)) ptr val
+                return $ ExpressionMem (fromIntegral sz) (TraceLocation { trc_epoch = EpochNr $ fromIntegral epoch,
+                                                                          trc_record = RecordNr $ fromIntegral rec,
+                                                                          trc_access = fromIntegral acc,
+                                                                          trc_thread = fromIntegral thr }) ptr val
          [3, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression

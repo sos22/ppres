@@ -144,7 +144,8 @@ struct expression {
 			unsigned long val;
 		} imported;
 		struct {
-			unsigned record_nr;
+			unsigned long epoch_nr;
+			unsigned long record_nr;
 			unsigned mem_access_nr;
 			unsigned threadid;
 			unsigned size;
@@ -187,8 +188,7 @@ struct replay_thread {
 	 * what we return. */
 	ULong rdtsc_result;
 
-	unsigned last_record_nr;
-	unsigned last_but_one_record_nr;
+	unsigned long last_epoch_nr;
 	Bool dead;
 	Bool in_monitor;
 	Bool blocked;
@@ -207,6 +207,7 @@ extern struct replay_thread *head_thread;
 extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
 extern unsigned access_nr;
+extern unsigned long epoch_nr;
 extern struct record_consumer logfile;
 
 int ui_loop(void);

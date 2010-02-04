@@ -18,8 +18,8 @@ import Analysis
 import History
 
 data UIExpression = UIDummyFunction
-                  | UIRun UIExpression (Topped RecordNr)
-                  | UITrace UIExpression (Topped RecordNr)
+                  | UIRun UIExpression (Topped EpochNr)
+                  | UITrace UIExpression (Topped EpochNr)
                   | UITraceThread UIExpression ThreadId
                   | UITraceAddress UIExpression Word64
                   | UIRunMemory UIExpression ThreadId Integer
@@ -37,7 +37,7 @@ data UIExpression = UIDummyFunction
                   | UIFixHist UIExpression
                   | UIFixHist2 UIExpression
                   | UIAdvHist UIExpression
-                  | UITruncHist UIExpression (Topped RecordNr)
+                  | UITruncHist UIExpression (Topped EpochNr)
                   | UIFetchMemory UIExpression Word64 Word64
                   | UIFindCritPairs UIExpression
                   | UIFlipPair UIExpression UIExpression
@@ -76,18 +76,18 @@ expressionParser =
                b <- expressionParser
                return $ constructor a b
         topped_int = option Infinity (liftM Finite $ P.integer command_lexer)
-        topped_rn = liftM (fmap RecordNr) topped_int
+        topped_en = liftM (fmap EpochNr) topped_int
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
                oneExprArgParser "thread_state" UIThreadState,
                do keyword "run"
                   snap <- expressionParser
-                  cntr <- topped_rn
+                  cntr <- topped_en
                   return $ UIRun snap cntr,
                do keyword "trace"
                   snap <- expressionParser
-                  cntr <- topped_rn
+                  cntr <- topped_en
                   return $ UITrace snap cntr,
                do keyword "control_trace"
                   snap <- expressionParser
@@ -108,7 +108,7 @@ expressionParser =
                   return $ UIRunMemory snap t n,
                do keyword "trunc"
                   hist <- expressionParser
-                  n <- topped_rn
+                  n <- topped_en
                   return $ UITruncHist hist n,
                do keyword "index"
                   hist <- expressionParser

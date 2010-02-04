@@ -9,8 +9,9 @@ type ThreadId = Integer
 type VariableName = String
 
 newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord)
+newtype EpochNr = EpochNr Integer deriving (Eq, Show, Enum, Ord, Real, Num)
 
-data HistoryEntry = HistoryRun (Topped RecordNr)
+data HistoryEntry = HistoryRun (Topped EpochNr)
                   | HistoryRunThread ThreadId
                   | HistoryRunMemory ThreadId Integer
                     deriving (Eq, Show)
@@ -19,12 +20,13 @@ data History = History [HistoryEntry] deriving (Show, Eq)
 
 data Worker = Worker { worker_fd :: Socket }
 
-data TraceLocation = TraceLocation { trc_record :: RecordNr,
+data TraceLocation = TraceLocation { trc_epoch :: EpochNr,
+                                     trc_record :: RecordNr,
                                      trc_access :: Integer,
                                      trc_thread :: ThreadId } deriving Eq
 
 instance Show TraceLocation where
-    show tl = (show $ trc_record tl) ++ ":" ++ (show $ trc_access tl) ++ ":" ++ (show $ trc_thread tl)
+    show tl = (show $ trc_epoch tl) ++ ":" ++ (show $ trc_record tl) ++ ":" ++ (show $ trc_access tl) ++ ":" ++ (show $ trc_thread tl)
 
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
@@ -112,7 +114,7 @@ data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression
 
-data ReplayFailureReason = FailureReasonControl RecordNr ThreadId deriving Show
+data ReplayFailureReason = FailureReasonControl RecordNr ThreadId EpochNr deriving Show
 
 data ReplayState = ReplayStateOkay
                  | ReplayStateFinished
@@ -120,8 +122,7 @@ data ReplayState = ReplayStateOkay
 
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,
-                                 ts_last_record :: RecordNr,
-                                 ts_last_but_one_record_nr :: RecordNr } deriving Show
+                                 ts_last_epoch :: EpochNr } deriving Show
 
 data UIValue = UIValueNull
              | UIValueSnapshot History
