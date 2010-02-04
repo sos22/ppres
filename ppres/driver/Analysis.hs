@@ -344,7 +344,12 @@ advanceHist hist =
       Just h -> h
 
 
-{- Enumerate all small-step advances we can make from this state. -}
+{- Enumerate all ``interesting'' small-step advances we can make from
+   this state.  We filter out some of the more boring potential moves:
+
+-- If there's only one thread runnable, we can run it to the end of the
+   record without any need to step one memory access at a time.
+-}
 enumerateHistoriesSmallStep :: History -> [History] -> [History]
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
@@ -362,7 +367,7 @@ enumerateHistoriesSmallStep start trailer =
                   let (_, (t:_)) = trace start $ Finite $ progress + 1
                   in trc_thread $ trc_loc t
               defaultThreadAction =
-                  if thread_can_mem_step defaultNextThread
+                  if length threads /= 1 && thread_can_mem_step defaultNextThread
                   then fst $ runMemory start defaultNextThread 1
                   else run start $ Finite $ progress + 1
               otherThreadActions =
