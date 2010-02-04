@@ -7,13 +7,27 @@ module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
 import Data.Word
 import Network.Socket
 import Control.Monad.State
+import Data.IORef
+
+import System.IO.Unsafe
 
 import Types
 import Socket
 
+instance Forcable x => Forcable (IORef x) where
+    force ref res =
+        unsafePerformIO $ do x <- readIORef ref
+                             return $ force x res
+
+instance Forcable Worker where
+    force (Worker fd alive) = force fd . force alive 
+
 sendWorkerCommand :: Worker -> ControlPacket -> IO ResponsePacket
 sendWorkerCommand worker cp =
-    sendSocketCommand (worker_fd worker) cp
+    do a <- readIORef $ worker_alive worker
+       if not a
+        then error $ "send command to dead worker on fd " ++ (show $ worker_fd worker)
+        else sendSocketCommand (worker_fd worker) cp
 
 fromTI :: Topped Integer -> Word64
 fromTI Infinity = -1
@@ -59,7 +73,8 @@ killWorker :: Worker -> IO ()
 killWorker worker =
     do s <- trivCommand worker killPacket
        if s
-          then liftIO $ sClose $ worker_fd worker
+          then do sClose $ worker_fd worker
+                  writeIORef (worker_alive worker) False
           else error "can't kill worker?"
 
 runWorker :: Worker -> (Topped EpochNr) -> IO Bool
@@ -128,7 +143,8 @@ takeSnapshot worker =
            sendWorkerCommand worker (ControlPacket 0x1234 [])
        if s
         then do newFd <- recvSocket (worker_fd worker)
-                return $ Just $ Worker {worker_fd = newFd }
+                newAlive <- newIORef True
+                return $ Just $ Worker {worker_fd = newFd, worker_alive = newAlive }
         else return Nothing
 
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]

@@ -13,6 +13,8 @@ import Foreign.C.Types
 import Control.Monad.State
 import Char
 
+import Types
+
 foreign import ccall unsafe "send"
   c_send :: CInt -> Ptr a -> CSize -> CInt -> IO CInt
 
@@ -103,6 +105,9 @@ sendSocketCommand handle cp =
 
 recvSocket :: Socket -> IO Socket
 recvSocket parent =
-    liftIO $ do newFd <- recvFd parent
-                mkSocket newFd AF_UNIX Stream 0 Connected
+    do newFd <- recvFd parent
+       mkSocket newFd AF_UNIX Stream 0 Connected
 
+
+instance Forcable Socket where
+    force = seq

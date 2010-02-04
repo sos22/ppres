@@ -4,6 +4,7 @@ module Types where
 import Data.Word
 import Network.Socket
 import Numeric
+import Data.IORef
 
 type ThreadId = Integer
 type VariableName = String
@@ -18,7 +19,8 @@ data HistoryEntry = HistoryRun (Topped EpochNr)
 
 data History = History [HistoryEntry] deriving (Show, Eq)
 
-data Worker = Worker { worker_fd :: Socket }
+data Worker = Worker { worker_fd :: Socket,
+                       worker_alive :: IORef Bool }
 
 data TraceLocation = TraceLocation { trc_epoch :: EpochNr,
                                      trc_record :: RecordNr,
@@ -189,3 +191,23 @@ instance Ord x => Ord (Topped x) where
     compare Infinity (Finite _) = GT
     compare Infinity Infinity = EQ
     compare (Finite x) (Finite y) = compare x y
+
+class Forcable a where
+    force :: a -> b -> b
+
+instance Forcable a => Forcable [a] where
+    force [] = id
+    force (x:xs) = force x . force xs
+
+instance Forcable x => Forcable (Topped x) where
+    force Infinity = id
+    force (Finite x) = force x
+
+instance Forcable EpochNr where
+    force (EpochNr x) = force x
+
+instance Forcable Integer where
+    force = seq
+
+instance Forcable Bool where
+    force = seq

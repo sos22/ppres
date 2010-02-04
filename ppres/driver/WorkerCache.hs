@@ -24,12 +24,19 @@ globalWorkerCache :: IORef (Maybe WorkerCache)
 globalWorkerCache =
     unsafePerformIO $ newIORef Nothing
 
+sanityCheckWorkerCache :: WorkerCache -> IO ()
+sanityCheckWorkerCache wc =
+    mapM_ (\(_,w) -> do r <- readIORef $ worker_alive w
+                        if not r
+                           then error "found a dead worker in the cache"
+                           else return ()) $ wc_workers wc
+
 workerCache :: IO WorkerCache
 workerCache =
     do wc <- readIORef globalWorkerCache
        case wc of
          Nothing -> error "worker cache not ready"
-         Just wc' -> return wc'
+         Just wc' -> sanityCheckWorkerCache wc' >> return wc'
 
 setWorkerCache :: WorkerCache -> IO ()
 setWorkerCache = writeIORef globalWorkerCache . Just
@@ -48,7 +55,17 @@ destroyWorkerCache =
 
 getWorker :: History -> IO (Bool, Worker)
 getWorker hist =
-    do (best_hist, best_worker) <- findBestWorker 
+
+    {- This is a bit skanky.  The problem is that hist might contain
+       some thunks which will themselves perform worker cache
+       operations, and if we were to force them at exactly the wrong
+       time then it's possible that they could modify the cache while
+       we have a reference to the old cache state, which would
+       potentially cause us to touch dead workers.  We avoid the issue
+       completely by just forcing hist before doing anything -}
+    force hist $
+
+    do (best_hist, best_worker) <- findBestWorker
        new_worker <- takeSnapshot best_worker
        let new_worker' = case new_worker of
                            Nothing ->
@@ -76,20 +93,18 @@ getWorker hist =
 
 registerWorker :: History -> Worker -> IO ()
 registerWorker hist worker =
+
+    {- Preserve sanity by requiring that the worker cache not contain
+       any unforced thunks, which might themselves call back into the
+       worker cache. -}
+    force hist $ force worker $
+
     do wc <- workerCache
        let (new_workers, dead_workers) =
                splitAt 100 ((hist, worker):(wc_workers wc))
        setWorkerCache $ wc { wc_workers = new_workers}
        mapM_ (killWorker . snd) dead_workers
 
-
-cmd :: HistoryEntry -> History -> (Worker -> IO a) -> History
-cmd he start w =
-    let newHist = appendHistory start he
-    in unsafePerformIO $ do (_, worker) <- getWorker start
-                            w worker
-                            registerWorker newHist worker
-                            return newHist
 
 traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
 traceCmd he start w =
@@ -100,8 +115,7 @@ traceCmd he start w =
                             return (newHist, r)
 
 run :: History -> Topped EpochNr -> History
-run start cntr =
-    cmd (HistoryRun cntr) start $ \worker -> runWorker worker cntr
+run start cntr = appendHistory start $ HistoryRun cntr
 
 
 trace :: History -> Topped EpochNr -> (History, [TraceRecord])

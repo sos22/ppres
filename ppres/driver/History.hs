@@ -74,3 +74,11 @@ truncateHistory (History hs) cntr =
           worker ((h@(HistoryRunMemory _ _)):hs') = h:(worker hs')
           worker _ = error $ "truncate bad history " ++ (show hs)
 
+
+instance Forcable HistoryEntry where
+    force (HistoryRun t) = force t
+    force (HistoryRunThread t) = force t
+    force (HistoryRunMemory t i) = force t . force i
+
+instance Forcable History where
+    force (History h) = force h

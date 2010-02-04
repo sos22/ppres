@@ -4,6 +4,7 @@ module WorldState(initialWorldState, doAssignment, lookupVariable,
 import System.Exit
 import Foreign.C.Types
 import Control.Monad.State
+import Data.IORef
 
 import Socket
 import Types
@@ -13,7 +14,8 @@ import WorkerCache
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
-       let root_snap = Worker f
+       a <- newIORef True
+       let root_snap = Worker f a
        initWorkerCache root_snap
        return $ WorldState { ws_bindings = [("start", UIValueSnapshot emptyHistory)] }
 
