@@ -164,7 +164,7 @@ threadStateWorker worker =
 
  
 parseReplayState :: [ResponseData] -> ReplayState
-parseReplayState [ResponseDataAncillary 10 []] = ReplayStateOkay
+parseReplayState [ResponseDataAncillary 10 [epoch_nr]] = ReplayStateOkay $ EpochNr $ fromIntegral epoch_nr
 parseReplayState [ResponseDataAncillary 11 [0, record_nr, tid, epoch_nr], ResponseDataString s] =
     ReplayStateFailed s $ FailureReasonControl (RecordNr $ fromIntegral record_nr) (fromIntegral tid) (EpochNr $ fromIntegral epoch_nr)
 parseReplayState [ResponseDataAncillary 14 []] = ReplayStateFinished

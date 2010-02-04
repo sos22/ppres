@@ -118,7 +118,7 @@ data Expression = ExpressionRegister RegisterName Word64
 
 data ReplayFailureReason = FailureReasonControl RecordNr ThreadId EpochNr deriving Show
 
-data ReplayState = ReplayStateOkay
+data ReplayState = ReplayStateOkay EpochNr
                  | ReplayStateFinished
                  | ReplayStateFailed String ReplayFailureReason
 

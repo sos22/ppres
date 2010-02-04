@@ -60,8 +60,22 @@ fixupWorkerForHist w current desired =
                    True -> worker ds
 
 appendHistory :: History -> HistoryEntry -> History
-appendHistory (History e) he =
-    History $ e ++ [he]
+appendHistory (History []) he = History [he]
+appendHistory (History h) he =
+    History $ 
+    let (hl:hrest) = reverse h
+    in case (hl, he) of
+         (HistoryRun x, HistoryRun y) ->
+             if x == y
+             then h
+             else if x < y
+                  then reverse $ (HistoryRun y):hrest
+                  else error "appendHistory tried to go backwards in time!"
+         (HistoryRunMemory xtid xcntr, HistoryRunMemory ytid ycntr)
+             | xtid == ytid ->
+                 reverse $ (HistoryRunMemory xtid (xcntr + ycntr)):hrest
+         _ -> reverse $ he:hl:hrest
+
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped EpochNr -> History

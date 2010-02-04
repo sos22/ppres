@@ -1,7 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
-module UIValue(uiValueString, AvailInUI(..)) where
+module UIValue(uiValueString, AvailInUI(..), mapUIValue) where
 
-import Control.Monad.Instances
+import Control.Monad.Instances()
+import Control.Monad
 import Data.Word
 import Numeric
 
@@ -40,6 +41,10 @@ class AvailInUI a where
 
 coerceError :: String -> UIValue -> Either String a
 coerceError wanted got = Left $ "Type error: wanted " ++ wanted ++ ", got " ++ (show got)
+
+mapUIValue :: (AvailInUI a, AvailInUI b) => (a -> b) -> UIValue -> UIValue
+mapUIValue f b =
+    toUI $ liftM f $ fromUI b
 
 instance AvailInUI () where
     toUI () = UIValueNull

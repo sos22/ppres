@@ -1305,7 +1305,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		if (logfile->finished)
 			send_ancillary(ANCILLARY_REPLAY_FINISHED);
 		else
-			send_ancillary(ANCILLARY_REPLAY_SUCCESS);
+			send_ancillary(ANCILLARY_REPLAY_SUCCESS, epoch_nr);
 		send_okay();
 		break;
 	case WORKER_GET_MEMORY:

@@ -1,5 +1,6 @@
 module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
-                fixControlHistory', findCritPairs, flipPair, advanceHist) where
+                fixControlHistory', findCritPairs, flipPair, advanceHist,
+                enumerateHistories) where
 
 import Types
 import WorkerCache
@@ -136,23 +137,23 @@ fixControlHistoryL start =
 fixControlHistory' :: History -> Maybe History
 fixControlHistory' start =
     case replayState start of
-      ReplayStateOkay -> Nothing
+      ReplayStateOkay _ -> Nothing
       ReplayStateFinished -> Nothing
       ReplayStateFailed _ (FailureReasonControl _ _ nr_epochs) ->
           let probes = head $ fixControlHistoryL start
               allProbes = [(p, replayState p) | p <- probes]
-              probeIsGood (_, ReplayStateOkay) = True
+              probeIsGood (_, ReplayStateOkay _) = True
               probeIsGood (_, ReplayStateFinished) = True
               probeIsGood (_, ReplayStateFailed _ (FailureReasonControl _ _ progress)) =
                   progress > nr_epochs
               goodProbes = filter probeIsGood allProbes
-              probeIsVeryGood (_, ReplayStateOkay) = True
+              probeIsVeryGood (_, ReplayStateOkay _) = True
               probeIsVeryGood (_, ReplayStateFinished) = True
               probeIsVeryGood (_, ReplayStateFailed _ (FailureReasonControl _ _ progress)) =
                   progress > nr_epochs + 100
               compareFailureReasons ReplayStateFinished _ = LT
-              compareFailureReasons ReplayStateOkay _ = LT
-              compareFailureReasons _ ReplayStateOkay = GT
+              compareFailureReasons (ReplayStateOkay _) _ = LT
+              compareFailureReasons _ (ReplayStateOkay _) = GT
               compareFailureReasons _ ReplayStateFinished = GT
               compareFailureReasons (ReplayStateFailed _ (FailureReasonControl proga _ _))
                                     (ReplayStateFailed _ (FailureReasonControl progb _ _)) =
@@ -218,7 +219,7 @@ threadState' hist thr =
 findCritPairs :: History -> [(TraceLocation, TraceLocation)]
 findCritPairs hist =
     case replayState hist of
-      ReplayStateOkay -> []
+      ReplayStateOkay _ -> []
       ReplayStateFinished -> []
       ReplayStateFailed _ (FailureReasonControl _ threadB _) ->
           let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
@@ -280,7 +281,7 @@ type Explorer a = a -> [[a]]
 historyGoodness :: Goodness History
 historyGoodness hist =
     case replayState hist of
-      ReplayStateOkay -> Infinity
+      ReplayStateOkay _ -> Infinity
       ReplayStateFinished -> Infinity
       ReplayStateFailed _ (FailureReasonControl (RecordNr x) _ _) -> Finite x
 
@@ -341,3 +342,42 @@ advanceHist hist =
                                      es_backtracks = [[hist]] }) of
       Nothing -> hist
       Just h -> h
+
+
+{- Enumerate all small-step advances we can make from this state. -}
+enumerateHistoriesSmallStep :: History -> [History] -> [History]
+enumerateHistoriesSmallStep start trailer =
+    case replayState start of
+      ReplayStateFailed _ _ -> []
+      ReplayStateFinished -> []
+      ReplayStateOkay progress ->
+          let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
+              trace_for_thread t = snd $ traceThread start t
+              footstep_is_mem (TraceLoad _ _ _ _) = True
+              footstep_is_mem (TraceStore _ _ _ _) = True
+              footstep_is_mem _ = False
+              memtrace_for_thread = filter (footstep_is_mem . trc_trc) . trace_for_thread
+              thread_can_mem_step t = length (memtrace_for_thread t) /= 0
+              defaultNextThread =
+                  let (_, (t:_)) = trace start $ Finite $ progress + 1
+                  in trc_thread $ trc_loc t
+              defaultThreadAction =
+                  if thread_can_mem_step defaultNextThread
+                  then fst $ runMemory start defaultNextThread 1
+                  else run start $ Finite $ progress + 1
+              otherThreadActions =
+                  [fst $ runMemory start t 1 | t <- threads, t /= defaultNextThread]
+          in defaultThreadAction:otherThreadActions ++ trailer
+
+{- Exhaustively explore all future schedulings available from hist and
+   return the first successful one (or Nothing, if we can't find
+   anything. -}
+enumerateHistories :: [History] -> Maybe History
+enumerateHistories [] = Nothing
+enumerateHistories (a:as) =
+    dt ("explore " ++ (show a)) $
+    case replayState a of
+      ReplayStateFinished -> Just a -- We're done
+      ReplayStateFailed _ _ -> enumerateHistories as -- Strip off any which have already failed
+      ReplayStateOkay _ -> -- we have to do something more clever
+          enumerateHistories $ enumerateHistoriesSmallStep a as

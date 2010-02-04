@@ -43,6 +43,7 @@ data UIExpression = UIDummyFunction
                   | UIFlipPair UIExpression UIExpression
                   | UIIndex UIExpression Int
                   | UIVGIntermediate UIExpression Word64
+                  | UIEnum UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -135,6 +136,7 @@ expressionParser =
                oneExprArgParser "advhist" UIAdvHist,
                oneExprArgParser "fixhist2" UIFixHist2,
                oneExprArgParser "findcritpairs" UIFindCritPairs,
+               oneExprArgParser "enum" UIEnum,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -241,6 +243,9 @@ evalExpression ws f =
                 then UIValueError $ "index " ++ (show idx) ++ " greater than length of list " ++ (show $ length lst')
                 else lst'!!idx
             e -> UIValueError $ "wanted a list to index, got a " ++(show e)
+      UIEnum start ->
+          mapUIValue enumerateHistories $ UIValueList [evalExpression ws start]
+
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
