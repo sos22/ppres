@@ -102,24 +102,26 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 live_threads :: History -> [ThreadId]
 live_threads _ = [1,2]
 
-fixControlHistoryL :: History -> [History]
+fixControlHistoryL :: History -> [[History]]
 fixControlHistoryL start =
     let (ReplayStateFailed _ (FailureReasonControl _ dead_thread epoch_nr)) = replayState start
-        prefix = truncateHistory start $ Finite $ epoch_nr - 1
-        criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
-        otherThreads = [x | x <- live_threads start, x /= dead_thread]
-        otherStoresForThread t =
-            [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
-        storeSatisfiesExpression (ptr,val,_) (expr, v) =
-            evalExpressionWithStore expr [(ptr,val)] /= v
-        satisfiedExpressions st =
-            [ind | (ind, expr) <- zip [0..] criticalExpressions, storeSatisfiesExpression st expr]
-        interestingStores =
-            concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
-                    | t <- otherThreads]
-        tryStore ((_, _, (TraceLocation _ _ acc thr)), _) =
-            run (fst $ runMemory prefix thr (acc + 1)) Infinity
-        allProbes = map tryStore interestingStores
+        probes_order_n n =
+            let prefix = truncateHistory start $ Finite $ epoch_nr - n
+                criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
+                otherThreads = [x | x <- live_threads start, x /= dead_thread]
+                otherStoresForThread t =
+                    [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
+                storeSatisfiesExpression (ptr,val,_) (expr, v) =
+                    evalExpressionWithStore expr [(ptr,val)] /= v
+                satisfiedExpressions st =
+                    [ind | (ind, expr) <- zip [0..] criticalExpressions, storeSatisfiesExpression st expr]
+                interestingStores =
+                    concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
+                            | t <- otherThreads]
+                tryStore ((_, _, (TraceLocation _ _ acc thr)), _) =
+                    run (fst $ runMemory prefix thr (acc + 1)) Infinity
+            in map tryStore interestingStores
+        allProbes = map probes_order_n [1..32]
     in allProbes
 
 {- One of the strategies for fixing replays which don't work.  Back up
@@ -137,7 +139,7 @@ fixControlHistory' start =
       ReplayStateOkay -> Nothing
       ReplayStateFinished -> Nothing
       ReplayStateFailed _ (FailureReasonControl _ _ nr_epochs) ->
-          let probes = fixControlHistoryL start
+          let probes = head $ fixControlHistoryL start
               allProbes = [(p, replayState p) | p <- probes]
               probeIsGood (_, ReplayStateOkay) = True
               probeIsGood (_, ReplayStateFinished) = True
@@ -273,7 +275,7 @@ flipPair start (post, pre) =
        res
 
 type Goodness a = a -> Topped Integer
-type Explorer a = a -> [a]
+type Explorer a = a -> [[a]]
 
 historyGoodness :: Goodness History
 historyGoodness hist =
@@ -282,36 +284,60 @@ historyGoodness hist =
       ReplayStateFinished -> Infinity
       ReplayStateFailed _ (FailureReasonControl (RecordNr x) _ _) -> Finite x
 
-exploreStep :: Show a => Explorer a -> Goodness a -> [(Topped Integer, a)] -> Maybe ((Topped Integer, a), [(Topped Integer, a)])
-exploreStep _ _ [] = Nothing
-exploreStep worker goodness ((startingGood,startingPoint):others) =
-    let newHistories = worker startingPoint
-        newItems = [(goodness hist, hist) | hist <- newHistories]
-        newFringe = sortBy (\a b -> (fst a) `compare` (fst b)) (others ++ newItems)
-    in 
-       case newFringe of
-         [] -> Nothing
-         ((bestGoodness,_):_) ->
-             {- Drop anything which is more than 1000 records behind,
-                because it's not likely to be terribly useful any
-                more. -}
-             Just ((startingGood, startingPoint), filter (\x -> fst x > bestGoodness - 1000) newFringe)
+data ExplorationParameters a = ExplorationParameters { ep_advance :: Explorer a,
+                                                       ep_goodness :: Goodness a}
 
-{- Explorer from a given starting point and return the best thing we
-   find -}
-explore :: Show a => Explorer a -> Goodness a -> a -> a
-explore worker goodness start =
-    doIt (gstart, start) [(gstart, start)]
-    where gstart = goodness start
-          doIt (_, res) [] = dt "c4" $ res
-          doIt (previousBestGoodness, previousBest) fringe =
-              case exploreStep worker goodness fringe of
-                Nothing -> previousBest
-                Just ((Infinity, res), _) -> res
-                Just ((thisGood, this), newFringe) ->
-                    doIt (if thisGood > previousBestGoodness
-                          then (thisGood, this)
-                          else (previousBestGoodness, previousBest)) newFringe
+{- The idea is that we maintain a list of things which we're currently
+   investigating, known as the fringe, and another list of points
+   which we could sensibly backtrack to.  The main difference between
+   fringe and backtrack is that a backtrack point is somewhat more
+   expensive to visit, and so we don't want to go there unless the
+   fringe is empty. -}
+data Show a => ExplorationState a = ExplorationState { es_fringe :: [(Topped Integer, a)],
+                                                       es_backtracks :: [[a]] } deriving Show
+
+exploreStep :: Show a => ExplorationParameters a -> ExplorationState a -> Maybe ((Topped Integer, a), ExplorationState a)
+exploreStep params state =
+    case es_fringe state of
+      [] ->
+          case es_backtracks state of
+            [] -> Nothing
+            (x:xs) ->
+                exploreStep params $ ExplorationState { es_fringe = [(ep_goodness params x', x') | x' <- x],
+                                                        es_backtracks = xs }
+      (s@(_, startingPoint):otherFringe) ->
+          case ep_advance params startingPoint of
+            [] -> exploreStep params $ state { es_fringe = otherFringe }
+            (newFringePoints:newBacktrackPoints) ->
+                let newItems = [(ep_goodness params x, x) | x <- newFringePoints]
+                    newFringe = sortBy (\a b -> (fst a) `compare` (fst b)) $ newItems ++ otherFringe
+                    newBacktrack = newBacktrackPoints ++ (es_backtracks state)
+                in case newFringe of
+                     [] -> exploreStep params $ state { es_fringe = [] }
+                     ((bestGoodness,_):_) ->
+                                  Just (s, ExplorationState { es_fringe = filter (\x -> fst x > bestGoodness - 1000) newFringe,
+                                                              es_backtracks = newBacktrack })
+               
+explore :: Show a => ExplorationParameters a -> ExplorationState a -> Maybe a
+explore params state =
+    case exploreStep params state of
+      Nothing -> Nothing
+      Just (start, state') ->
+          worker start state'
+          where worker (Infinity,x) _ = Just x
+                worker (thisGoodness, this) st =
+                    case exploreStep params st of
+                      Nothing -> Just this
+                      Just ((newGoodness, newThing),st') ->
+                          worker (if newGoodness > thisGoodness
+                                  then (newGoodness, newThing)
+                                  else (thisGoodness, this)) st'
 
 advanceHist :: History -> History
-advanceHist = explore fixControlHistoryL historyGoodness
+advanceHist hist =
+    case explore (ExplorationParameters { ep_goodness = historyGoodness,
+                                          ep_advance = fixControlHistoryL })
+                 (ExplorationState { es_fringe = [],
+                                     es_backtracks = [[hist]] }) of
+      Nothing -> hist
+      Just h -> h
