@@ -77,6 +77,11 @@ struct client_req_record {
 #define RECORD_MAX_CLASS RECORD_client
 
 
+struct index_record {
+	unsigned long record_nr;
+	unsigned long offset_in_file;
+};
+
 static inline int
 IS_STACK(const void *ptr, unsigned long rsp)
 {

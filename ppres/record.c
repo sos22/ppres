@@ -34,11 +34,15 @@ extern ULong (*tool_provided_rdtsc)(void);
 
 #define RECORD_BLOCK_SIZE 16384
 #define MAX_RECORD_SIZE 4096
+#define INDEX_PERIOD 1000000
 
 struct record_emitter {
 	int fd;
+	int index_fd;
 	void *current_block;
 	unsigned current_block_used;
+	unsigned long nr_records;
+	unsigned long offset_in_file;
 };
 
 static struct record_emitter
@@ -49,13 +53,18 @@ open_logfile(struct record_emitter *res,
 	     const signed char *fname)
 {
 	SysRes open_res;
+	Char buf[4096];
 
+	VG_(sprintf)(buf, "%s.idx", fname);
 	open_res = VG_(open)(fname, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE,
 			     0700);
 	res->fd = sr_Res(open_res);
+	res->index_fd = sr_Res(VG_(open)(buf, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE,
+					 0700));
 	res->current_block = VG_(malloc)("logbuffer",
 					 RECORD_BLOCK_SIZE);
 	res->current_block_used = 0;
+	res->nr_records = 0;
 }
 
 struct thread_info {
@@ -102,6 +111,15 @@ client_in_monitor(void)
 	return get_thread_info(VG_(get_running_tid)())->in_monitor;
 }
 
+static void
+write_index_record(int fd, unsigned long nr_records, unsigned long offset_in_file)
+{
+	struct index_record ir;
+	ir.record_nr = nr_records;
+	ir.offset_in_file = offset_in_file;
+	VG_(write)(fd, &ir, sizeof(ir));
+}
+
 static void *
 emit_record(struct record_emitter *re,
 	    unsigned record_class,
@@ -109,6 +127,8 @@ emit_record(struct record_emitter *re,
 {
 	struct record_header *hdr;
 
+	if (!(re->nr_records % INDEX_PERIOD))
+		write_index_record(re->index_fd, re->nr_records, re->offset_in_file);
 	tl_assert(record_size <= MAX_RECORD_SIZE);
 	record_size += sizeof(*hdr);
 	if (re->current_block_used + record_size > RECORD_BLOCK_SIZE) {
@@ -121,6 +141,9 @@ emit_record(struct record_emitter *re,
 	hdr->size = record_size;
 	hdr->tid = VG_(get_running_tid)();
 	re->current_block_used += record_size;
+	re->offset_in_file += record_size;
+
+	re->nr_records++;
 	return hdr + 1;
 }
 
