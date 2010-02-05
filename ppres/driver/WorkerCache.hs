@@ -18,6 +18,9 @@ import Types
 import Worker
 import History
 
+data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
+                                 wc_start :: Worker }
+
 
 globalWorkerCache :: IORef (Maybe WorkerCache)
 {-# NOINLINE globalWorkerCache #-}

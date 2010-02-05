@@ -140,9 +140,6 @@ data UIValue = UIValueNull
              | UIValueTraceLocation TraceLocation
              | UIValueThreadState ThreadState
 
-data WorkerCache = WorkerCache { wc_workers :: [(History, Worker)],
-                                 wc_start :: Worker }
-
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
 
