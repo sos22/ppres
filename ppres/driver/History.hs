@@ -4,11 +4,11 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
 import Types
 import Worker
 
-doHistoryEntry :: Worker -> HistoryEntry -> IO Bool
-doHistoryEntry w (HistoryRun cntr) = runWorker w cntr
-doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return True
+doHistoryEntry :: Worker -> HistoryEntry -> IO ()
+doHistoryEntry w (HistoryRun cntr) = runWorker w cntr >> return ()
+doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return ()
 doHistoryEntry w (HistoryRunMemory tid cntr) =
-    runMemoryWorker w tid cntr >> return True
+    runMemoryWorker w tid cntr >> return ()
 
 stripSharedPrefix :: History -> History -> (History, History)
 stripSharedPrefix (History aa) (History bb) =
@@ -44,20 +44,12 @@ emptyHistory = History []
 
 {- fixupWorkerForHist worker current desired -> assume that worker is
    in a state represented by current, and get it into a state
-   represented by desired.  current must be a prefix of desired.
-   Returns True if we succeed or False if something goes wrong. -}
-fixupWorkerForHist :: Worker -> History -> History -> IO Bool
+   represented by desired.  current must be a prefix of desired. -}
+fixupWorkerForHist :: Worker -> History -> History -> IO ()
 fixupWorkerForHist w current desired =
     case stripSharedPrefix current desired of
-      (History [], History todo) ->
-          worker todo
+      (History [], History todo) -> mapM_ (doHistoryEntry w) todo
       _ -> error ((show current) ++ " is not a prefix of " ++ (show desired))
-    where worker [] = return True
-          worker (d:ds) =
-              do r <- doHistoryEntry w d
-                 case r of
-                   False -> return r
-                   True -> worker ds
 
 appendHistory :: History -> HistoryEntry -> History
 appendHistory (History []) he = History [he]
