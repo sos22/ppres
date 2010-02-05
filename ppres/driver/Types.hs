@@ -12,13 +12,6 @@ type VariableName = String
 newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord)
 newtype EpochNr = EpochNr Integer deriving (Eq, Show, Enum, Ord, Real, Num)
 
-data HistoryEntry = HistoryRun (Topped EpochNr)
-                  | HistoryRunThread ThreadId
-                  | HistoryRunMemory ThreadId Integer
-                    deriving (Eq, Show)
-
-data History = History [HistoryEntry] deriving (Show, Eq)
-
 data Worker = Worker { worker_fd :: Socket,
                        worker_alive :: IORef Bool }
 
@@ -125,23 +118,6 @@ data ReplayState = ReplayStateOkay EpochNr
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,
                                  ts_last_epoch :: EpochNr } deriving Show
-
-data UIValue = UIValueNull
-             | UIValueSnapshot History
-             | UIValuePair UIValue UIValue
-             | UIValueChar Char
-             | UIValueList [UIValue]
-             | UIValueTrace TraceRecord
-             | UIValueError String
-             | UIValueReplayState ReplayState
-             | UIValueExpression Expression
-             | UIValueByte Word8
-             | UIValueInteger Integer
-             | UIValueTraceLocation TraceLocation
-             | UIValueThreadState ThreadState
-
-data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
-
 
 instance Monad (Either a) where
     return x = Right x

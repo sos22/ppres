@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
-module UIValue(uiValueString, AvailInUI(..), mapUIValue) where
+module UIValue(uiValueString, AvailInUI(..), mapUIValue, UIValue(..)) where
 
 import Control.Monad.Instances()
 import Control.Monad
@@ -9,6 +9,21 @@ import Numeric
 import Types
 import ReplayState()
 import Expression()
+import History
+
+data UIValue = UIValueNull
+             | UIValueSnapshot History
+             | UIValuePair UIValue UIValue
+             | UIValueChar Char
+             | UIValueList [UIValue]
+             | UIValueTrace TraceRecord
+             | UIValueError String
+             | UIValueReplayState ReplayState
+             | UIValueExpression Expression
+             | UIValueByte Word8
+             | UIValueInteger Integer
+             | UIValueTraceLocation TraceLocation
+             | UIValueThreadState ThreadState
 
 instance Show UIValue where
     show UIValueNull = "()"

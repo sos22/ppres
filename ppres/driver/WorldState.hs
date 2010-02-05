@@ -1,5 +1,5 @@
 module WorldState(initialWorldState, doAssignment, lookupVariable,
-                  exitWorld) where
+                  exitWorld, WorldState(..)) where
 
 import System.Exit
 import Foreign.C.Types
@@ -10,6 +10,10 @@ import Socket
 import Types
 import History
 import WorkerCache
+import UIValue
+
+data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
+
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
