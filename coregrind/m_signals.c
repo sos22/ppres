@@ -2344,7 +2344,7 @@ static
 void sync_signalhandler ( Int sigNo,
                           vki_siginfo_t *info, struct vki_ucontext *uc )
 {
-  ThreadId tid = VG_(running_tid);
+   ThreadId tid = VG_(running_tid);
    Bool from_user;
 
    if (0) 

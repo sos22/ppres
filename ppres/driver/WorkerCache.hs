@@ -71,8 +71,10 @@ getWorker hist =
                            Nothing ->
                                error $ "cannot snapshot " ++ (show best_hist)
                            Just new_worker'' -> new_worker''
-       fixupWorkerForHist new_worker' best_hist hist
-       return (best_hist /= hist, new_worker')
+       cost <- fixupWorkerForHist new_worker' best_hist hist
+       return (cost > 10, {- 10 is pretty arbitrary, but seemed to work well
+                             in some preliminary testing. -}
+               new_worker')
     where findBestWorker :: IO (History, Worker)
           findBestWorker =
               do wc <- workerCache
@@ -109,9 +111,11 @@ registerWorker hist worker =
 traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
 traceCmd he start w =
     let newHist = appendHistory start he
-    in unsafePerformIO $ do (_, worker) <- getWorker start
+    in unsafePerformIO $ do (register, worker) <- getWorker start
                             r <- w worker
-                            registerWorker newHist worker
+                            if register
+                             then registerWorker newHist worker
+                             else killWorker worker
                             return (newHist, r)
 
 run :: History -> Topped EpochNr -> History

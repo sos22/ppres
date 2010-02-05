@@ -1,14 +1,30 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory) where
 
+import Control.Monad
+
 import Types
 import Worker
 
-doHistoryEntry :: Worker -> HistoryEntry -> IO ()
-doHistoryEntry w (HistoryRun cntr) = runWorker w cntr >> return ()
-doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return ()
+doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
+doHistoryEntry w (HistoryRun cntr) =
+    let deEpoch (EpochNr x) = x
+    in
+    do rs <- replayStateWorker w
+       case rs of
+         ReplayStateOkay e ->
+             do runWorker w cntr
+                rs' <- replayStateWorker w
+                case rs' of
+                  ReplayStateFinished -> return 100 -- Just make something up
+                  ReplayStateFailed _ (FailureReasonControl _ _ e') ->
+                      return $ deEpoch $ e' - e + 1
+                  ReplayStateOkay e' -> return $ deEpoch $ e' - e + 1
+         ReplayStateFinished -> return 1
+         ReplayStateFailed _ (FailureReasonControl _ _ _) -> return 1
+doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return 1
 doHistoryEntry w (HistoryRunMemory tid cntr) =
-    runMemoryWorker w tid cntr >> return ()
+    runMemoryWorker w tid cntr >> return cntr
 
 stripSharedPrefix :: History -> History -> (History, History)
 stripSharedPrefix (History aa) (History bb) =
@@ -44,11 +60,12 @@ emptyHistory = History []
 
 {- fixupWorkerForHist worker current desired -> assume that worker is
    in a state represented by current, and get it into a state
-   represented by desired.  current must be a prefix of desired. -}
-fixupWorkerForHist :: Worker -> History -> History -> IO ()
+   represented by desired.  current must be a prefix of desired.
+   Returns an estimate of how much it cost us to do so. -}
+fixupWorkerForHist :: Worker -> History -> History -> IO Integer
 fixupWorkerForHist w current desired =
     case stripSharedPrefix current desired of
-      (History [], History todo) -> mapM_ (doHistoryEntry w) todo
+      (History [], History todo) -> liftM sum $ mapM (doHistoryEntry w) todo
       _ -> error ((show current) ++ " is not a prefix of " ++ (show desired))
 
 appendHistory :: History -> HistoryEntry -> History
