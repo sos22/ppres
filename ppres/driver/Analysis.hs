@@ -347,15 +347,19 @@ advanceHist hist =
 {- Enumerate all ``interesting'' small-step advances we can make from
    this state.  We filter out some of the more boring potential moves:
 
--- If there's only one thread runnable, we can run it to the end of the
-   record without any need to step one memory access at a time.
--}
+   -- If there's only one thread runnable, we can run it to the end of the
+      record without any need to step one memory access at a time.
+
+   We stop as soon as we find a replay which succeeds.  The
+   ``default'' action, of just running the trace-selected thread to
+   the end of the record, is implicitly handled by the big step
+   advancer, so we don't need to deal with that here. -}
 enumerateHistoriesSmallStep :: History -> [History] -> [History]
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
-      ReplayStateFailed _ _ -> []
-      ReplayStateFinished -> []
-      ReplayStateOkay progress ->
+      ReplayStateFailed _ _ -> trailer
+      ReplayStateFinished -> [start]
+      ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
               trace_for_thread t = snd $ traceThread start t
               footstep_is_mem (TraceLoad _ _ _ _) = True
@@ -363,14 +367,30 @@ enumerateHistoriesSmallStep start trailer =
               footstep_is_mem _ = False
               memtrace_for_thread = filter (footstep_is_mem . trc_trc) . trace_for_thread
               thread_can_mem_step t = length (memtrace_for_thread t) /= 0
-              defaultNextThread = nextThread start
-              defaultThreadAction =
-                  if length threads /= 1 && thread_can_mem_step defaultNextThread
-                  then fst $ runMemory start defaultNextThread 1
-                  else run start $ Finite $ progress + 1
-              otherThreadActions =
-                  [fst $ runMemory start t 1 | t <- threads, t /= defaultNextThread]
-          in defaultThreadAction:otherThreadActions ++ trailer
+              threadActions =
+                  [fst $ runMemory start t 1 | t <- threads, thread_can_mem_step t]
+          in threadActions ++ trailer
+
+{- Enumerate big-step advances we can make in the history.  This
+   means, basically, running the log as far as we can in
+   trace-directed mode, and then backtracking one epoch at a time when
+   we get a failure. -}
+enumerateHistoriesBigStep :: History -> [History] -> [History]
+enumerateHistoriesBigStep start trailer =
+    case replayState start of
+      ReplayStateFinished -> [start]
+      ReplayStateFailed _ _ -> trailer
+      ReplayStateOkay start_epoch ->
+          case replayState $ run start Infinity of
+            ReplayStateFinished ->
+                {- We're done; no point exploring any further -}
+                [run start Infinity]
+            ReplayStateOkay _ -> error "replay got lost somewhere?"
+            ReplayStateFailed _ (FailureReasonControl _ _ fail_epoch) ->
+                let ss_starts = [if e == start_epoch
+                                 then start 
+                                 else run start (Finite e) | e <- reverse [start_epoch..fail_epoch]]
+                in foldr enumerateHistoriesSmallStep trailer ss_starts
 
 {- Exhaustively explore all future schedulings available from hist and
    return the first successful one (or Nothing, if we can't find
@@ -383,4 +403,4 @@ enumerateHistories (a:as) =
       ReplayStateFinished -> Just a -- We're done
       ReplayStateFailed _ _ -> enumerateHistories as -- Strip off any which have already failed
       ReplayStateOkay _ -> -- we have to do something more clever
-          enumerateHistories $ enumerateHistoriesSmallStep a as
+          enumerateHistories $ enumerateHistoriesBigStep a as
