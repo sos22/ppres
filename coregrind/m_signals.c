@@ -1752,8 +1752,6 @@ static void resume_scheduler(ThreadId tid)
 {
    ThreadState *tst = VG_(get_ThreadState)(tid);
 
-   vg_assert(tst->os_state.lwpid == VG_(gettid)());
-
    if (tst->sched_jmpbuf_valid) {
       /* Can't continue; must longjmp back to the scheduler and thus
          enter the sighandler immediately. */
@@ -1986,7 +1984,7 @@ static
 void async_signalhandler ( Int sigNo,
                            vki_siginfo_t *info, struct vki_ucontext *uc )
 {
-   ThreadId     tid = VG_(lwpid_to_vgtid)(VG_(gettid)());
+   ThreadId     tid = VG_(running_tid);
    ThreadState* tst = VG_(get_ThreadState)(tid);
    SysRes       sres;
 
@@ -2346,7 +2344,7 @@ static
 void sync_signalhandler ( Int sigNo,
                           vki_siginfo_t *info, struct vki_ucontext *uc )
 {
-   ThreadId tid = VG_(lwpid_to_vgtid)(VG_(gettid)());
+  ThreadId tid = VG_(running_tid);
    Bool from_user;
 
    if (0) 
@@ -2405,7 +2403,7 @@ void sync_signalhandler ( Int sigNo,
 static void sigvgkill_handler(int signo, vki_siginfo_t *si,
                                          struct vki_ucontext *uc)
 {
-   ThreadId     tid = VG_(lwpid_to_vgtid)(VG_(gettid)());
+   ThreadId     tid = VG_(running_tid);
    ThreadStatus at_signal = VG_(threads)[tid].status;
 
    if (VG_(clo_trace_signals))
