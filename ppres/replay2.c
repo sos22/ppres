@@ -62,38 +62,6 @@ struct client_event_record {
 	const unsigned long *args;
 };
 
-struct control_command {
-	unsigned cmd;
-	union {
-		struct {
-			long nr;
-		} run;
-		struct {
-			long nr;
-		} trace;
-		struct {
-			long nr;
-		} control_trace;
-		struct {
-			long thread;
-			long nr;
-		} runm;
-		struct {
-			long thread;
-		} trace_thread;
-		struct {
-			long address;
-		} trace_mem;
-		struct {
-			unsigned long addr;
-			unsigned long size;
-		} get_memory;
-		struct {
-			unsigned long addr;
-		} vg_intermediate;
-	} u;
-};
-
 struct failure_reason {
 	unsigned reason;
 	unsigned tid;
@@ -418,6 +386,7 @@ get_control_command(struct control_command *cmd)
 	default:
 		VG_(tool_panic)((Char *)"bad worker command");
 	}
+	debug_control_command(cmd);
 	return;
 }
 
@@ -429,9 +398,16 @@ get_control_command(struct control_command *cmd)
 		       current_thread->id,		  \
 		       ## args)
 
-#define TRACE(code, args...)				  \
-	do {						  \
-		if (trace_mode) _TRACE(code, ## args);	  \
+#define TRACE(code, args...)						\
+	do {								\
+		if (trace_mode) _TRACE(code, ## args);			\
+		debug_trace_data(ANCILLARY_TRACE_ ## code, ## args);	\
+	} while (0)
+
+#define ALWAYS_TRACE(code, args...)					\
+	do {								\
+		_TRACE(code, ## args);					\
+		debug_trace_data(ANCILLARY_TRACE_ ## code, ## args);	\
 	} while (0)
 
 
@@ -571,7 +547,7 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
-		_TRACE(LOAD,
+		ALWAYS_TRACE(LOAD,
 		       size == 8 ?
 		       *(unsigned long *)read_bytes :
 		       *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
@@ -595,7 +571,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
-		_TRACE(STORE,
+		ALWAYS_TRACE(STORE,
 		       size == 8 ?
 		       *(unsigned long *)written_bytes :
 		       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
@@ -618,9 +594,9 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		VG_(in_generated_code) = True;
 		if (trace_mode) {
 			if (arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY)
-				_TRACE(CALLING);
+				ALWAYS_TRACE(CALLING);
 			else
-				_TRACE(CALLED);
+				ALWAYS_TRACE(CALLED);
 			send_string((const char *)arg_block[1]);
 		}
 		event(EVENT_client_request, arg_block[0], arg_block[1]);

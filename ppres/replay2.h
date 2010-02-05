@@ -205,6 +205,38 @@ struct interpret_mem_lookaside {
 	struct abstract_interpret_value aiv;
 };
 
+struct control_command {
+	unsigned cmd;
+	union {
+		struct {
+			long nr;
+		} run;
+		struct {
+			long nr;
+		} trace;
+		struct {
+			long nr;
+		} control_trace;
+		struct {
+			long thread;
+			long nr;
+		} runm;
+		struct {
+			long thread;
+		} trace_thread;
+		struct {
+			long address;
+		} trace_mem;
+		struct {
+			unsigned long addr;
+			unsigned long size;
+		} get_memory;
+		struct {
+			unsigned long addr;
+		} vg_intermediate;
+	} u;
+};
+
 extern struct replay_thread *head_thread;
 extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
@@ -294,6 +326,16 @@ do {						           \
 			args);				   \
 } while (0)
 
+
+void debug_control_command(const struct control_command *cc);
+void _debug_trace_data(unsigned code, unsigned nr_args, const unsigned long *args);
+#define debug_trace_data(_code, ...)					\
+	do {								\
+		const unsigned long _args[] = {__VA_ARGS__};		\
+		_debug_trace_data((_code),				\
+				  sizeof(_args)/sizeof(_args[0]),	\
+				  _args);				\
+	} while (0)
 
 /* ASSUME is like assert, in that it terminates if the argument is
    anything other than true, but it's supposed to be a hint that we're
