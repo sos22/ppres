@@ -345,15 +345,20 @@ advanceHist hist =
 
 
 {- Enumerate all ``interesting'' small-step advances we can make from
-   this state.  We filter out some of the more boring potential moves:
+   this state.  We stop as soon as we find a replay which succeeds.
+   The ``default'' action, of just running the trace-selected thread
+   to the end of the epoch, is implicitly handled by the big step
+   advancer, so we don't need to deal with that here (and in fact we
+   don't need to consider any epoch-crossing actions at all).
 
-   -- If there's only one thread runnable, we can run it to the end of the
-      record without any need to step one memory access at a time.
-
-   We stop as soon as we find a replay which succeeds.  The
-   ``default'' action, of just running the trace-selected thread to
-   the end of the record, is implicitly handled by the big step
-   advancer, so we don't need to deal with that here. -}
+   We filter out un-interesting memory accesses by looking for races.
+   A race is a pair of accesses, A and B, issued by different threads
+   in this epoch where at least one is a store.  For each thread with
+   a racing access, we need to emit a single schedule which runs that
+   thread up to and including the *first* racing access.  We don't
+   need to emit anything for threads which don't have any races in
+   them.
+-}
 enumerateHistoriesSmallStep :: History -> [History] -> [History]
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
@@ -362,14 +367,46 @@ enumerateHistoriesSmallStep start trailer =
       ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
               trace_for_thread t = snd $ traceThread start t
-              footstep_is_mem (TraceLoad _ _ _ _) = True
-              footstep_is_mem (TraceStore _ _ _ _) = True
+              footstep_is_mem (TraceLoad _ _ _ False) = True
+              footstep_is_mem (TraceStore _ _ _ False) = True
               footstep_is_mem _ = False
-              memtrace_for_thread = filter (footstep_is_mem . trc_trc) . trace_for_thread
-              thread_can_mem_step t = length (memtrace_for_thread t) /= 0
-              threadActions =
-                  [fst $ runMemory start t 1 | t <- threads, thread_can_mem_step t]
-          in threadActions ++ trailer
+              memtrace_for_thread' = filter footstep_is_mem . map trc_trc . trace_for_thread
+              thread_traces = zip threads $ map memtrace_for_thread' threads
+              memtrace_for_thread t =
+                  case lookup t thread_traces of
+                    Just x -> x
+                    Nothing -> error "lost a thread somewhere"
+
+              {- The index of the first racing access in a given
+                 thread, or Nothing if there are no races in that
+                 thread. -}
+              racing_access_for_thread :: ThreadId -> Maybe Integer
+              racing_access_for_thread t =
+                  let access_races i =
+                          let overlapping_accesses ptr =
+                                  [x | t' <- threads, t' /= t, x <- memtrace_for_thread t', access_overlaps x]
+                                  where access_overlaps (TraceLoad _ _ ptr' _) = ptr' == ptr
+                                        access_overlaps (TraceStore _ _ ptr' _) = ptr' == ptr
+                                        access_overlaps _ = False
+                          in case (memtrace_for_thread t)!!i of
+                               (TraceLoad _ _ ptr _) ->
+                                   or $ map isStore $ overlapping_accesses ptr
+                                   where isStore (TraceStore _ _ _ _) = True
+                                         isStore _ = False
+                               (TraceStore _ _ ptr _) ->
+                                   or $ map (const True) $ overlapping_accesses ptr
+                               _ -> error "strange kind of memory trace record"
+                  in fmap (toInteger  . (1 + )) $ elemIndex True $ map access_races [0..((length $ memtrace_for_thread t)-1)]
+              thread_action t =
+                  case racing_access_for_thread t of
+                    Just i -> Just $ fst $ runMemory start t i
+                    Nothing -> Nothing
+              thread_actions = map thread_action threads
+              result =
+                  foldr deMaybe trailer thread_actions
+                  where deMaybe (Just x) y = x:y
+                        deMaybe Nothing y = y
+          in result
 
 {- Enumerate big-step advances we can make in the history.  This
    means, basically, running the log as far as we can in
