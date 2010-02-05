@@ -13,12 +13,16 @@ import Control.Monad.State
 import Data.IORef
 import Random
 import Control.Exception
+import qualified Debug.Trace
 
 import System.IO.Unsafe
 
 import Types
 import Worker
 import History
+
+dt :: String -> a -> a
+dt = const id
 
 data CacheGeneration = CacheGeneration { cg_max_size :: Int,
                                          cg_workers :: IORef [(History, Worker)],
@@ -171,13 +175,14 @@ traceCmd he start w =
 run :: History -> Topped EpochNr -> History
 run start cntr = appendHistory start $ HistoryRun cntr
 
-
 trace :: History -> Topped EpochNr -> (History, [TraceRecord])
 trace start cntr =
+    dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
 traceThread :: History -> ThreadId -> (History, [TraceRecord])
 traceThread start thr =
+    dt ("traceThread " ++ (show start) ++ " " ++ (show thr)) $
     traceCmd (HistoryRunThread thr) start $ \worker -> traceThreadWorker worker thr
 
 traceAddress :: History -> Word64 -> (History, [TraceRecord])
@@ -186,6 +191,7 @@ traceAddress start addr =
 
 runMemory :: History -> ThreadId -> Integer -> (History, [TraceRecord])
 runMemory start tid cntr =
+    dt ("runMemory " ++ (show start) ++ " " ++ (show tid) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRunMemory tid cntr) start $
             \worker -> runMemoryWorker worker tid cntr
 
@@ -199,14 +205,14 @@ queryCmd hist w =
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
-threadState hist = queryCmd hist threadStateWorker
+threadState hist = dt ("replayState " ++ (show hist)) $ queryCmd hist threadStateWorker
 
 replayState :: History -> ReplayState
-replayState hist = queryCmd hist replayStateWorker
+replayState hist = dt ("replayState " ++ (show hist)) $ queryCmd hist replayStateWorker
 
 controlTrace :: History -> Topped Integer -> [Expression]
 controlTrace hist cntr =
-    snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
+    dt ("controlTrace " ++ (show hist) ++ " " ++ (show cntr)) $ snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
 
 fetchMemory :: History -> Word64 -> Word64 -> Maybe [Word8]
 fetchMemory hist addr size =
@@ -218,4 +224,4 @@ vgIntermediate hist addr =
 
 nextThread :: History -> ThreadId
 nextThread hist =
-    queryCmd hist nextThreadWorker
+    dt ("nextThread " ++ (show hist)) $ queryCmd hist nextThreadWorker
