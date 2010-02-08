@@ -809,7 +809,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	do {								\
 		if ((a) != (b)) {					\
 			replay_failed(reason,				\
-				      "%ld:%ld: Replay failed at %d: %s(%lx) != %s(%lx)\n", \
+				      "%ld:%ld: Replay failed at %d: %s(%lx) != %s(%lx)", \
 				      record_nr,			\
 				      epoch_nr,				\
 				      __LINE__,				\
