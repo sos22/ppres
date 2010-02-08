@@ -781,11 +781,11 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 		case WORKER_REPLAY_STATE:
 			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, logfile.record_nr, failure_reason->tid,
 				       epoch_nr);
+			send_string(msg);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
 				send_expression(failure_reason->arg2);
-			send_string(msg);
 			send_okay();
 			break;
 		case WORKER_GET_MEMORY:

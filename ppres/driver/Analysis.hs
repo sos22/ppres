@@ -4,7 +4,6 @@ module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
 
 import Types
 import WorkerCache
-import Expression()
 import History
 import ReplayState()
 
@@ -105,7 +104,7 @@ live_threads _ = [1,2]
 
 fixControlHistoryL :: History -> [[History]]
 fixControlHistoryL start =
-    let (ReplayStateFailed _ (FailureReasonControl _ dead_thread epoch_nr)) = replayState start
+    let (ReplayStateFailed _ _ dead_thread epoch_nr _) = replayState start
         probes_order_n n =
             let prefix = truncateHistory start $ Finite $ epoch_nr - n
                 criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
@@ -139,24 +138,24 @@ fixControlHistory' start =
     case replayState start of
       ReplayStateOkay _ -> Nothing
       ReplayStateFinished -> Nothing
-      ReplayStateFailed _ (FailureReasonControl _ _ nr_epochs) ->
+      ReplayStateFailed _ _ _ nr_epochs _ ->
           let probes = head $ fixControlHistoryL start
               allProbes = [(p, replayState p) | p <- probes]
               probeIsGood (_, ReplayStateOkay _) = True
               probeIsGood (_, ReplayStateFinished) = True
-              probeIsGood (_, ReplayStateFailed _ (FailureReasonControl _ _ progress)) =
+              probeIsGood (_, ReplayStateFailed _ _ _ progress _ ) =
                   progress > nr_epochs
               goodProbes = filter probeIsGood allProbes
               probeIsVeryGood (_, ReplayStateOkay _) = True
               probeIsVeryGood (_, ReplayStateFinished) = True
-              probeIsVeryGood (_, ReplayStateFailed _ (FailureReasonControl _ _ progress)) =
+              probeIsVeryGood (_, ReplayStateFailed _ _ _ progress _) =
                   progress > nr_epochs + 100
               compareFailureReasons ReplayStateFinished _ = LT
               compareFailureReasons (ReplayStateOkay _) _ = LT
               compareFailureReasons _ (ReplayStateOkay _) = GT
               compareFailureReasons _ ReplayStateFinished = GT
-              compareFailureReasons (ReplayStateFailed _ (FailureReasonControl proga _ _))
-                                    (ReplayStateFailed _ (FailureReasonControl progb _ _)) =
+              compareFailureReasons (ReplayStateFailed _ proga _ _ _)
+                                    (ReplayStateFailed _ progb _ _ _) =
                                         compare proga progb
               sortedProbes = sortBy ordering goodProbes
                              where ordering (_, ra) (_, rb) = compareFailureReasons ra rb
@@ -221,7 +220,7 @@ findCritPairs hist =
     case replayState hist of
       ReplayStateOkay _ -> []
       ReplayStateFinished -> []
-      ReplayStateFailed _ (FailureReasonControl _ threadB _) ->
+      ReplayStateFailed _ _ threadB _ _ ->
           let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
               prefix1 = truncateHistory hist $ Finite $ threadALastSuccess
               prefix2 = truncateHistory hist $ Finite $ (ts_last_epoch $ threadState' hist threadA) - 1
@@ -283,7 +282,7 @@ historyGoodness hist =
     case replayState hist of
       ReplayStateOkay _ -> Infinity
       ReplayStateFinished -> Infinity
-      ReplayStateFailed _ (FailureReasonControl (RecordNr x) _ _) -> Finite x
+      ReplayStateFailed _ (RecordNr x) _ _ _ -> Finite x
 
 data ExplorationParameters a = ExplorationParameters { ep_advance :: Explorer a,
                                                        ep_goodness :: Goodness a}
@@ -362,7 +361,7 @@ advanceHist hist =
 enumerateHistoriesSmallStep :: History -> [History] -> [History]
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
-      ReplayStateFailed _ _ -> trailer
+      ReplayStateFailed _ _ _ _ _ -> trailer
       ReplayStateFinished -> [start]
       ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
@@ -416,14 +415,14 @@ enumerateHistoriesBigStep :: History -> [History] -> [History]
 enumerateHistoriesBigStep start trailer =
     case replayState start of
       ReplayStateFinished -> [start]
-      ReplayStateFailed _ _ -> trailer
+      ReplayStateFailed _ _ _ _ _ -> trailer
       ReplayStateOkay start_epoch ->
           case replayState $ run start Infinity of
             ReplayStateFinished ->
                 {- We're done; no point exploring any further -}
                 [run start Infinity]
             ReplayStateOkay _ -> error "replay got lost somewhere?"
-            ReplayStateFailed _ (FailureReasonControl _ _ fail_epoch) ->
+            ReplayStateFailed _ _ _ fail_epoch _ ->
                 let ss_starts = [if e == start_epoch
                                  then start 
                                  else run start (Finite e) | e <- reverse [start_epoch..fail_epoch]]
@@ -438,6 +437,6 @@ enumerateHistories (a:as) =
     dt ("explore " ++ (show a)) $
     case replayState a of
       ReplayStateFinished -> Just a -- We're done
-      ReplayStateFailed _ _ -> enumerateHistories as -- Strip off any which have already failed
+      ReplayStateFailed _ _ _ _ _ -> enumerateHistories as -- Strip off any which have already failed
       ReplayStateOkay _ -> -- we have to do something more clever
           enumerateHistories $ enumerateHistoriesBigStep a as

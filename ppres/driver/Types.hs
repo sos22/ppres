@@ -102,6 +102,24 @@ data Binop = BinopCombine
            | BinopEq
            | BinopB
 
+instance Show Binop where
+    show BinopCombine = "comb"
+    show BinopSub = "-"
+    show BinopAdd = "+"
+    show BinopMull = "*"
+    show BinopMullHi = "*h"
+    show BinopMullS = "*s"
+    show BinopShrl = ">>>"
+    show BinopShl = "<<"
+    show BinopShra = ">>"
+    show BinopAnd = "&"
+    show BinopOr = "|"
+    show BinopXor = "^"
+    show BinopLe = "<=s"
+    show BinopBe = "<="
+    show BinopEq = "=="
+    show BinopB = "<"
+
 data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
                 | ExpressionMem Int TraceLocation Expression Expression
@@ -109,11 +127,21 @@ data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression
 
-data ReplayFailureReason = FailureReasonControl RecordNr ThreadId EpochNr deriving Show
+instance Show Expression where
+    show (ExpressionRegister n val) = "(" ++ (show n) ++ ": " ++ (showHex val ")")
+    show (ExpressionConst x) = showHex x ""
+    show (ExpressionMem _ when ptr val) = "(" ++ (show when) ++ "MEM[" ++ (show ptr) ++ "]:" ++ (show val) ++ ")"
+    show (ExpressionImported val) = "(imported:" ++ (showHex val ")")
+    show (ExpressionBinop op l r) =
+        "(" ++ (show l) ++ " " ++ (show op) ++ " " ++ (show r) ++ ")"
+    show (ExpressionNot e) = "~(" ++ (show e) ++ ")"
+
+data ReplayFailureReason = FailureReasonControl 
+                         | FailureReasonData Expression Expression deriving Show
 
 data ReplayState = ReplayStateOkay EpochNr
                  | ReplayStateFinished
-                 | ReplayStateFailed String ReplayFailureReason
+                 | ReplayStateFailed String RecordNr ThreadId EpochNr ReplayFailureReason
 
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,

@@ -168,8 +168,14 @@ threadStateWorker worker =
  
 parseReplayState :: [ResponseData] -> ReplayState
 parseReplayState [ResponseDataAncillary 10 [epoch_nr]] = ReplayStateOkay $ EpochNr $ fromIntegral epoch_nr
-parseReplayState [ResponseDataAncillary 11 [0, record_nr, tid, epoch_nr], ResponseDataString s] =
-    ReplayStateFailed s $ FailureReasonControl (RecordNr $ fromIntegral record_nr) (fromIntegral tid) (EpochNr $ fromIntegral epoch_nr)
+parseReplayState (ResponseDataAncillary 11 [x, record_nr, tid, epoch_nr]:(ResponseDataString s):items) =
+    ReplayStateFailed s (RecordNr $ fromIntegral record_nr) (fromIntegral tid) (EpochNr $ fromIntegral epoch_nr) $
+                      case x of
+                        0 -> case items of
+                               [] -> FailureReasonControl
+                               _ -> error $ "unexpected extra data in a failure control response " ++ (show items)
+                        1 -> uncurry FailureReasonData $  evalConsumer items $ pairM parseExpression parseExpression
+                        _ -> error $ "unexpected failure class " ++ (show x)
 parseReplayState [ResponseDataAncillary 14 []] = ReplayStateFinished
 parseReplayState x = error $ "bad replay state " ++ (show x)
 
@@ -204,6 +210,12 @@ consumeMany what =
           else do i <- what
                   rest <- consumeMany what
                   return $ i:rest
+
+pairM :: Monad m => m b -> m c -> m (b, c)
+pairM a b =
+    do a' <- a
+       b' <- b
+       return $ (a', b')
 
 evalConsumer :: [a] -> ConsumerMonad a b -> b
 evalConsumer items monad =

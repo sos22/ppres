@@ -8,7 +8,6 @@ import Numeric
 
 import Types
 import ReplayState()
-import Expression()
 import History
 
 data UIValue = UIValueNull

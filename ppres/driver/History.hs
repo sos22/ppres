@@ -28,11 +28,11 @@ doHistoryEntry w (HistoryRun cntr) =
                 rs' <- replayStateWorker w
                 case rs' of
                   ReplayStateFinished -> return 100 -- Just make something up
-                  ReplayStateFailed _ (FailureReasonControl _ _ e') ->
+                  ReplayStateFailed _ _ _ e' _ ->
                       return $ deEpoch $ e' - e + 1
                   ReplayStateOkay e' -> return $ deEpoch $ e' - e + 1
          ReplayStateFinished -> return 1
-         ReplayStateFailed _ (FailureReasonControl _ _ _) -> return 1
+         ReplayStateFailed _ _ _ _ _ -> return 1
 doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return 1
 doHistoryEntry w (HistoryRunMemory tid cntr) =
     runMemoryWorker w tid cntr >> return cntr
