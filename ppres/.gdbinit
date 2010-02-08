@@ -1,7 +1,8 @@
 define dump_tracelog_entry
   set $code = ($arg0)->code
   if $code == 1
-    printf "footstep "
+    printf "footstep %lx, %lx, %lx, %lx\t", ($arg0)->args[0], ($arg0)->args[1], ($arg0)->args[2], ($arg0)->args[3]
+    x/i (void *)($arg0)->args[0]
   else
     if $code == 2
       printf "syscall "
@@ -36,13 +37,13 @@ define dump_tracelog_entry
 	end
       end
     end
+    set $x = 0
+    while $x < ($arg0)->nr_args
+      printf "%x ", ($arg0)->args[($x)]
+      set $x = $x + 1
+    end
+    printf "\n"
   end
-  set $x = 0
-  while $x < ($arg0)->nr_args
-    printf "%x ", ($arg0)->args[($x)]
-    set $x = $x + 1
-  end
-  printf "\n"
 end
 
 define dump_trace_arena
