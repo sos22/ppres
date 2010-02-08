@@ -132,7 +132,7 @@ instance Functor Topped where
     fmap f (Finite x) = Finite $ f x
 
 instance Show x => Show (Topped x) where
-    show Infinity = "{inf}"
+    show Infinity = "inf"
     show (Finite x) = show x
 
 instance Num x => Num (Topped x) where

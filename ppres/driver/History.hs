@@ -1,5 +1,6 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
-               appendHistory, truncateHistory, History, HistoryEntry(..)) where
+               appendHistory, truncateHistory, History, HistoryEntry(..),
+               mkHistory) where
 
 import Control.Monad
 
@@ -12,6 +13,9 @@ data HistoryEntry = HistoryRun (Topped EpochNr)
                     deriving (Eq, Show)
 
 data History = History [HistoryEntry] deriving (Show, Eq)
+
+mkHistory :: [HistoryEntry] -> History
+mkHistory = History
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
 doHistoryEntry w (HistoryRun cntr) =

@@ -44,6 +44,7 @@ data UIExpression = UIDummyFunction
                   | UIIndex UIExpression Int
                   | UIVGIntermediate UIExpression Word64
                   | UIEnum UIExpression
+                  | UILiteral UIValue
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -52,10 +53,6 @@ data UIAssignment = UIAssignment VariableName UIExpression
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
-
-thread_id_parser :: Parser ThreadId
-thread_id_parser = P.integer command_lexer
-
 
 keyword :: String -> Parser String
 keyword x = do v <- P.identifier command_lexer
@@ -78,6 +75,18 @@ expressionParser =
                return $ constructor a b
         topped_int = option Infinity (liftM Finite $ P.integer command_lexer)
         topped_en = liftM (fmap EpochNr) topped_int
+        parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
+        parseEpochNr = keyword "EpochNr" >> liftM EpochNr parseInteger
+        parseThreadId = parseInteger
+        parseInteger = P.integer command_lexer
+        parseHistoryEntry = tchoice [do keyword "HistoryRun"
+                                        liftM HistoryRun $ parseTopped parseEpochNr,
+                                     do keyword "HistoryRunThread"
+                                        liftM HistoryRunThread parseThreadId,
+                                     do keyword "HistoryRunMemory"
+                                        t <- parseThreadId
+                                        i <- parseInteger
+                                        return $ HistoryRunMemory t i]
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
@@ -96,16 +105,16 @@ expressionParser =
                   return $ UIControlTrace snap cntr,
                do keyword "tracet"
                   snap <- expressionParser
-                  thr <- thread_id_parser
+                  thr <- parseThreadId
                   return $ UITraceThread snap thr,
                do keyword "tracem"
                   snap <- expressionParser
-                  addr <- P.integer command_lexer
+                  addr <- parseInteger
                   return $ UITraceAddress snap $ fromInteger addr,
                do keyword "runm"
                   snap <- expressionParser
-                  t <- thread_id_parser
-                  n <- P.integer command_lexer
+                  t <- parseThreadId
+                  n <- parseInteger
                   return $ UIRunMemory snap t n,
                do keyword "trunc"
                   hist <- expressionParser
@@ -113,17 +122,20 @@ expressionParser =
                   return $ UITruncHist hist n,
                do keyword "index"
                   hist <- expressionParser
-                  n <- P.integer command_lexer
+                  n <- parseInteger
                   return $ UIIndex hist (fromInteger n),
                do keyword "fetchmem"
                   hist <- expressionParser
-                  addr <- P.integer command_lexer
-                  size <- P.integer command_lexer
+                  addr <- parseInteger
+                  size <- parseInteger
                   return $ UIFetchMemory hist (fromInteger addr) (fromInteger size),
                do keyword "vginter"
                   hist <- expressionParser
-                  addr <- P.integer command_lexer
+                  addr <- parseInteger
                   return $ UIVGIntermediate hist (fromInteger addr),
+               do keyword "History"
+                  e <- between (P.reservedOp command_lexer "[") (P.reservedOp command_lexer "]") $ parseHistoryEntry `sepBy` (P.reservedOp command_lexer ",")
+                  return $ UILiteral $ UIValueSnapshot $ mkHistory e,
                twoExprArgParser "pair" UIPair,
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
@@ -245,6 +257,7 @@ evalExpression ws f =
             e -> UIValueError $ "wanted a list to index, got a " ++(show e)
       UIEnum start ->
           mapUIValue enumerateHistories $ UIValueList [evalExpression ws start]
+      UILiteral x -> x
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
