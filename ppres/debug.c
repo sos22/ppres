@@ -2,8 +2,11 @@
    what's gone wrong from a core dump. */
 #include <stddef.h>
 #include "pub_tool_basics.h"
+#include "pub_tool_vki.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcbase.h"
+#include "pub_tool_libcprint.h"
+#include "pub_tool_libcproc.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_tooliface.h"
 #include "libvex_guest_amd64.h"
@@ -75,4 +78,17 @@ _debug_trace_data(unsigned code, unsigned nr_args, const unsigned long *args)
 	l->code = code;
 	l->nr_args = nr_args;
 	VG_(memcpy)(l->args, args, nr_args * 8);
+}
+
+
+void
+debugger_attach(void)
+{
+	volatile int debugger_ready;
+
+	debugger_ready = 0;
+	VG_(printf)("Waiting for debugger in %d...\n", VG_(getpid)());
+	while (!debugger_ready) {
+		my_sleep(1);
+	}
 }

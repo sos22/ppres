@@ -158,6 +158,28 @@ my_sigaction(int sig, const struct vki_sigaction_base *new,
 	return res;
 }
 
+void
+my_sleep(unsigned x)
+{
+	struct {
+		time_t tv_sec;
+		long tv_nsec;
+	}ts;
+	unsigned res;
+
+	ts.tv_sec = x;
+	ts.tv_nsec = 0;
+	while (1) {
+		asm volatile ("syscall"
+			      : "=a" (res)
+			      : "0" (__NR_nanosleep),
+				"D" (&ts),
+				"S" (&ts));
+		if (res == 0)
+			return;
+	}
+}
+
 /* Safe against partial writes, but kills you if it hits any other
    errors. */
 void

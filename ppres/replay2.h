@@ -249,6 +249,7 @@ int do_snapshot(int parent_fd);
 
 long my__exit(int code);
 long my_fork(void);
+void my_sleep(unsigned x);
 int socketpair(int domain, int type, int protocol, int *fds);
 void safeish_write(int fd, const void *buffer, size_t buffer_size);
 void safeish_read(int fd, void *buffer, size_t buffer_size);
@@ -336,6 +337,8 @@ void _debug_trace_data(unsigned code, unsigned nr_args, const unsigned long *arg
 				  sizeof(_args)/sizeof(_args[0]),	\
 				  _args);				\
 	} while (0)
+
+void debugger_attach(void);
 
 /* ASSUME is like assert, in that it terminates if the argument is
    anything other than true, but it's supposed to be a hint that we're
