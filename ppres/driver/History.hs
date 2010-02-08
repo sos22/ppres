@@ -1,6 +1,6 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History, HistoryEntry(..),
-               mkHistory) where
+               mkHistory, historyDiff, applyHistoryDiff, HistoryDiff) where
 
 import Control.Monad
 
@@ -11,6 +11,85 @@ data HistoryEntry = HistoryRun (Topped EpochNr)
                   | HistoryRunThread ThreadId
                   | HistoryRunMemory ThreadId Integer
                     deriving (Eq, Show)
+
+{- A history diff is a representation of a function of type
+   History->Maybe History where the intent is that the result is the
+   old history with some fixups applied.  It has three parts:
+
+   -- An old suffix which is to be stripped from the end of the old
+      history.
+
+   -- An optional record counter.  Once the old suffix has been
+      stripped, the final entry in the old history, which must be a
+      finite HistoryRun, will have this number added to its target
+      record number.  If that makes the target negative (which implies
+      that this number is negative) then the apply fails.
+
+   -- A new suffix which is to be added.
+
+   If the diff doesn't apply, the result is Nothing.
+-}
+data HistoryDiff = HistoryDiff { hd_old_suffix :: [HistoryEntry],
+                                 hd_record_fixup :: Maybe EpochNr,
+                                 hd_new_suffix :: [HistoryEntry] } deriving Show
+
+{- Compute a history diff.  There is a trivial diff from a to b which
+   is always valid, which is just to take the old suffix as the
+   entirety of a and the new one as the entirety of b, with no fixup,
+   but that's pretty useless, so we try to do a bit better than that. -}
+historyDiff :: History -> History -> HistoryDiff
+historyDiff (History as') (History bs') =
+    worker as' bs'
+    where
+      worker aas@(a:as) bbs@(b:bs)
+          | a == b = worker as bs {- Strip identical prefix -}
+          | otherwise =
+              case (a, b) of
+                (HistoryRun (Finite a_target), HistoryRun (Finite b_target)) ->
+                    HistoryDiff { hd_old_suffix = as,
+                                  hd_record_fixup = Just $ b_target - a_target,
+                                  hd_new_suffix = bs }
+                _ -> HistoryDiff { hd_old_suffix = aas,
+                                   hd_record_fixup = Nothing,
+                                   hd_new_suffix = bbs }
+
+      worker as bs =
+          {- One of the histories was a prefix of the other.  Each
+             case. -}
+          HistoryDiff { hd_old_suffix = as,
+                        hd_record_fixup = Nothing,
+                        hd_new_suffix = bs }
+
+applyHistoryDiff :: HistoryDiff -> History -> Maybe History
+applyHistoryDiff hd (History base) =
+    let revbase = reverse base
+        old_suffix = reverse $ hd_old_suffix hd
+
+        {- Slightly misnamed, because it works on the reversed history
+           and suffix, and so mechanically it removes a shared
+           *prefix*.  It's the suffix of the original history,
+           though. -}
+        {- Try to match the first and second arguments together.
+           Whenever they match, strip that item and proceed.  If we
+           get to the end of the second list, return Just the first.
+           If we don't get to the end, return Nothing. -}
+        strip_suffix b [] = Just b
+        strip_suffix (a:as) (b:bs) | a == b = strip_suffix as bs
+                                   | otherwise = Nothing
+        strip_suffix [] _ = Nothing
+
+        apply_record_fixup :: Maybe EpochNr -> [HistoryEntry] -> Maybe [HistoryEntry]
+        apply_record_fixup Nothing x = Just x
+        apply_record_fixup (Just fixup) ((HistoryRun (Finite x)):others) =
+            let newx = fixup + x
+            in if newx < 0 then Nothing
+               else if newx == 0 then Just others
+                    else Just $ (HistoryRun (Finite newx)):others
+        apply_record_fixup _ _ = Nothing
+
+    in do no_suffix <- strip_suffix revbase old_suffix
+          no_suffix_fixed <- apply_record_fixup (hd_record_fixup hd) no_suffix
+          return $ mkHistory $ reverse $ (reverse $ hd_new_suffix hd) ++ no_suffix_fixed
 
 data History = History [HistoryEntry] deriving (Show, Eq)
 
