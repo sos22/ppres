@@ -195,6 +195,11 @@ struct replay_thread {
 	Bool in_monitor;
 	Bool blocked;
 
+	/* The RIP last time we ran an instruction in this thread.
+	   Collected from the footstep events.  Ignores monitor
+	   events. */
+	Word last_rip;
+
 	struct interpret_state interpret_state;
 };
 

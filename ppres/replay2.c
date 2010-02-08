@@ -501,6 +501,7 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
 	       unsigned long xmm0a)
 {
 	if (!current_thread->in_monitor) {
+		current_thread->last_rip = rip;
 		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
 		if (use_footsteps)
 			event(EVENT_footstep, rip, rdx, rcx, rax, xmm3a,
@@ -681,7 +682,8 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_epoch_nr);
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_epoch_nr,
+			       rt->last_rip);
 	send_okay();
 }
 

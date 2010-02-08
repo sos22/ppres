@@ -153,11 +153,12 @@ takeSnapshot worker =
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
-        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_epoch]) <- consume
+        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_epoch, last_rip]) <- consume
                        return (fromIntegral $ tid,
                                ThreadState (is_dead /= 0)
                                            (is_blocked /= 0)
-                                           (EpochNr $ fromIntegral last_epoch))
+                                           (EpochNr $ fromIntegral last_epoch)
+                                           last_rip)
     in
       do (ResponsePacket s params) <-
              sendWorkerCommand worker (ControlPacket 0x123b [])

@@ -145,7 +145,8 @@ data ReplayState = ReplayStateOkay EpochNr
 
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,
-                                 ts_last_epoch :: EpochNr } deriving Show
+                                 ts_last_epoch :: EpochNr,
+                                 ts_last_rip :: Word64 } deriving Show
 
 instance Monad (Either a) where
     return x = Right x
