@@ -54,7 +54,7 @@ historyDiff (History as') (History bs') =
                                    hd_new_suffix = bbs }
 
       worker as bs =
-          {- One of the histories was a prefix of the other.  Each
+          {- One of the histories was a prefix of the other.  Easy
              case. -}
           HistoryDiff { hd_old_suffix = as,
                         hd_record_fixup = Nothing,
