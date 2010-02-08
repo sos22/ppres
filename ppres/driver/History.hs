@@ -29,9 +29,24 @@ data HistoryEntry = HistoryRun (Topped EpochNr)
 
    If the diff doesn't apply, the result is Nothing.
 -}
+{- Caution: the history entries in the lists are *relative*, whereas
+   everywhere else they're absolute -}
 data HistoryDiff = HistoryDiff { hd_old_suffix :: [HistoryEntry],
                                  hd_record_fixup :: Maybe EpochNr,
                                  hd_new_suffix :: [HistoryEntry] } deriving Show
+
+{- Convert all of the epoch numbers in a history to be relative to the
+   previous record. -}
+relativeHistory :: [HistoryEntry] -> Topped EpochNr -> [HistoryEntry]
+relativeHistory []                      _    = []
+relativeHistory ((HistoryRun x):others) base = HistoryRun (x - base):(relativeHistory others x)
+relativeHistory (x             :y)      base = x:(relativeHistory y base)
+
+{- Inverse -}
+absoluteHistory :: [HistoryEntry] -> Topped EpochNr -> [HistoryEntry]
+absoluteHistory []                      _    = []
+absoluteHistory ((HistoryRun x):others) base = HistoryRun (x + base):(absoluteHistory others x)
+absoluteHistory (x             :y)      base = x:(absoluteHistory y base)
 
 {- Compute a history diff.  There is a trivial diff from a to b which
    is always valid, which is just to take the old suffix as the
@@ -39,7 +54,7 @@ data HistoryDiff = HistoryDiff { hd_old_suffix :: [HistoryEntry],
    but that's pretty useless, so we try to do a bit better than that. -}
 historyDiff :: History -> History -> HistoryDiff
 historyDiff (History as') (History bs') =
-    worker as' bs'
+    worker (relativeHistory as' 0) (relativeHistory bs' 0)
     where
       worker aas@(a:as) bbs@(b:bs)
           | a == b = worker as bs {- Strip identical prefix -}
@@ -62,7 +77,7 @@ historyDiff (History as') (History bs') =
 
 applyHistoryDiff :: HistoryDiff -> History -> Maybe History
 applyHistoryDiff hd (History base) =
-    let revbase = reverse base
+    let revbase = reverse $ relativeHistory base 0
         old_suffix = reverse $ hd_old_suffix hd
 
         {- Slightly misnamed, because it works on the reversed history
@@ -89,7 +104,7 @@ applyHistoryDiff hd (History base) =
 
     in do no_suffix <- strip_suffix revbase old_suffix
           no_suffix_fixed <- apply_record_fixup (hd_record_fixup hd) no_suffix
-          return $ mkHistory $ reverse $ (reverse $ hd_new_suffix hd) ++ no_suffix_fixed
+          return $ mkHistory $ absoluteHistory (reverse $ (reverse $ hd_new_suffix hd) ++ no_suffix_fixed) 0
 
 data History = History [HistoryEntry] deriving (Show, Eq)
 
