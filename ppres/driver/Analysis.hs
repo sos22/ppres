@@ -358,11 +358,11 @@ advanceHist hist =
    need to emit anything for threads which don't have any races in
    them.
 -}
-enumerateHistoriesSmallStep :: (History,RacePoint) -> [(History, RacePoint)] -> [(History, RacePoint)]
-enumerateHistoriesSmallStep (start, current_race) trailer =
+enumerateHistoriesSmallStep :: History -> [History] -> [History]
+enumerateHistoriesSmallStep start trailer =
     case replayState start of
       ReplayStateFailed _ _ _ _ _ -> trailer
-      ReplayStateFinished -> [(start, current_race)]
+      ReplayStateFinished -> [start]
       ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
               trace_for_thread t = snd $ traceThread start t
@@ -403,58 +403,40 @@ enumerateHistoriesSmallStep (start, current_race) trailer =
               thread_actions = map thread_action threads
               result =
                   foldr deMaybe trailer thread_actions
-                  where deMaybe (Just x) y = (x,current_race):y
+                  where deMaybe (Just x) y = x:y
                         deMaybe Nothing y = y
           in result
-
-data RacePoint = RacePoint { rp_hist :: History,
-                             rp_epoch :: EpochNr } deriving Show
-
-instance Forcable RacePoint where
-    force rp = force (rp_hist rp) . force (rp_epoch rp)
 
 {- Enumerate big-step advances we can make in the history.  This
    means, basically, running the log as far as we can in
    trace-directed mode, and then backtracking one epoch at a time when
    we get a failure. -}
-enumerateHistoriesBigStep :: (History, RacePoint) -> [(History, RacePoint)] -> [(History, RacePoint)]
-enumerateHistoriesBigStep (start, candidate_for) trailer =
+enumerateHistoriesBigStep :: History -> [History] -> [History]
+enumerateHistoriesBigStep start trailer =
     case replayState start of
-      ReplayStateFinished -> [(start, candidate_for)]
+      ReplayStateFinished -> [start]
       ReplayStateFailed _ _ _ _ _ -> trailer
       ReplayStateOkay start_epoch ->
           case replayState $ run start Infinity of
             ReplayStateFinished ->
                 {- We're done; no point exploring any further -}
-                [(run start Infinity, candidate_for)]
+                [run start Infinity]
             ReplayStateOkay _ -> error "replay got lost somewhere?"
             ReplayStateFailed _ _ _ fail_epoch _ ->
-                let ss_starts = zip [if e == start_epoch
-                                     then start 
-                                     else run start (Finite e) | e <- reverse [start_epoch..fail_epoch]] $
-                                repeat candidate_for
+                let ss_starts = [if e == start_epoch
+                                 then start 
+                                 else run start (Finite e) | e <- reverse [start_epoch..fail_epoch]]
                 in foldr enumerateHistoriesSmallStep trailer ss_starts
 
 {- Exhaustively explore all future schedulings available from hist and
    return the first successful one (or Nothing, if we can't find
    anything. -}
-enumerateHistories' :: [(History, RacePoint)] -> Maybe History
-enumerateHistories' [] = Nothing
-enumerateHistories' ((a, current_race):as) =
-    force current_race $ 
+enumerateHistories :: [History] -> Maybe History
+enumerateHistories [] = Nothing
+enumerateHistories (a:as) =
+    dt ("explore " ++ (show a)) $
     case replayState a of
-      ReplayStateFinished ->  -- We're done
-          Just a
-      ReplayStateFailed _ _ _ _ _ -> -- Strip off any which have already failed
-          enumerateHistories' as
-      ReplayStateOkay progress -> -- we have to do something more clever
-          let new_race = if progress > rp_epoch current_race + 5
-                         then dt ("progress: went from " ++ (show $ rp_hist current_race) ++ " at " ++ (show $ rp_epoch current_race) ++ " to " ++ (show a) ++ " at " ++ (show progress)) $
-                              RacePoint { rp_hist = a, rp_epoch = progress}
-                         else current_race
-          in enumerateHistories' $ enumerateHistoriesBigStep (a, new_race) as
-          
-
-enumerateHistories :: History -> Maybe History
-enumerateHistories hist = enumerateHistories' [(hist, RacePoint { rp_hist = hist,
-                                                                  rp_epoch = 0 })]
+      ReplayStateFinished -> Just a -- We're done
+      ReplayStateFailed _ _ _ _ _ -> enumerateHistories as -- Strip off any which have already failed
+      ReplayStateOkay _ -> -- we have to do something more clever
+          enumerateHistories $ enumerateHistoriesBigStep a as

@@ -268,7 +268,7 @@ evalExpression ws f =
                 else lst'!!idx
             e -> UIValueError $ "wanted a list to index, got a " ++(show e)
       UIEnum start ->
-          mapUIValue enumerateHistories $ evalExpression ws start
+          mapUIValue enumerateHistories $ UIValueList [evalExpression ws start]
       UILiteral x -> x
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
