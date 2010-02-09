@@ -92,3 +92,24 @@ debugger_attach(void)
 		my_sleep(1);
 	}
 }
+
+/* Valgrind requires that the FPU control word have a particular value
+   whenever you run generated code.  We extend that to say that it
+   must always have a particular value at all times, so that it's
+   easier to check it as you're running. */
+void
+check_fpu_control(void)
+{
+	unsigned short ctrl;
+
+	asm volatile("fnstcw %0" : "=m" (ctrl));
+
+	tl_assert(ctrl == 0x27f);
+}
+
+void
+load_fpu_control(void)
+{
+	unsigned short ctrl = 0x27f;
+	asm volatile("fldcw %0" :: "m" (ctrl));
+}

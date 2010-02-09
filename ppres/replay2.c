@@ -459,9 +459,11 @@ run_thread(struct replay_thread *rt, struct client_event_record *cer)
 	} else {
 		VG_(interpret) = NULL;
 	}
+	check_fpu_control();
 	run_coroutine(&replay_machine,
 		      &rt->coroutine,
 		      "run_thread");
+	check_fpu_control();
 
 	tl_assert(cer == client_event);
 	tl_assert(rt == current_thread);
@@ -479,9 +481,11 @@ _client_event(void)
 {
 	tl_assert(VG_(in_generated_code));
 	VG_(in_generated_code) = False;
+	check_fpu_control();
 	run_coroutine(&current_thread->coroutine,
 		      &replay_machine,
 		      "_client_event");
+	check_fpu_control();
 	tl_assert(VG_(running_tid) == current_thread->id);
 	VG_(in_generated_code) = True;
 }
@@ -500,6 +504,7 @@ void
 footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
 	       unsigned long xmm0a)
 {
+	check_fpu_control();
 	if (!current_thread->in_monitor) {
 		current_thread->last_rip = rip;
 		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
@@ -507,11 +512,13 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
 			event(EVENT_footstep, rip, rdx, rcx, rax, xmm3a,
 			      xmm0a);
 	}
+	check_fpu_control();
 }
 
 void
 syscall_event(VexGuestAMD64State *state)
 {
+	check_fpu_control();
 	/* This needs to be kept in sync with the variant at the end
 	   of interpret_log_control_flow() */
 	if (current_thread->in_monitor) {
@@ -534,6 +541,7 @@ syscall_event(VexGuestAMD64State *state)
 					/* Hmm... */
 					if (state->guest_RAX != -EWOULDBLOCK)
 						event(EVENT_unblocked);
+					check_fpu_control();
 					return;
 				}
 			}
@@ -541,21 +549,25 @@ syscall_event(VexGuestAMD64State *state)
 		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	}
+	check_fpu_control();
 }
 
 static ULong
 rdtsc_event(void)
 {
+	check_fpu_control();
 	if (current_thread->in_monitor) {
 		/* This is obviously non-deterministic.  We rely on
 		   the in-client monitor code to do the right
 		   thing. */
 		unsigned eax, edx;
 		__asm__ __volatile__("rdtsc" : "=a" (eax), "=d" (edx));
+		check_fpu_control();
 		return (((ULong)edx) << 32) | ((ULong)eax);
 	} else {
 		TRACE(RDTSC);
 		event(EVENT_rdtsc);
+		check_fpu_control();
 		return current_thread->rdtsc_result;
 	}
 }
@@ -565,8 +577,11 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 	   unsigned long rsp)
 {
 	VG_(memcpy)(read_bytes, ptr, size);
-	if (IS_STACK(ptr, rsp))
+	check_fpu_control();
+	if (IS_STACK(ptr, rsp)) {
+		check_fpu_control();
 		return;
+	}
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
@@ -582,6 +597,7 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 		event(EVENT_load, (unsigned long)ptr, size,
 		      (unsigned long)read_bytes);
 	}
+	check_fpu_control();
 }
 
 void
@@ -589,8 +605,11 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 	    unsigned long rsp)
 {
 	VG_(memcpy)(ptr, written_bytes, size);
-	if (IS_STACK(ptr, rsp))
+	check_fpu_control();
+	if (IS_STACK(ptr, rsp)) {
+		check_fpu_control();
 		return;
+	}
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
 	    (trace_mode && !current_thread->in_monitor))
@@ -606,11 +625,13 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 		event(EVENT_store, (unsigned long)ptr, size,
 		      (unsigned long)written_bytes);
 	}
+	check_fpu_control();
 }
 
 Bool
 client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 {
+	check_fpu_control();
 	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
 		/* We are in generated code here, despite what
 		   Valgrind might think about it. */
@@ -637,6 +658,7 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 				VG_(interpret) = interpret_log_control_flow;
 		}
 	}
+	check_fpu_control();
 	return False;
 }
 
@@ -1351,8 +1373,10 @@ init(void)
 	head_thread->id = 1;
 	initialise_coroutine(&head_thread->coroutine, "head thread");
 
+	check_fpu_control();
 	run_coroutine(&head_thread->coroutine, &replay_machine,
 		      "start of day");
+	check_fpu_control();
 
 	VG_(running_tid) = VG_INVALID_THREADID;
 }
@@ -1376,9 +1400,11 @@ new_thread_starting(void)
 	newly_spawning_thread->next = head_thread;
 	head_thread = newly_spawning_thread;
 
+	check_fpu_control();
 	run_coroutine(&newly_spawning_thread->coroutine,
 		      &creating_thread_coroutine,
 		      "new_thread_starting");
+	check_fpu_control();
 }
 
 /* We tweak Valgrind to call this rather than the normal sys_clone()
@@ -1411,9 +1437,11 @@ replay_clone_syscall(Word (*fn)(void *),
 		       arg);
 
 	/* Get it going. */
+	check_fpu_control();
 	run_coroutine(&creating_thread_coroutine,
 		      &newly_spawning_thread->coroutine,
 		      "create new thread");
+	check_fpu_control();
 
 	VG_(running_tid) = VG_INVALID_THREADID;
 
@@ -1457,6 +1485,9 @@ static void
 pre_clo_init(void)
 {
 	static unsigned char replay_machine_stack[16384];
+
+	load_fpu_control();
+
 	make_coroutine(&replay_machine,
 		       "replay machine",
 		       replay_machine_stack,

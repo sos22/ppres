@@ -342,8 +342,9 @@ void _debug_trace_data(unsigned code, unsigned nr_args, const unsigned long *arg
 				  sizeof(_args)/sizeof(_args[0]),	\
 				  _args);				\
 	} while (0)
-
 void debugger_attach(void);
+void check_fpu_control(void);
+void load_fpu_control(void);
 
 /* ASSUME is like assert, in that it terminates if the argument is
    anything other than true, but it's supposed to be a hint that we're
