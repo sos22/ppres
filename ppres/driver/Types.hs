@@ -234,3 +234,7 @@ instance Forcable Integer where
 
 instance Forcable Bool where
     force = seq
+
+instance Forcable x => Forcable (Maybe x) where
+    force Nothing = id
+    force (Just x) = force x

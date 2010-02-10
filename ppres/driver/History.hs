@@ -8,8 +8,8 @@ import Types
 import Worker
 
 data HistoryEntry = HistoryRun (Topped EpochNr)
-                  | HistoryRunThread ThreadId
-                  | HistoryRunMemory ThreadId Integer
+                  | HistoryRunMemory Integer
+                  | HistorySetThread ThreadId
                     deriving (Eq, Show, Read)
 
 {- A history diff is a representation of a function of type
@@ -109,7 +109,7 @@ applyHistoryDiff hd (History base) =
 data History = History [HistoryEntry] deriving (Show, Eq, Read)
 
 mkHistory :: [HistoryEntry] -> History
-mkHistory = History
+mkHistory h = History h
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
 doHistoryEntry w (HistoryRun cntr) =
@@ -127,9 +127,9 @@ doHistoryEntry w (HistoryRun cntr) =
                   ReplayStateOkay e' -> return $ deEpoch $ e' - e + 1
          ReplayStateFinished -> return 1
          ReplayStateFailed _ _ _ _ _ -> return 1
-doHistoryEntry w (HistoryRunThread tid) = traceThreadWorker w tid >> return 1
-doHistoryEntry w (HistoryRunMemory tid cntr) =
-    runMemoryWorker w tid cntr >> return cntr
+doHistoryEntry w (HistorySetThread tid) = setThreadWorker w tid >> return 1
+doHistoryEntry w (HistoryRunMemory cntr) =
+    runMemoryWorker w cntr >> return cntr
 
 stripSharedPrefix :: History -> History -> (History, History)
 stripSharedPrefix (History aa) (History bb) =
@@ -144,12 +144,10 @@ stripSharedPrefix (History aa) (History bb) =
                          if an < bn
                          then worker as bbs
                          else worker aas bs
-                     (HistoryRunMemory atid acntr,
-                      HistoryRunMemory btid bcntr) | atid == btid ->
+                     (HistoryRunMemory acntr, HistoryRunMemory bcntr) ->
                          if acntr < bcntr
-                         then worker as ((HistoryRunMemory btid $ bcntr - acntr):bs)
-                         else worker ((HistoryRunMemory atid $ acntr - bcntr):as) bs
-
+                         then worker as bbs
+                         else worker aas bs
                      _ -> ((a:as), (b:bs))
 
 {- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
@@ -176,37 +174,53 @@ fixupWorkerForHist w current desired =
 appendHistory :: History -> HistoryEntry -> History
 appendHistory (History []) he = History [he]
 appendHistory (History h) he =
-    History $ 
-    let (hl:hrest) = reverse h
-    in case (hl, he) of
-         (HistoryRun x, HistoryRun y) ->
-             if x == y
-             then h
-             else if x < y
-                  then reverse $ (HistoryRun y):hrest
-                  else error "appendHistory tried to go backwards in time!"
-         (HistoryRunMemory xtid xcntr, HistoryRunMemory ytid ycntr)
-             | xtid == ytid ->
-                 reverse $ (HistoryRunMemory xtid (xcntr + ycntr)):hrest
-         _ -> reverse $ he:hl:hrest
-
+    let revh = reverse h
+        lastThread [] = Just 1
+        lastThread ((HistoryRun _):_) = Nothing
+        lastThread ((HistoryRunMemory _):x) = lastThread x
+        lastThread ((HistorySetThread x):_) = Just x
+        (hl:hrest) = revh
+        h' = case (hl, he) of
+               (HistoryRun x, HistoryRun y) ->
+                   if x == y
+                   then h
+                   else if x < y
+                        then reverse $ (HistoryRun y):hrest
+                        else error "appendHistory tried to go backwards in time!"
+               (HistoryRunMemory xcntr, HistoryRunMemory ycntr) ->
+                   if xcntr == ycntr
+                   then h
+                   else if xcntr < ycntr
+                        then reverse $ (HistoryRunMemory ycntr):hrest
+                        else error "appendHistory tried to undo memory accesses"
+               (HistorySetThread _, HistorySetThread lt) ->
+                   if Just lt == lastThread hrest
+                   then reverse hrest
+                   else reverse $ he:hrest
+               (_, HistorySetThread lt) ->
+                   if Just lt == lastThread revh
+                   then h
+                   else reverse $ he:revh
+               _ -> reverse $ he:revh
+        res = History h'
+    in res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped EpochNr -> History
 truncateHistory (History hs) cntr =
-    History $ worker hs
+    History (worker hs)
     where worker [HistoryRun Infinity] = [HistoryRun cntr]
           worker ((HistoryRun c):hs') =
               if c < cntr then (HistoryRun c):(worker hs')
               else [HistoryRun cntr]
-          worker ((h@(HistoryRunMemory _ _)):hs') = h:(worker hs')
+          worker (h:hs') = h:(worker hs')
           worker _ = error $ "truncate bad history " ++ (show hs)
 
 
 instance Forcable HistoryEntry where
     force (HistoryRun t) = force t
-    force (HistoryRunThread t) = force t
-    force (HistoryRunMemory t i) = force t . force i
+    force (HistorySetThread t) = force t
+    force (HistoryRunMemory i) = force i
 
 instance Forcable History where
     force (History h) = force h

@@ -4,9 +4,10 @@
    are responsible for mapping them into Workers as and when
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, run,
-                   trace, traceThread, traceAddress, runMemory,
+                   trace, traceAddress, runMemory,
                    threadState, replayState, controlTrace,
-                   fetchMemory, vgIntermediate, nextThread) where
+                   fetchMemory, vgIntermediate, nextThread,
+                   setThread) where
 
 import Data.Word
 import Control.Monad.State
@@ -180,20 +181,15 @@ trace start cntr =
     dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
-traceThread :: History -> ThreadId -> (History, [TraceRecord])
-traceThread start thr =
-    dt ("traceThread " ++ (show start) ++ " " ++ (show thr)) $
-    traceCmd (HistoryRunThread thr) start $ \worker -> traceThreadWorker worker thr
-
 traceAddress :: History -> Word64 -> (History, [TraceRecord])
 traceAddress start addr =
     traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr
 
-runMemory :: History -> ThreadId -> Integer -> (History, [TraceRecord])
-runMemory start tid cntr =
-    dt ("runMemory " ++ (show start) ++ " " ++ (show tid) ++ " " ++ (show cntr)) $
-    traceCmd (HistoryRunMemory tid cntr) start $
-            \worker -> runMemoryWorker worker tid cntr
+runMemory :: History -> Integer -> (History, [TraceRecord])
+runMemory start cntr =
+    dt ("runMemory " ++ (show start) ++ " " ++ (show cntr)) $
+    traceCmd (HistoryRunMemory cntr) start $
+            \worker -> runMemoryWorker worker cntr
 
 queryCmd :: History -> (Worker -> IO a) -> a
 queryCmd hist w =
@@ -225,3 +221,6 @@ vgIntermediate hist addr =
 nextThread :: History -> ThreadId
 nextThread hist =
     dt ("nextThread " ++ (show hist)) $ queryCmd hist nextThreadWorker
+
+setThread :: History -> ThreadId -> History
+setThread hist tid = appendHistory hist $ HistorySetThread tid

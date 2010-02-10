@@ -6,14 +6,15 @@
 #define WORKER_RUN 0x1236
 #define WORKER_TRACE 0x1237
 #define WORKER_RUNM 0x1238
-#define WORKER_TRACE_THREAD 0x1239
+
 #define WORKER_TRACE_ADDRESS 0x123a
 #define WORKER_THREAD_STATE 0x123b
 #define WORKER_REPLAY_STATE 0x123c
 #define WORKER_CONTROL_TRACE 0x123d
 #define WORKER_GET_MEMORY 0x123e
 #define WORKER_VG_INTERMEDIATE 0x123f
-#define WORKER_GET_NEXT_THREAD 0x1240
+#define WORKER_GET_THREAD 0x1240
+#define WORKER_SET_THREAD 0x1241
 
 struct command_header {
 	unsigned command;
@@ -223,12 +224,8 @@ struct control_command {
 			long nr;
 		} control_trace;
 		struct {
-			long thread;
 			long nr;
 		} runm;
-		struct {
-			long thread;
-		} trace_thread;
 		struct {
 			long address;
 		} trace_mem;
@@ -239,6 +236,9 @@ struct control_command {
 		struct {
 			unsigned long addr;
 		} vg_intermediate;
+		struct {
+			long tid;
+		} set_thread;
 	} u;
 };
 

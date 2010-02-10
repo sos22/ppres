@@ -103,6 +103,18 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 live_threads :: History -> [ThreadId]
 live_threads _ = [1,2]
 
+traceThread :: History -> ThreadId -> [TraceRecord]
+traceThread start thr =
+    let cur_record = case replayState start of
+                       ReplayStateOkay x -> Finite x
+                       ReplayStateFinished -> Infinity
+                       ReplayStateFailed _ _ _ e _ -> Finite e
+    in snd $ trace (appendHistory start $ HistorySetThread thr) (cur_record + 1)
+
+runMemoryThread :: History -> ThreadId -> Integer -> (History, [TraceRecord])
+runMemoryThread start tid cntr =
+    runMemory (appendHistory start (HistorySetThread tid)) cntr
+
 fixControlHistoryL :: History -> [[History]]
 fixControlHistoryL start =
     let (ReplayStateFailed _ _ dead_thread epoch_nr _) = replayState start
@@ -111,7 +123,7 @@ fixControlHistoryL start =
                 criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
                 otherThreads = [x | x <- live_threads start, x /= dead_thread]
                 otherStoresForThread t =
-                    [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- snd $ traceThread prefix t]
+                    [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- traceThread prefix t]
                 storeSatisfiesExpression (ptr,val,_) (expr, v) =
                     evalExpressionWithStore expr [(ptr,val)] /= v
                 satisfiedExpressions st =
@@ -120,7 +132,7 @@ fixControlHistoryL start =
                     concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
                             | t <- otherThreads]
                 tryStore ((_, _, (TraceLocation _ _ acc thr)), _) =
-                    run (fst $ runMemory prefix thr (acc + 1)) Infinity
+                    run (fst $ runMemoryThread prefix thr (acc + 1)) Infinity
             in map tryStore interestingStores
         allProbes = map probes_order_n [1..32]
     in allProbes
@@ -266,10 +278,10 @@ findCritPairs hist =
 flipPair :: History -> (TraceLocation, TraceLocation) -> History
 flipPair start (post, pre) =
     let (prefix, trc) =
-            runMemory (truncateHistory start $ Finite $ trc_epoch post)
-                          (trc_thread post) (trc_access post)
+            runMemoryThread (truncateHistory start $ Finite $ trc_epoch post)
+                                (trc_thread post) (trc_access post)
         (res, trc2) =
-            runMemory prefix (trc_thread pre) (trc_access pre + 1)
+            runMemoryThread prefix (trc_thread pre) (trc_access pre + 1)
     in dt ("flipPair " ++ (show post) ++ " " ++ (show pre)) $
        dt ("trc1 " ++ (show trc)) $
        dt ("trc2 " ++ (show trc2)) $
@@ -366,46 +378,57 @@ enumerateHistoriesSmallStep start trailer =
       ReplayStateFinished -> [start]
       ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
-              trace_for_thread t = snd $ traceThread start t
+              trace_for_thread t = traceThread start t
               footstep_is_mem (TraceLoad _ _ _ False) = True
               footstep_is_mem (TraceStore _ _ _ False) = True
               footstep_is_mem _ = False
-              memtrace_for_thread' = filter footstep_is_mem . map trc_trc . trace_for_thread
+              memtrace_for_thread' = filter (footstep_is_mem . trc_trc) . trace_for_thread
               thread_traces = zip threads $ map memtrace_for_thread' threads
-              memtrace_for_thread t =
+              memtrace_for_thread m t =
                   case lookup t thread_traces of
                     Just x -> x
-                    Nothing -> error "lost a thread somewhere"
+                    Nothing -> error $ "lost a thread somewhere, wanted " ++ (show t) ++ ", had " ++ (show thread_traces) ++ " (" ++ m ++ ")"
 
-              {- The index of the first racing access in a given
-                 thread, or Nothing if there are no races in that
-                 thread. -}
-              racing_access_for_thread :: ThreadId -> Maybe Integer
+              {- A list of racing accesses which we want to
+                 investigate in this thread.  An entry (x, y) in the
+                 list means to run thread t to access x and then
+                 switch to thread y.  We only need to consider one x
+                 for each y, and it will be the earliest access such
+                 that access x in this thread races with some access
+                 in thread y. -}
+
+              racing_access_for_thread :: ThreadId -> [(Integer, ThreadId)]
               racing_access_for_thread t =
-                  let access_races i =
-                          let overlapping_accesses ptr =
-                                  [x | t' <- threads, t' /= t, x <- memtrace_for_thread t', access_overlaps x]
-                                  where access_overlaps (TraceLoad _ _ ptr' _) = ptr' == ptr
-                                        access_overlaps (TraceStore _ _ ptr' _) = ptr' == ptr
-                                        access_overlaps _ = False
-                          in case (memtrace_for_thread t)!!i of
-                               (TraceLoad _ _ ptr _) ->
-                                   or $ map isStore $ overlapping_accesses ptr
-                                   where isStore (TraceStore _ _ _ _) = True
-                                         isStore _ = False
-                               (TraceStore _ _ ptr _) ->
-                                   or $ map (const True) $ overlapping_accesses ptr
-                               _ -> error "strange kind of memory trace record"
-                  in fmap (toInteger  . (1 + )) $ elemIndex True $ map access_races [0..((length $ memtrace_for_thread t)-1)]
-              thread_action t =
-                  case racing_access_for_thread t of
-                    Just i -> Just $ fst $ runMemory start t i
-                    Nothing -> Nothing
-              thread_actions = map thread_action threads
-              result =
-                  foldr deMaybe trailer thread_actions
-                  where deMaybe (Just x) y = x:y
-                        deMaybe Nothing y = y
+                  let races_with_thread t' =
+                          let racingAccesses =
+                                  filter (isRace . trc_trc) $ memtrace_for_thread ("t = " ++ (show t) ++ ", t' " ++ (show t')) t
+                                  where isRace (TraceLoad _ _ ptr _) =
+                                            or $ map (isStore . trc_trc) $ overlapping_accesses ptr
+                                        isRace (TraceStore _ _ ptr _) =
+                                            case overlapping_accesses ptr of
+                                              [] -> False
+                                              _ -> True
+                                        isRace _ = False
+                                        isStore (TraceStore _ _ _ _) = True
+                                        isStore _ = False
+                                        overlapping_accesses ptr = filter (access_overlaps . trc_trc) $ memtrace_for_thread ("overlap with " ++ (show t')) t'
+                                                                   where
+                                                                     access_overlaps (TraceLoad _ _ ptr' _) = ptr' == ptr
+                                                                     access_overlaps (TraceStore _ _ ptr' _) = ptr' == ptr
+                                                                     access_overlaps _ = False
+                          in map (trc_access . trc_loc) racingAccesses
+                      entry_for_thread t' =
+                          case races_with_thread t' of
+                            [] -> Nothing
+                            (x:_) -> Just (x, t')
+                      maybeEntries = map entry_for_thread $ filter ((/=) t) threads
+                      deMaybe (Just x) y = x:y
+                      deMaybe Nothing y = y
+                  in foldr deMaybe [] maybeEntries
+              thread_action t (acc, targ) =
+                  setThread (fst $ runMemoryThread start t (acc + 1)) targ
+              thread_actions = concat [map (thread_action t) (racing_access_for_thread t) | t <- threads]
+              result = thread_actions ++ trailer
           in result
 
 {- Enumerate big-step advances we can make in the history.  This

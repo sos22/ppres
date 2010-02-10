@@ -1,7 +1,7 @@
-module Worker(killWorker, traceThreadWorker, traceWorker, runMemoryWorker,
+module Worker(killWorker, traceWorker, runMemoryWorker,
               takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
-              vgIntermediateWorker, nextThreadWorker)
+              vgIntermediateWorker, nextThreadWorker, setThreadWorker)
     where
 
 import Data.Word
@@ -46,11 +46,8 @@ runPacket cntr = ControlPacket 0x1236 [fromEN cntr]
 tracePacket :: Topped EpochNr -> ControlPacket
 tracePacket cntr = ControlPacket 0x1237 [fromEN cntr]
 
-runMemoryPacket :: ThreadId -> Integer -> ControlPacket
-runMemoryPacket tid cntr = ControlPacket 0x1238 [fromIntegral tid, fromInteger cntr]
-
-traceThreadPacket :: ThreadId -> ControlPacket
-traceThreadPacket tid = ControlPacket 0x1239 [fromInteger tid]
+runMemoryPacket :: Integer -> ControlPacket
+runMemoryPacket cntr = ControlPacket 0x1238 [fromInteger cntr]
 
 traceAddressPacket :: Word64 -> ControlPacket
 traceAddressPacket addr = ControlPacket 0x123a [addr]
@@ -66,6 +63,9 @@ vgIntermediatePacket addr = ControlPacket 0x123f [addr]
 
 nextThreadPacket :: ControlPacket
 nextThreadPacket = ControlPacket 0x1240 []
+
+setThreadPacket :: ThreadId -> ControlPacket
+setThreadPacket tid = ControlPacket 0x1241 [fromInteger tid]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -131,14 +131,11 @@ traceCmd worker pkt =
 traceWorker :: Worker -> Topped EpochNr -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
 
-traceThreadWorker :: Worker -> ThreadId -> IO [TraceRecord]
-traceThreadWorker worker = traceCmd worker . traceThreadPacket
-
 traceAddressWorker :: Worker -> Word64 -> IO [TraceRecord]
 traceAddressWorker worker = traceCmd worker . traceAddressPacket
 
-runMemoryWorker :: Worker -> ThreadId -> Integer -> IO [TraceRecord]
-runMemoryWorker worker tid = traceCmd worker . runMemoryPacket tid
+runMemoryWorker :: Worker -> Integer -> IO [TraceRecord]
+runMemoryWorker worker = traceCmd worker . runMemoryPacket
 
 takeSnapshot :: Worker -> IO (Maybe Worker)
 takeSnapshot worker =
@@ -318,3 +315,8 @@ nextThreadWorker :: Worker -> IO ThreadId
 nextThreadWorker worker =
     do (ResponsePacket True [ResponseDataAncillary 15 [tid]]) <- sendWorkerCommand worker nextThreadPacket
        return $ fromIntegral tid
+
+setThreadWorker :: Worker -> ThreadId -> IO ()
+setThreadWorker worker tid =
+    do sendWorkerCommand worker $ setThreadPacket tid
+       return ()

@@ -20,9 +20,9 @@ import History
 data UIExpression = UIDummyFunction
                   | UIRun UIExpression (Topped EpochNr)
                   | UITrace UIExpression (Topped EpochNr)
-                  | UITraceThread UIExpression ThreadId
                   | UITraceAddress UIExpression Word64
-                  | UIRunMemory UIExpression ThreadId Integer
+                  | UIRunMemory UIExpression Integer
+                  | UISetThread UIExpression ThreadId
                   | UIDir
                   | UIVarName VariableName
                   | UIPair UIExpression UIExpression
@@ -85,12 +85,12 @@ expressionParser =
         parseInteger = P.integer command_lexer
         parseHistoryEntry = tchoice [do keyword "HistoryRun"
                                         liftM HistoryRun $ parseTopped parseEpochNr,
-                                     do keyword "HistoryRunThread"
-                                        liftM HistoryRunThread parseThreadId,
                                      do keyword "HistoryRunMemory"
-                                        t <- parseThreadId
                                         i <- parseInteger
-                                        return $ HistoryRunMemory t i]
+                                        return $ HistoryRunMemory i,
+                                     do keyword "HistorySetThread"
+                                        tid <- parseThreadId
+                                        return $ HistorySetThread tid]
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
@@ -107,19 +107,18 @@ expressionParser =
                   snap <- expressionParser
                   cntr <- topped_int
                   return $ UIControlTrace snap cntr,
-               do keyword "tracet"
-                  snap <- expressionParser
-                  thr <- parseThreadId
-                  return $ UITraceThread snap thr,
                do keyword "tracem"
                   snap <- expressionParser
                   addr <- parseInteger
                   return $ UITraceAddress snap $ fromInteger addr,
+               do keyword "setthread"
+                  snap <- expressionParser
+                  tid <- parseThreadId
+                  return $ UISetThread snap tid,
                do keyword "runm"
                   snap <- expressionParser
-                  t <- parseThreadId
                   n <- parseInteger
-                  return $ UIRunMemory snap t n,
+                  return $ UIRunMemory snap n,
                do keyword "trunc"
                   hist <- expressionParser
                   n <- topped_en
@@ -229,14 +228,14 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> run s cntr
       UITrace name cntr ->
           withSnapshot ws name $ \s -> trace s cntr
-      UITraceThread name thr ->
-          withSnapshot ws name $ \s -> traceThread s thr
       UITraceAddress name addr ->
           withSnapshot ws name $ \s -> traceAddress s addr
-      UIRunMemory name tid cntr ->
-          withSnapshot ws name $ \s -> runMemory s tid cntr
+      UIRunMemory name cntr ->
+          withSnapshot ws name $ \s -> runMemory s cntr
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
+      UISetThread snap tid ->
+          withSnapshot ws snap $ \s -> setThread s tid
       UIReplayState name -> withSnapshot ws name $ \s -> replayState s
       UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
       UIFindRacingAccesses a b ->
