@@ -51,6 +51,8 @@ data UIExpression = UIDummyFunction
 
 data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
+                  | UILoad VariableName String
+                  | UISave UIExpression String
                   | UIExit deriving Show
 
 command_lexer :: P.TokenParser ()
@@ -170,6 +172,14 @@ assignmentParser =
              do keyword "quit"
                 eof
                 return UIExit,
+             do keyword "load"
+                var <- P.identifier command_lexer
+                fname <- P.stringLiteral command_lexer
+                return $ UILoad var fname,
+             do keyword "save"
+                lhs <- expressionParser
+                fname <- P.stringLiteral command_lexer
+                return $ UISave lhs fname,
              do rhs <- expressionParser
                 eof
                 return $ UIFunction rhs
@@ -280,6 +290,19 @@ runAssignment as ws =
           let r = evalExpression ws f
               ws' = doAssignment ws "last" r
           in print r >> return ws'
+      UILoad vname fname ->
+          let isSpace ' ' = True
+              isSpace '\n' = True
+              isSpace '\r' = True
+              isSpace '\t' = True
+              isSpace _ = False
+              isAllSpace = and . map isSpace
+              safeRead x = case reads x of
+                             [(a, y)] | isAllSpace y -> a
+                             _ -> UIValueError $ "cannot parse " ++ x
+          in liftM (doAssignment ws vname . safeRead) $ readFile fname
+      UISave expr fname ->
+          writeFile fname (show $ evalExpression ws expr) >> return ws
       UIExit -> exitWorld >> return ws
 
 commandLoop :: WorldState -> IO ()

@@ -10,7 +10,7 @@ import Worker
 data HistoryEntry = HistoryRun (Topped EpochNr)
                   | HistoryRunThread ThreadId
                   | HistoryRunMemory ThreadId Integer
-                    deriving (Eq, Show)
+                    deriving (Eq, Show, Read)
 
 {- A history diff is a representation of a function of type
    History->Maybe History where the intent is that the result is the
@@ -106,7 +106,7 @@ applyHistoryDiff hd (History base) =
           no_suffix_fixed <- apply_record_fixup (hd_record_fixup hd) no_suffix
           return $ mkHistory $ absoluteHistory (reverse $ (reverse $ hd_new_suffix hd) ++ no_suffix_fixed) 0
 
-data History = History [HistoryEntry] deriving (Show, Eq)
+data History = History [HistoryEntry] deriving (Show, Eq, Read)
 
 mkHistory :: [HistoryEntry] -> History
 mkHistory = History

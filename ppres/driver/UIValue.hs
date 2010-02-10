@@ -48,6 +48,31 @@ instance Show UIValue where
     show (UIValueThreadState ts) = show ts
     show (UIValueHistoryDiff hd) = show hd
 
+first :: (a -> b) -> (a, c) -> (b, c)
+first f (x, y) = (f x, y)
+
+instance Read UIValue where
+    readsPrec _ ('(':')':x) = [(UIValueNull,x)]
+    readsPrec _ x@('0':'x':_) = map (first UIValueInteger) $ reads x
+    readsPrec _ ('{':t) = do (contents, trail1) <- reads t
+                             case trail1 of
+                               '}':trail2 -> return (contents, trail2)
+                               _ -> []
+    readsPrec _ x = do (keyword, trail1) <- lex x
+                       case keyword of
+                         "ERR" -> return (UIValueError trail1, [])
+                         "TRC" -> do (v, trail2) <- reads trail1
+                                     return (UIValueTrace v, trail2)
+                         "RS" -> do (v, trail2) <- reads trail1
+                                    return (UIValueReplayState v, trail2)
+                         "EXPR" -> do (v, trail2) <- reads trail1
+                                      return (UIValueExpression v, trail2)
+                         "BYTE" -> do (v, trail2) <- reads trail1
+                                      return (UIValueByte v, trail2)
+                         "History" -> do (v, trail2) <- reads x
+                                         return (UIValueSnapshot v, trail2)
+                         _ -> error $ "can't parse " ++ (show x)
+
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
 
