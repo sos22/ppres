@@ -533,7 +533,9 @@ syscall_event(VexGuestAMD64State *state)
 			if (futex_cmd == FUTEX_WAIT ||
 			    futex_cmd == FUTEX_WAIT_BITSET) {
 				int expected = state->guest_RDX;
-				int observed = *(int *)state->guest_RDI;
+				int observed;
+
+				load_event((int *)state->guest_RDI, 4, &observed, 0);
 				if (expected == observed) {
 					event(EVENT_blocking);
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,

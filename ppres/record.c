@@ -328,7 +328,7 @@ pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 			int expected;
 			int observed;
 			expected = syscall_args[2];
-			observed = *(int *)syscall_args[0];
+			record_load((int *)syscall_args[0], 4, &observed, 0);
 			if (expected == observed)
 				emit_record(&logfile, RECORD_thread_blocking, 0);
 			break;
