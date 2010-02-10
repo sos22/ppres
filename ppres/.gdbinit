@@ -1,5 +1,6 @@
 define dump_tracelog_entry
   set $code = ($arg0)->code
+  printf "%d ", ($arg0)->thread
   if $code == 1
     printf "footstep %lx, %lx, %lx, %lx\t", ($arg0)->args[0], ($arg0)->args[1], ($arg0)->args[2], ($arg0)->args[3]
     x/i (void *)($arg0)->args[0]
@@ -52,7 +53,7 @@ define dump_trace_arena
   while $ptr < $arena->used
     set $log_entry = (struct tracelog *)($arena->body + $ptr)
     dump_tracelog_entry $log_entry
-    set $ptr = $ptr + ($log_entry->nr_args + 1) * 8
+    set $ptr = $ptr + ($log_entry->nr_args + 2) * 8
   end
 end
 

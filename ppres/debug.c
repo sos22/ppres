@@ -33,6 +33,7 @@ debug_control_command(const struct control_command *cc)
 struct tracelog {
 	unsigned code;
 	unsigned nr_args;
+	unsigned thread;
 	unsigned long args[];
 };
 
@@ -70,13 +71,14 @@ get_tracelog(unsigned nr_args)
 }
 
 void
-_debug_trace_data(unsigned code, unsigned nr_args, const unsigned long *args)
+_debug_trace_data(unsigned code, unsigned thread, unsigned nr_args, const unsigned long *args)
 {
 	struct tracelog *l;
 
 	l = get_tracelog(nr_args);
 	l->code = code;
 	l->nr_args = nr_args;
+	l->thread = thread;
 	VG_(memcpy)(l->args, args, nr_args * 8);
 }
 

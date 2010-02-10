@@ -334,11 +334,12 @@ do {						           \
 
 
 void debug_control_command(const struct control_command *cc);
-void _debug_trace_data(unsigned code, unsigned nr_args, const unsigned long *args);
+void _debug_trace_data(unsigned code, unsigned thread, unsigned nr_args, const unsigned long *args);
 #define debug_trace_data(_code, ...)					\
 	do {								\
 		const unsigned long _args[] = {__VA_ARGS__};		\
 		_debug_trace_data((_code),				\
+				  current_thread->id,			\
 				  sizeof(_args)/sizeof(_args[0]),	\
 				  _args);				\
 	} while (0)

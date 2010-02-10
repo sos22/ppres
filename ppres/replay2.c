@@ -581,6 +581,14 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 	VG_(memcpy)(read_bytes, ptr, size);
 	check_fpu_control();
 	if (IS_STACK(ptr, rsp)) {
+		if (!current_thread->in_monitor)
+			debug_trace_data(ANCILLARY_TRACE_LOAD,
+					 size == 8 ?
+					 *(unsigned long *)read_bytes :
+					 *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
+					 size,
+					 (unsigned long)ptr,
+					 current_thread->in_monitor);
 		check_fpu_control();
 		return;
 	}
@@ -609,6 +617,14 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 	VG_(memcpy)(ptr, written_bytes, size);
 	check_fpu_control();
 	if (IS_STACK(ptr, rsp)) {
+		if (!current_thread->in_monitor)
+			debug_trace_data(ANCILLARY_TRACE_STORE,
+					 size == 8 ?
+					 *(unsigned long *)written_bytes :
+					 *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
+					 size,
+					 (unsigned long)ptr,
+					 current_thread->in_monitor);
 		check_fpu_control();
 		return;
 	}
@@ -904,16 +920,16 @@ validate_event(const struct record_header *rec,
 		switch (args[1]) {
 #define do_case(sz, typ)						\
 			case sz: {					\
-				typ *_args = (typ *)args[2];		\
-				typ *_buf = (typ *)mp;			\
+				typ *seen = (typ *)args[2];		\
+				typ *wanted = (typ *)mp;		\
 				replay_assert_eq(			\
 					reason_data(			\
 						expr_mem ## sz (	\
 							expr_const(mrr->ptr), \
-							expr_imported(*_args)), \
-						expr_const(*_buf)),	\
-					*_buf,				\
-					*_args);			\
+							expr_imported(*seen)), \
+						expr_const(*wanted)),	\
+					*seen,				\
+					*wanted);			\
 				break;					\
 			}
 			do_case(1, unsigned char)
