@@ -6,6 +6,7 @@ import Types
 import WorkerCache
 import History
 import ReplayState()
+import Timing
 
 import qualified Debug.Trace
 import Data.Bits
@@ -423,6 +424,7 @@ enumerateHistoriesBigStep start trailer =
                 [run start Infinity]
             ReplayStateOkay _ -> error "replay got lost somewhere?"
             ReplayStateFailed _ _ _ fail_epoch _ ->
+                tlog ("failed at " ++ (show fail_epoch)) $
                 let ss_starts = [if e == start_epoch
                                  then start 
                                  else run start (Finite e) | e <- reverse [start_epoch..fail_epoch]]
@@ -434,7 +436,7 @@ enumerateHistoriesBigStep start trailer =
 enumerateHistories :: [History] -> Maybe History
 enumerateHistories [] = Nothing
 enumerateHistories (a:as) =
-    dt ("explore " ++ (show a)) $
+    tlog ("explore " ++ (show a)) $
     case replayState a of
       ReplayStateFinished -> Just a -- We're done
       ReplayStateFailed _ _ _ _ _ -> enumerateHistories as -- Strip off any which have already failed
