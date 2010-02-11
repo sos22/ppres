@@ -12,9 +12,8 @@ module WorkerCache(initWorkerCache, destroyWorkerCache, run,
 import Data.Word
 import Control.Monad.State
 import Data.IORef
-import Random
-import Control.Exception
 import qualified Debug.Trace
+import Data.List
 
 import System.IO.Unsafe
 
@@ -25,13 +24,28 @@ import History
 dt :: String -> a -> a
 dt = const id
 
-data CacheGeneration = CacheGeneration { cg_max_size :: Int,
-                                         cg_workers :: IORef [(History, Worker)],
-                                         cg_parent :: Maybe CacheGeneration }
+{- We use a two level cache.  The first level is primarily for the
+   benefit of the automated search process, and has an expiry policy
+   like this:
 
-data WorkerCache = WorkerCache { wc_cache :: CacheGeneration,
+   -- If you search for X, expire everything which isn't a prefix of X.
+   -- After that, expire in FIFO order.
+
+   Stuff which expires out of the first level goes to the second
+   level, which is maintained LRU.  This level is primarily there to
+   avoid pathological behaviour if the user is driving us
+   interactively. -}
+type WorkerPool = [(History, Worker)]
+data WorkerCache = WorkerCache { wc_fifo_cache :: IORef WorkerPool,
+                                 wc_lru_cache :: IORef WorkerPool,
                                  wc_start :: Worker }
 
+
+fifoCacheSize :: Int
+fifoCacheSize = 100
+
+lruCacheSize :: Int
+lruCacheSize = 28
 
 globalWorkerCache :: IORef (Maybe WorkerCache)
 {-# NOINLINE globalWorkerCache #-}
@@ -45,73 +59,30 @@ workerCache =
          Nothing -> error "worker cache not ready"
          Just wc' -> return wc'
 
-mkCacheGeneration :: Int -> IO CacheGeneration
-mkCacheGeneration sz =
-    do w <- newIORef []
-       parent <- if sz <= 2
-                 then return Nothing
-                 else liftM Just $ mkCacheGeneration $ sz `div` 2
-       return $ CacheGeneration { cg_max_size = sz,
-                                  cg_workers = w,
-                                  cg_parent = parent }
+mkWorkerPool :: WorkerPool
+mkWorkerPool = []
 
 initWorkerCache :: Worker -> IO ()
 initWorkerCache start =
-    do cg <- mkCacheGeneration 64
-       writeIORef globalWorkerCache $ Just $ WorkerCache { wc_cache = cg,
+    do fifo <- newIORef mkWorkerPool
+       lru <- newIORef mkWorkerPool
+       writeIORef globalWorkerCache $ Just $ WorkerCache { wc_fifo_cache = fifo,
+                                                           wc_lru_cache = lru,
                                                            wc_start = start }
-
-killCacheGeneration :: CacheGeneration -> IO ()
-killCacheGeneration cg =
-    do w <- readIORef $ cg_workers cg
-       mapM_ (killWorker . snd) w
-       case cg_parent cg of
-         Nothing -> return ()
-         Just x -> killCacheGeneration x
 
 destroyWorkerCache :: IO ()
 destroyWorkerCache =
-    do wc <- workerCache
-       killCacheGeneration $ wc_cache wc
-       killWorker $ wc_start wc
-       return ()
-
-{- getBestWorkerForHist state: the best history found so far, and
-   something which gets the relevant worker and updates the cache. -}
-type GBState = (History, IO Worker)
-
-getBestWorkerForHist :: CacheGeneration -> History -> GBState -> IO GBState
-getBestWorkerForHist cg hist state =
-    let compareStates :: GBState -> GBState -> GBState
-        compareStates a@(hist1, _) b@(hist2, _) =
-            if not $ hist1 `historyPrefixOf` hist
-            then b
-            else if hist1 `historyPrefixOf` hist2
-                 then b
-                 else a
+    let killPool :: IORef WorkerPool -> IO ()
+        killPool p = readIORef p >>= mapM_ (killWorker . snd)
     in
-    do {- Search parent caches first.  It doesn't actually matter which
-          order we use, since we're going to search the whole tree anyway. -}
-       state' <- case cg_parent cg of
-                   Nothing -> return state
-                   Just parent -> getBestWorkerForHist parent hist state
-       local_workers <- readIORef $ cg_workers cg
-       let entries :: [(History, Worker)] -> [(History, Worker)] -> [GBState]
-           entries [] _ = []
-           entries ((x@(xhist,worker)):xs) o =
-               (xhist, let nl = o ++ xs
-                       in do writeIORef (cg_workers cg) nl
-                             registerWorker xhist worker
-                             return worker):(entries xs (o ++ [x]))
-       return $ foldr compareStates state' $ entries local_workers []
+    do wc <- workerCache
+       killPool $ wc_fifo_cache wc
+       killPool $ wc_lru_cache wc
+       killWorker $ wc_start wc
+       writeIORef globalWorkerCache Nothing
 
-getBestWorker :: History -> IO GBState
-getBestWorker hist =
-    do cg <- liftM wc_cache workerCache
-       getBestWorkerForHist cg hist (emptyHistory, liftM wc_start workerCache)
-
-getWorker :: History -> IO (Bool, Worker)
-getWorker hist =
+getWorker :: History -> IO Worker
+getWorker target =
 
     {- This is a bit skanky.  The problem is that hist might contain
        some thunks which will themselves perform worker cache
@@ -120,57 +91,100 @@ getWorker hist =
        we have a reference to the old cache state, which would
        potentially cause us to touch dead workers.  We avoid the issue
        completely by just forcing hist before doing anything -}
-    force hist $
+    force target $
 
-    do (best_hist, best_worker_io) <- getBestWorker hist
-       best_worker <- best_worker_io
+    do wc <- workerCache
+
+       fifo <- readIORef $ wc_fifo_cache wc
+       lru <- readIORef $ wc_lru_cache wc
+
+       let {- First, search the FIFO list, expiring as we go. -}
+           (best_fifo, new_fifo', expired_fifo) = search_fifo fifo
+           search_fifo [] = (Nothing, [], expired_fifo')
+           search_fifo ((h,w):rest) =
+               let (best_rest, new_fifo_rest, expired_rest) = search_fifo rest
+                   isPrefixOfTarget = historyPrefixOf h target
+                   new_best =
+                       if not isPrefixOfTarget
+                       then best_rest
+                       else case best_rest of
+                              Nothing -> Just (h, w)
+                              Just (best_rest_h, _) ->
+                                  if best_rest_h `historyPrefixOf` h
+                                  then Just (h, w)
+                                  else best_rest
+                   new_fifo'' = (if isPrefixOfTarget
+                                then (:) (h,w)
+                                else id) new_fifo_rest
+                   new_expired = (if isPrefixOfTarget
+                                  then id
+                                  else (:) (h, w)) expired_rest
+               in (new_best, new_fifo'', new_expired)
+           (new_fifo, expired_fifo') = splitAt (fifoCacheSize-1) new_fifo'
+
+           {- Search the current LRU, comparing to both the target and
+              the best FIFO.  sorted_lru is the current LRU list
+              sorted by goodness, except that if the best history is
+              to be found in the LRU we remove it from the list and
+              put it in best_lru.  The final result is either new_fifo
+              or new_fifo with the best from the LRU at the front. -}
+           (best_lru, sorted_lru, new_fifo_augmented) =
+               case sortBy goodnessOrdering lru of
+                 [] -> (best_fifo, [], new_fifo)
+                 xs@(x:xss) ->
+                     if historyPrefixOf (fst x) target
+                     then case best_fifo of
+                            Nothing -> (Just x, xss, x:new_fifo)
+                            Just bh ->
+                                if historyPrefixOf (fst x) (fst bh)
+                                then (Just x, xss, x:new_fifo)
+                                else (best_fifo, xs, new_fifo)
+                     else (best_fifo, xs, new_fifo)
+
+           {- Build the new LRU.  We do a kind of pull-to-front which
+              means that stuff in the LRU which could have been used
+              as a basis for the current target ends up ahead of
+              things which couldn't have been. -}
+           (new_lru, expired_lru) = splitAt lruCacheSize $ sortBy goodnessOrdering $ expired_fifo ++ sorted_lru
+
+           goodnessOrdering (x,_) (y,_) =
+               {- Is x a better prefix of target than y?  LT if it is,
+                  GT if it isn't, and EQ if they're unordered. -}
+               if historyPrefixOf x target
+               then if historyPrefixOf y target
+                    then if historyPrefixOf x y
+                         then LT
+                         else GT
+                    else LT
+               else if historyPrefixOf y target
+                    then GT
+                    else EQ
+           
+           (best_hist, best_worker) = case best_lru of
+                                        Nothing -> (emptyHistory, wc_start wc)
+                                        Just x -> x
+
+       writeIORef (wc_lru_cache wc) new_lru
+       mapM_ (killWorker . snd) expired_lru
+       
        new_worker <- takeSnapshot best_worker
-       let new_worker' = case new_worker of
-                           Nothing ->
-                               error $ "cannot snapshot " ++ (show best_hist)
-                           Just new_worker'' -> new_worker''
-       cost <- fixupWorkerForHist new_worker' best_hist hist
-       return (cost > 10, {- 10 is pretty arbitrary, but seemed to work well
-                             in some preliminary testing. -}
-               new_worker')
-
-
-registerWorker :: History -> Worker -> IO ()
-registerWorker hist worker =
-
-    {- Preserve sanity by requiring that the worker cache not contain
-       any unforced thunks, which might themselves call back into the
-       worker cache. -}
-    force hist $ force worker $
-
-    let registerWorkerCG :: Maybe CacheGeneration -> (History, Worker) -> IO ()
-        registerWorkerCG Nothing (_, w) = killWorker w
-        registerWorkerCG (Just cg) what =
-            do oldWorkers <- readIORef $ cg_workers cg
-               let newWorkers = what:oldWorkers
-                   nr_items_this_level = length newWorkers
-               if nr_items_this_level > cg_max_size cg
-                then assert (nr_items_this_level == cg_max_size cg + 1) $
-                     let (newNewWorkers, [dead]) = splitAt (cg_max_size cg) newWorkers
-                     in do r <- randomIO
-                           if r
-                            then registerWorkerCG (cg_parent cg) dead
-                            else killWorker $ snd dead
-                           writeIORef (cg_workers cg) newNewWorkers
-                else writeIORef (cg_workers cg) newWorkers
-    in
-    do cg <- liftM wc_cache $ workerCache
-       registerWorkerCG (Just cg) (hist, worker)
+       let new_worker' = maybe (error $ "cannot snapshot " ++ (show best_hist)) id new_worker
+       cost <- fixupWorkerForHist new_worker' best_hist target
+       if cost > 10
+        then do writeIORef (wc_fifo_cache wc) ((target, new_worker'):new_fifo_augmented)
+                res <- takeSnapshot new_worker'
+                let res' = maybe (error $ "cannot snapshot2 " ++ (show target)) id res
+                return res'
+        else do writeIORef (wc_fifo_cache wc) new_fifo_augmented
+                return new_worker'
 
 
 traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
 traceCmd he start w =
     let newHist = appendHistory start he
-    in unsafePerformIO $ do (register, worker) <- getWorker start
+    in unsafePerformIO $ do worker <- getWorker start
                             r <- w worker
-                            if register
-                             then registerWorker newHist worker
-                             else killWorker worker
+                            killWorker worker
                             return (newHist, r)
 
 run :: History -> Topped EpochNr -> History
@@ -193,11 +207,9 @@ runMemory start cntr =
 
 queryCmd :: History -> (Worker -> IO a) -> a
 queryCmd hist w =
-    unsafePerformIO $ do (register, worker) <- getWorker hist
+    unsafePerformIO $ do worker <- getWorker hist
                          res <- w worker
-                         if register
-                          then registerWorker hist worker
-                          else killWorker worker
+                         killWorker worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
