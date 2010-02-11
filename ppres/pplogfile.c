@@ -79,11 +79,13 @@ main(int argc, char *argv[])
 	struct record_header h;
 	void *payload;
 	unsigned record_nr;
+	unsigned epoch;
 
 	f = fopen(argv[1], "r");
 	if (!f)
 		err(1, "opening %s", argv[1]);
 	record_nr = 0;
+	epoch = 1;
 	while (1) {
 		payload = read_record(f, &h);
 		if (!payload) {
@@ -91,7 +93,7 @@ main(int argc, char *argv[])
 				break;
 			err(1, "reading from %s", argv[1]);
 		}
-		printf("%10d:%d: ", record_nr, h.tid);
+		printf("%10d:%d:%d: ", record_nr, epoch, h.tid);
 		switch (h.cls) {
 		case RECORD_footstep: {
 			struct footstep_record *fr = payload;
@@ -111,6 +113,7 @@ main(int argc, char *argv[])
 		}
 		case RECORD_syscall: {
 			struct syscall_record *sr = payload;
+			epoch++;
 			printf("syscall: %d, res %ld (error %d), arg1 %lx, arg2 %lx, arg3 %lx\n",
 			       sr->syscall_nr, sr->syscall_res._val,
 			       sr->syscall_res._isError,
@@ -127,6 +130,7 @@ main(int argc, char *argv[])
 		case RECORD_rdtsc: {
 			struct rdtsc_record *rr = payload;
 			printf("rdtsc: %lx\n", rr->stashed_tsc);
+			epoch++;
 			break;
 		}
 		case RECORD_mem_read: {
@@ -148,15 +152,18 @@ main(int argc, char *argv[])
 			break;
 		}
 		case RECORD_thread_blocking: {
+			epoch++;
 			printf("thread blocking\n");
 			break;
 		}
 		case RECORD_thread_unblocked: {
+			epoch++;
 			printf("thread unblocked.\n");
 			break;
 		}
 		case RECORD_client: {
 			struct client_req_record *crr = payload;
+			epoch++;
 			printf("client request %lx\n", crr->flavour);
 			break;
 		}
