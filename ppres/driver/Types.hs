@@ -17,6 +17,9 @@ newtype EpochNr = EpochNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read
 data Worker = Worker { worker_fd :: Socket,
                        worker_alive :: IORef Bool }
 
+instance Show Worker where
+    show w = "worker fd " ++ (show $ worker_fd w)
+
 data TraceLocation = TraceLocation { trc_epoch :: EpochNr,
                                      trc_record :: RecordNr,
                                      trc_access :: Integer,
