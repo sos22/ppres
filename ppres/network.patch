@@ -1,0 +1,29 @@
+--- network-2.2.1.5/cbits/ancilData.c	2010-02-11 12:53:40.000000000 +0000
++++ network-2.2.1.5-mine/cbits/ancilData.c	2010-02-11 12:51:39.000000000 +0000
+@@ -12,6 +12,7 @@
+ 
+ #include "HsNet.h"
+ #include <string.h>
++#include <errno.h>
+ 
+ #if HAVE_STRUCT_MSGHDR_MSG_CONTROL || HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS /* until end */
+ 
+@@ -164,9 +165,17 @@ recvFd(int sock)
+   if ((rc = recvmsg(sock,&msg,0)) < 0) {
+     return rc;
+   }
+-  
++
++  if (rc == 0) {
++    errno = EPIPE;
++    return -1;
++  }
+ #if HAVE_STRUCT_MSGHDR_MSG_CONTROL
+   cptr = (struct cmsghdr*)CMSG_FIRSTHDR(&msg);
++  if (cptr == NULL) {
++    errno = EIO;
++    return -1;
++  }
+   return *(int*)CMSG_DATA(cptr);
+ #else
+   return *(int*)fdBuffer;
