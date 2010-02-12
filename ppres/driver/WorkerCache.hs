@@ -164,19 +164,38 @@ getWorker target =
                                         Nothing -> (emptyHistory, wc_start wc)
                                         Just x -> x
 
+           reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
        writeIORef (wc_lru_cache wc) new_lru
+       writeIORef (wc_fifo_cache wc) new_fifo_augmented
+
        mapM_ (killWorker . snd) expired_lru
        
-       new_worker <- takeSnapshot best_worker
-       let new_worker' = maybe (error $ "cannot snapshot " ++ (show best_hist)) id new_worker
-       cost <- fixupWorkerForHist new_worker' best_hist target
-       if cost > 10
-        then do writeIORef (wc_fifo_cache wc) ((target, new_worker'):new_fifo_augmented)
-                res <- takeSnapshot new_worker'
-                let res' = maybe (error $ "cannot snapshot2 " ++ (show target)) id res
-                return res'
-        else do writeIORef (wc_fifo_cache wc) new_fifo_augmented
-                return new_worker'
+       new_worker <- reallySnapshot best_worker
+       if best_hist == target
+        then return new_worker
+        else let doFixup currentWorker currentHistory cost_base =
+                     do costOrPartial <- fixupWorkerForHist 50 currentWorker currentHistory target
+                        case costOrPartial of
+                          (cost, Nothing) ->
+                              if cost > 10
+                              then do modifyIORef (wc_fifo_cache wc) $ (:) (target, currentWorker)
+                                      s <- reallySnapshot currentWorker
+                                      return (s, cost + cost_base)
+                              else return (currentWorker, cost + cost_base)
+                          (cost, Just partial) ->
+                              dt ("Partial fixup: " ++ (show currentHistory) ++ " -> " ++ (show partial) ++ ", target " ++ (show target)) $
+                              do modifyIORef (wc_fifo_cache wc) $ (:) (partial, currentWorker)
+                                 newWorker <- reallySnapshot currentWorker
+                                 doFixup newWorker partial $ cost_base + cost
+             in do (final_worker, cost) <- doFixup new_worker best_hist 0
+                   (final_fifo, final_fifo_expired) <- dt ("fixup cost " ++ (show cost)) $ liftM (splitAt fifoCacheSize) $ readIORef $ wc_fifo_cache wc
+                   writeIORef (wc_fifo_cache wc) final_fifo
+                   almost_final_lru <- readIORef $ wc_lru_cache wc
+                   let (final_lru, final_lru_expired) = splitAt lruCacheSize $ sortBy goodnessOrdering $ final_fifo_expired ++ almost_final_lru
+                   writeIORef (wc_lru_cache wc) final_lru
+                   mapM_ (killWorker . snd) final_lru_expired
+                   return final_worker
+
 
 
 traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
@@ -213,10 +232,10 @@ queryCmd hist w =
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
-threadState hist = dt ("replayState " ++ (show hist)) $ queryCmd hist threadStateWorker
+threadState hist = queryCmd hist threadStateWorker
 
 replayState :: History -> ReplayState
-replayState hist = dt ("replayState " ++ (show hist)) $ queryCmd hist replayStateWorker
+replayState hist = queryCmd hist replayStateWorker
 
 controlTrace :: History -> Topped Integer -> [Expression]
 controlTrace hist cntr =

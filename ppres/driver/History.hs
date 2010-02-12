@@ -164,11 +164,23 @@ emptyHistory = History []
 {- fixupWorkerForHist worker current desired -> assume that worker is
    in a state represented by current, and get it into a state
    represented by desired.  current must be a prefix of desired.
-   Returns an estimate of how much it cost us to do so. -}
-fixupWorkerForHist :: Worker -> History -> History -> IO Integer
-fixupWorkerForHist w current desired =
+   Returns either:
+
+   -- Left an estimate of how much that cost, or
+
+   -- Right intermediate_history if we go over budget.
+ -}
+fixupWorkerForHist :: Integer -> Worker -> History -> History -> IO (Integer, Maybe History)
+fixupWorkerForHist budget w current desired =
     case stripSharedPrefix current desired of
-      (History [], History todo) -> liftM sum $ mapM (doHistoryEntry w) todo
+      (History [], History todo) ->
+          worker todo 0 current
+          where worker [] cost _ = return (cost, Nothing)
+                worker (x:xs) cost so_far =
+                    if cost > budget
+                    then return $ (cost, Just so_far)
+                    else do cost' <- doHistoryEntry w x
+                            worker xs (cost + cost') (appendHistory so_far x)
       _ -> error ((show current) ++ " is not a prefix of " ++ (show desired))
 
 appendHistory :: History -> HistoryEntry -> History
