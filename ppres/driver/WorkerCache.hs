@@ -136,7 +136,7 @@ getWorker target =
                      then case best_fifo of
                             Nothing -> (Just x, xss, x:new_fifo)
                             Just bh ->
-                                if historyPrefixOf (fst x) (fst bh)
+                                if historyPrefixOf (fst bh) (fst x)
                                 then (Just x, xss, x:new_fifo)
                                 else (best_fifo, xs, new_fifo)
                      else (best_fifo, xs, new_fifo)
