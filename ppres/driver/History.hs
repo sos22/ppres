@@ -177,20 +177,24 @@ historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length
     then False
     else
         worker a b
-        where worker [] _ = True
-              worker _ [] = False
-              worker (aa:as) bbs@(bb:bs) =
-                  if aa == bb then worker as bs
-                  else case (aa, bb) of
-                         (HistoryRun acntr, HistoryRun bcntr) ->
-                             if acntr <= bcntr
-                             then worker as bbs
-                             else False
-                         (HistoryRunMemory acntr, HistoryRunMemory bcntr) ->
-                             if acntr <= bcntr
-                             then worker as bbs
-                             else False
-                         _ -> False
+        where
+          worker aas bbs =
+              {-# SCC "historyPrefixOfWorker" #-}
+              case (aas, bbs) of
+                ([], _) -> True
+                (_, []) -> False
+                (aa:as, bb:bs) ->
+                    if aa == bb then worker as bs
+                    else case (aa, bb) of
+                           (HistoryRun acntr, HistoryRun bcntr) ->
+                               if acntr <= bcntr
+                               then worker as bbs
+                               else False
+                           (HistoryRunMemory acntr, HistoryRunMemory bcntr) ->
+                               if acntr <= bcntr
+                               then worker as bbs
+                               else False
+                           _ -> False
 
 emptyHistory :: History
 emptyHistory = mkHistory []
