@@ -373,7 +373,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_REPLAY_STATE:
 	case WORKER_GET_THREAD:
 		tl_assert(ch.nr_args == 0);
-		return;
+		break;
 	case WORKER_RUN:
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.run.nr, 8);
