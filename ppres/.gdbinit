@@ -70,10 +70,10 @@ end
 define dump_control_command
   set $cmd = ($arg0)->cmd
   if $cmd == 0x1234
-    print "snapshot"
+    printf "snapshot\n"
   else
     if $cmd == 0x1235
-      print "kill"
+      printf "kill\n"
     else
       if $cmd == 0x1236
 	printf "run to %ld\n", ($arg0)->u.run.nr
@@ -82,7 +82,7 @@ define dump_control_command
 	  printf "trace to %ld\n", ($arg0)->u.trace.nr
 	else
 	  if $cmd == 0x1238
-	    printf "run memory thread %ld for %ld\n", ($arg0)->u.runm.thread, ($arg0)->u.runm.nr
+	    printf "run memory to %ld\n", ($arg0)->u.runm.nr
 	  else
 	    if $cmd == 0x1239
 	      printf "trace thread %d\n", ($arg0)->u.trace_thread.thread
@@ -91,10 +91,10 @@ define dump_control_command
 		printf "trace address 0x%lx\n", ($arg0)->u.trace_mem.address
 	      else
 		if $cmd == 0x123b
-		  print "thread state"
+		  printf "thread state\n"
 		else
 		  if $cmd == 0x123c
-		    print "replay state"
+		    printf "replay state\n"
 		  else
 		    if $cmd == 0x123d
 		      printf "control trace %ld\n", ($arg0)->u.control_trace.nr
@@ -106,9 +106,13 @@ define dump_control_command
 			  printf "vg intermediate %lx\n", ($arg0)->u.vg_intermediate.addr
 			else
 			  if $cmd == 0x1240
-			    print "next thread"
+			    printf "next thread\n"
 			  else
-			    inspect /x $arg0
+			    if $cmd == 0x1241
+			      printf "set thread %d\n", ($arg0)->u.set_thread.tid
+			    else
+			      inspect /x $arg0
+			    end
 			  end
 			end
 		      end
