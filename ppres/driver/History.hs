@@ -153,10 +153,13 @@ stripSharedPrefix (History aa) (History bb) =
 {- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
    when a and b are equal as a special case) -}
 historyPrefixOf :: History -> History -> Bool
-historyPrefixOf a b =
-    case  stripSharedPrefix a b of
-      (History [], _) -> True
-      _ -> False
+historyPrefixOf (History a) (History b) =
+    worker a b
+    where worker [] _ = True
+          worker _ [] = False
+          worker (aa:as) (bb:bs) =
+              if aa == bb then worker as bs
+              else False
 
 emptyHistory :: History
 emptyHistory = History []
