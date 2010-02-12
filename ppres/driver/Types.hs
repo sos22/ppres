@@ -235,6 +235,9 @@ instance Forcable EpochNr where
 instance Forcable Integer where
     force = seq
 
+instance Forcable Int where
+    force = seq
+
 instance Forcable Bool where
     force = seq
 

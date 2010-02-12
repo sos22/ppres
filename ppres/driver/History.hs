@@ -54,7 +54,7 @@ absoluteHistory (x             :y)      base = x:(absoluteHistory y base)
    entirety of a and the new one as the entirety of b, with no fixup,
    but that's pretty useless, so we try to do a bit better than that. -}
 historyDiff :: History -> History -> HistoryDiff
-historyDiff (History as') (History bs') =
+historyDiff (History _ _ as') (History _ _ bs') =
     worker (relativeHistory as' 0) (relativeHistory bs' 0)
     where
       worker aas@(a:as) bbs@(b:bs)
@@ -77,7 +77,7 @@ historyDiff (History as') (History bs') =
                         hd_new_suffix = bs }
 
 applyHistoryDiff :: HistoryDiff -> History -> Maybe History
-applyHistoryDiff hd (History base) =
+applyHistoryDiff hd (History _ _ base) =
     let revbase = reverse $ relativeHistory base 0
         old_suffix = reverse $ hd_old_suffix hd
 
@@ -107,10 +107,28 @@ applyHistoryDiff hd (History base) =
           no_suffix_fixed <- apply_record_fixup (hd_record_fixup hd) no_suffix
           return $ mkHistory $ absoluteHistory (reverse $ (reverse $ hd_new_suffix hd) ++ no_suffix_fixed) 0
 
-data History = History [HistoryEntry] deriving (Show, Eq, Read)
+{- We cache, in the history record, the last epoch in the history and
+   the number of entries in the history.  This means we can do a quick
+   out in historyPrefixOf in many useful cases. -}
+data History = History (Topped EpochNr) Int [HistoryEntry] deriving (Show, Eq, Read)
+
+{- Either id, for valid histories, or undefined for invalid ones. -}
+sanityCheckHistory :: History -> History
+sanityCheckHistory hh@(History epoch len h) =
+    if len /= length h
+    then error $ "History " ++ (show hh) ++ " had bad length (should be " ++ (show $ length h) ++ ")"
+    else if last_epoch h /= epoch
+         then error $ "History " ++ (show hh) ++ " had bad last epoch (should be " ++ (show $ last_epoch h) ++ ")"
+         else hh
+
+last_epoch :: [HistoryEntry] -> Topped EpochNr
+last_epoch he = worker $ reverse he
+                where worker [] = Finite 0
+                      worker ((HistoryRun x):_) = x
+                      worker (_:x) = worker x
 
 mkHistory :: [HistoryEntry] -> History
-mkHistory h = History h
+mkHistory h = History (last_epoch h) (length h) h
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
 doHistoryEntry w (HistoryRun cntr) =
@@ -133,9 +151,9 @@ doHistoryEntry w (HistoryRunMemory cntr) =
     runMemoryWorker w cntr >> return cntr
 
 stripSharedPrefix :: History -> History -> (History, History)
-stripSharedPrefix (History aa) (History bb) =
+stripSharedPrefix (History _ _ aa) (History _ _ bb) =
     case worker aa bb of
-      (a', b') -> (History a', History b')
+      (a', b') -> (mkHistory a', mkHistory b')
     where worker a [] = (a, [])
           worker [] b = ([], b)
           worker aas@(a:as) bbs@(b:bs) =
@@ -154,19 +172,28 @@ stripSharedPrefix (History aa) (History bb) =
 {- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
    when a and b are equal as a special case) -}
 historyPrefixOf :: History -> History -> Bool
-historyPrefixOf (History a) (History b) =
-    worker a b
-    where worker [] _ = True
-          worker _ [] = False
-          worker (aa:as) (bb:bs) =
-              if aa == bb then worker as bs
-              else case (aa, bb) of
-                     (HistoryRun acntr, HistoryRun bcntr) -> acntr <= bcntr
-                     (HistoryRunMemory acntr, HistoryRunMemory bcntr) -> acntr <= bcntr
-                     _ -> False
+historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length b) =
+    if a_length > b_length || a_last_epoch > b_last_epoch
+    then False
+    else
+        worker a b
+        where worker [] _ = True
+              worker _ [] = False
+              worker (aa:as) bbs@(bb:bs) =
+                  if aa == bb then worker as bs
+                  else case (aa, bb) of
+                         (HistoryRun acntr, HistoryRun bcntr) ->
+                             if acntr <= bcntr
+                             then worker as bbs
+                             else False
+                         (HistoryRunMemory acntr, HistoryRunMemory bcntr) ->
+                             if acntr <= bcntr
+                             then worker as bbs
+                             else False
+                         _ -> False
 
 emptyHistory :: History
-emptyHistory = History []
+emptyHistory = mkHistory []
 
 {- fixupWorkerForHist worker current desired -> assume that worker is
    in a state represented by current, and get it into a state
@@ -180,7 +207,7 @@ emptyHistory = History []
 fixupWorkerForHist :: Integer -> Worker -> History -> History -> IO (Integer, Maybe History)
 fixupWorkerForHist budget w current desired =
     case stripSharedPrefix current desired of
-      (History [], History todo) ->
+      (History _ _ [], History _ _ todo) ->
           worker todo 0 current
           where worker [] cost _ = return (cost, Nothing)
                 worker (x:xs) cost so_far =
@@ -188,46 +215,50 @@ fixupWorkerForHist budget w current desired =
                     then return $ (cost, Just so_far)
                     else do cost' <- doHistoryEntry w x
                             worker xs (cost + cost') (appendHistory so_far x)
-      _ -> error ((show current) ++ " is not a prefix of " ++ (show desired))
+      _ -> error $ (show current) ++ " is not a prefix of " ++ (show desired) ++ " (historyPrefixOf " ++ (show $ historyPrefixOf current desired) ++ ")"
 
 appendHistory :: History -> HistoryEntry -> History
-appendHistory (History []) he = History [he]
-appendHistory (History h) he =
+appendHistory (History _ _ []) he = mkHistory [he]
+appendHistory (History old_last_epoch old_nr_records h) he =
     let revh = reverse h
         lastThread [] = Just 1
         lastThread ((HistoryRun _):_) = Nothing
         lastThread ((HistoryRunMemory _):x) = lastThread x
         lastThread ((HistorySetThread x):_) = Just x
         (hl:hrest) = revh
-        h' = case (hl, he) of
+        (new_last_epoch, new_nr_records, h') =
+            case (hl, he) of
                (HistoryRun x, HistoryRun y) ->
                    if x == y
-                   then h
+                   then (old_last_epoch, old_nr_records, h)
                    else if x < y
-                        then reverse $ (HistoryRun y):hrest
+                        then (y, old_nr_records, reverse $ (HistoryRun y):hrest)
                         else error "appendHistory tried to go backwards in time!"
                (HistoryRunMemory xcntr, HistoryRunMemory ycntr) ->
-                   if xcntr == ycntr
-                   then h
-                   else if xcntr < ycntr
-                        then reverse $ (HistoryRunMemory ycntr):hrest
-                        else error "appendHistory tried to undo memory accesses"
+                   (old_last_epoch, old_nr_records,
+                                  if xcntr == ycntr
+                                  then h
+                                  else if xcntr < ycntr
+                                       then reverse $ (HistoryRunMemory ycntr):hrest
+                                       else error "appendHistory tried to undo memory accesses")
                (HistorySetThread _, HistorySetThread lt) ->
                    if Just lt == lastThread hrest
-                   then reverse hrest
-                   else reverse $ he:hrest
+                   then (old_last_epoch, old_nr_records - 1, reverse hrest)
+                   else (old_last_epoch, old_nr_records, reverse $ he:hrest)
                (_, HistorySetThread lt) ->
                    if Just lt == lastThread revh
-                   then h
-                   else reverse $ he:revh
-               _ -> reverse $ he:revh
-        res = History h'
-    in res
+                   then (old_last_epoch, old_nr_records, h)
+                   else (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
+               (_, HistoryRun y) ->
+                   (y, old_nr_records + 1, reverse $ he:revh)
+               _ -> (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
+        res = History new_last_epoch new_nr_records h'
+    in sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped EpochNr -> History
-truncateHistory (History hs) cntr =
-    History (worker hs)
+truncateHistory (History _ _ hs) cntr =
+    mkHistory (worker hs)
     where worker [HistoryRun Infinity] = [HistoryRun cntr]
           worker ((HistoryRun c):hs') =
               if c < cntr then (HistoryRun c):(worker hs')
@@ -242,4 +273,4 @@ instance Forcable HistoryEntry where
     force (HistoryRunMemory i) = force i
 
 instance Forcable History where
-    force (History h) = force h
+    force (History a b h) = force a . force b . force h
