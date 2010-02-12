@@ -3,6 +3,7 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                mkHistory, historyDiff, applyHistoryDiff, HistoryDiff) where
 
 import Control.Monad
+import Debug.Trace
 
 import Types
 import Worker
@@ -159,7 +160,10 @@ historyPrefixOf (History a) (History b) =
           worker _ [] = False
           worker (aa:as) (bb:bs) =
               if aa == bb then worker as bs
-              else False
+              else case (aa, bb) of
+                     (HistoryRun acntr, HistoryRun bcntr) -> acntr <= bcntr
+                     (HistoryRunMemory acntr, HistoryRunMemory bcntr) -> acntr <= bcntr
+                     _ -> False
 
 emptyHistory :: History
 emptyHistory = History []
