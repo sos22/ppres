@@ -42,10 +42,10 @@ data WorkerCache = WorkerCache { wc_fifo_cache :: IORef WorkerPool,
 
 
 fifoCacheSize :: Int
-fifoCacheSize = 100
+fifoCacheSize = 800
 
 lruCacheSize :: Int
-lruCacheSize = 28
+lruCacheSize = 100
 
 globalWorkerCache :: IORef (Maybe WorkerCache)
 {-# NOINLINE globalWorkerCache #-}
