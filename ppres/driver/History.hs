@@ -7,9 +7,9 @@ import Control.Monad
 import Types
 import Worker
 
-data HistoryEntry = HistoryRun (Topped EpochNr)
-                  | HistoryRunMemory Integer
-                  | HistorySetThread ThreadId
+data HistoryEntry = HistoryRun !(Topped EpochNr)
+                  | HistoryRunMemory !Integer
+                  | HistorySetThread !ThreadId
                     deriving (Eq, Show, Read)
 
 {- A history diff is a representation of a function of type

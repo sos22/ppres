@@ -174,7 +174,7 @@ instance Monad (Either a) where
     (Left x) >>= _ = Left x
     
 data Topped x = Infinity
-              | Finite x deriving Eq
+              | Finite !x deriving Eq
 
 instance Functor Topped where
     fmap _ Infinity = Infinity
@@ -227,7 +227,7 @@ instance Forcable a => Forcable [a] where
 
 instance Forcable x => Forcable (Topped x) where
     force Infinity = id
-    force (Finite x) = force x
+    force (Finite _) = id
 
 instance Forcable EpochNr where
     force (EpochNr x) = force x
