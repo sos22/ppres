@@ -150,10 +150,9 @@ doHistoryEntry w (HistorySetThread tid) = setThreadWorker w tid >> return 1
 doHistoryEntry w (HistoryRunMemory cntr) =
     runMemoryWorker w cntr >> return cntr
 
-stripSharedPrefix :: History -> History -> (History, History)
+stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
 stripSharedPrefix (History _ _ aa) (History _ _ bb) =
-    case worker aa bb of
-      (a', b') -> (mkHistory a', mkHistory b')
+    worker aa bb
     where worker a [] = (a, [])
           worker [] b = ([], b)
           worker aas@(a:as) bbs@(b:bs) =
@@ -211,7 +210,7 @@ emptyHistory = mkHistory []
 fixupWorkerForHist :: Integer -> Worker -> History -> History -> IO (Integer, Maybe History)
 fixupWorkerForHist budget w current desired =
     case stripSharedPrefix current desired of
-      (History _ _ [], History _ _ todo) ->
+      ([], todo) ->
           worker todo 0 current
           where worker [] cost _ = return (cost, Nothing)
                 worker (x:xs) cost so_far =
