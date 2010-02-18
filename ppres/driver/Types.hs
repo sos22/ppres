@@ -1,6 +1,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Types where
 
+import Debug.Trace
+
 import Data.Word
 import Network.Socket
 import Numeric
@@ -185,8 +187,11 @@ instance Show x => Show (Topped x) where
     show (Finite x) = show x
 
 instance Read x => Read (Topped x) where
-    readsPrec _ ('i':'n':'f':x) = [(Infinity, x)]
-    readsPrec _ x = map (first Finite) $ reads x
+    readsPrec _ x =
+        do (keyword, trail) <- lex x
+           if keyword == "inf"
+              then return (Infinity, trail)
+              else map (first Finite) $ reads x
 
 instance Num x => Num (Topped x) where
     Infinity + _ = Infinity
@@ -244,3 +249,61 @@ instance Forcable Bool where
 instance Forcable x => Forcable (Maybe x) where
     force Nothing = id
     force (Just x) = force x
+
+
+data DListEntry a = DListEntry {dle_prev :: Maybe (DListEntry a),
+                                dle_next :: Maybe (DListEntry a),
+                                dle_val :: a }
+
+data DList a = DList { dle_head :: Maybe (DListEntry a),
+                       dle_tail :: Maybe (DListEntry a) }
+
+dlToList :: DList a -> [a]
+dlToList dl = worker $ dle_head dl
+              where worker Nothing = []
+                    worker (Just x) = (dle_val x):(worker $ dle_next x)
+
+listToDl :: [a] -> DList a
+listToDl [] = DList Nothing Nothing
+listToDl xs = let worker [] _ = (Nothing, Nothing)
+                  worker (item:items) before =
+                      let (nextEntry, lst) = worker items thisEntry
+                          thisEntry = Just $ DListEntry { dle_prev = before,
+                                                          dle_next = nextEntry,
+                                                          dle_val = item }
+                          lst' = case lst of
+                                   Nothing -> thisEntry
+                                   Just _ -> lst
+                      in (thisEntry, lst')
+                  (h, t) = worker xs Nothing
+              in DList h t
+
+dlLength :: DList a -> Int
+dlLength = length . dlToList
+
+instance Functor DList where
+    fmap f x = listToDl $ fmap f $ dlToList x
+
+instance Show a => Show (DList a) where
+    show = show . dlToList
+
+instance Read a => Read (DList a) where
+    readsPrec _ x =
+        do (v, trail) <- reads x
+           return (listToDl v, trail)
+
+instance Forcable a => Forcable (DListEntry a) where
+    force dle val =
+        force (dle_val dle) $
+        force (dle_next dle) $
+        case dle_prev dle of
+          Nothing -> val
+          Just p -> p `seq` val
+
+instance Forcable a => Forcable (DList a) where
+    force x y = force (dle_head x) $ case dle_tail x of
+                                       Nothing -> y
+                                       Just xt -> xt `seq` y
+
+instance Eq a => Eq (DList a) where
+    x == y = (dlToList x) == (dlToList y)

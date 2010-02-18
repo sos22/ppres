@@ -16,15 +16,15 @@ data HistoryEntry = HistoryRun !(Topped EpochNr)
 {- We cache, in the history record, the last epoch in the history and
    the number of entries in the history.  This means we can do a quick
    out in historyPrefixOf in many useful cases. -}
-data History = History (Topped EpochNr) Int [HistoryEntry] deriving (Show, Eq, Read)
+data History = History (Topped EpochNr) Int (DList HistoryEntry) deriving (Show, Eq, Read)
 
 {- Either id, for valid histories, or undefined for invalid ones. -}
 sanityCheckHistory :: History -> History
 sanityCheckHistory hh@(History epoch len h) =
-    if len /= length h
-    then error $ "History " ++ (show hh) ++ " had bad length (should be " ++ (show $ length h) ++ ")"
-    else if last_epoch h /= epoch
-         then error $ "History " ++ (show hh) ++ " had bad last epoch (should be " ++ (show $ last_epoch h) ++ ")"
+    if len /= dlLength h
+    then error $ "History " ++ (show hh) ++ " had bad length (should be " ++ (show $ dlLength h) ++ ")"
+    else if last_epoch (dlToList h) /= epoch
+         then error $ "History " ++ (show hh) ++ " had bad last epoch (should be " ++ (show $ last_epoch (dlToList h)) ++ ")"
          else hh
 
 last_epoch :: [HistoryEntry] -> Topped EpochNr
@@ -34,7 +34,7 @@ last_epoch he = worker $ reverse he
                       worker (_:x) = worker x
 
 mkHistory :: [HistoryEntry] -> History
-mkHistory h = History (last_epoch h) (length h) h
+mkHistory h = History (last_epoch h) (length h) (listToDl h)
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
 doHistoryEntry w (HistoryRun cntr) =
@@ -58,7 +58,7 @@ doHistoryEntry w (HistoryRunMemory cntr) =
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
 stripSharedPrefix (History _ _ aa) (History _ _ bb) =
-    worker aa bb
+    worker (dlToList aa) (dlToList bb)
     where worker a [] = (a, [])
           worker [] b = ([], b)
           worker aas@(a:as) bbs@(b:bs) =
@@ -98,7 +98,7 @@ historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length
                                then worker as bbs
                                else False
                            _ -> False
-            res = worker a b
+            res = worker (dlToList a) (dlToList b)
         in res
 
 emptyHistory :: History
@@ -127,9 +127,9 @@ fixupWorkerForHist budget w current desired =
       _ -> error $ (show current) ++ " is not a prefix of " ++ (show desired) ++ " (historyPrefixOf " ++ (show $ historyPrefixOf current desired) ++ ")"
 
 appendHistory :: History -> HistoryEntry -> History
-appendHistory (History _ _ []) he = mkHistory [he]
-appendHistory (History old_last_epoch old_nr_records h) he =
-    let revh = reverse h
+appendHistory (History old_last_epoch old_nr_records dlh) he =
+    let h = dlToList dlh
+        revh = reverse h
         lastThread [] = Just 1
         lastThread ((HistoryRun _):_) = Nothing
         lastThread ((HistoryRunMemory _):x) = lastThread x
@@ -161,13 +161,16 @@ appendHistory (History old_last_epoch old_nr_records h) he =
                (_, HistoryRun y) ->
                    (y, old_nr_records + 1, reverse $ he:revh)
                _ -> (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
-        res = History new_last_epoch new_nr_records h'
+        res =
+            case h of
+              [] -> mkHistory [he]
+              _ -> History new_last_epoch new_nr_records $ listToDl h'
     in sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped EpochNr -> History
 truncateHistory (History _ _ hs) cntr =
-    mkHistory (worker hs)
+    mkHistory (worker $ dlToList hs)
     where worker [HistoryRun Infinity] = [HistoryRun cntr]
           worker ((HistoryRun c):hs') =
               if c < cntr then (HistoryRun c):(worker hs')
