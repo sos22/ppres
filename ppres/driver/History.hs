@@ -84,9 +84,9 @@ historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length
         let worker aas bbs =
               {-# SCC "historyPrefixOfWorker" #-}
               case (aas, bbs) of
-                ([], _) -> True
-                (_, []) -> False
-                (aa:as, bb:bs) ->
+                (Nothing, _) -> True
+                (_, Nothing) -> False
+                (Just (DListEntry _ as aa), Just (DListEntry _ bs bb)) ->
                     if aa == bb then worker as bs
                     else case (aa, bb) of
                            (HistoryRun acntr, HistoryRun bcntr) ->
@@ -98,7 +98,7 @@ historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length
                                then worker as bbs
                                else False
                            _ -> False
-            res = worker (dlToList a) (dlToList b)
+            res = worker (dle_head a) (dle_head b)
         in res
 
 emptyHistory :: History
