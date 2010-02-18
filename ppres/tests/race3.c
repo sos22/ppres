@@ -16,7 +16,7 @@ thread(void *ignore)
     if (r1 == r2)
       getuid();
     else
-      abort();
+      *(unsigned *)0xf001 = 5;
   }
 }
 

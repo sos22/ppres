@@ -1074,7 +1074,8 @@ do_helper_load_cswitch(struct interpret_state *is,
 	interpreter_do_load(&res, size, addr);
 
 	ref_expression_result(is, &res);
-	load_event((const void *)addr.v, size, dummy_buf, rsp.v);
+	load_event((const void *)addr.v, size, dummy_buf, rsp.v,
+		   is->registers[REG_RIP].v);
 	deref_expression_result(is, &res);
 
 	return res;
@@ -1084,7 +1085,8 @@ static void
 do_helper_store_cswitch(unsigned size,
 			struct abstract_interpret_value addr,
 			struct expression_result data,
-			struct abstract_interpret_value rsp)
+			struct abstract_interpret_value rsp,
+			unsigned long rip)
 {
 	unsigned long buf[2];
 
@@ -1100,7 +1102,8 @@ do_helper_store_cswitch(unsigned size,
 	store_event((void *)addr.v,
 		    size,
 		    buf,
-		    rsp.v);
+		    rsp.v,
+		    rip);
 }
 
 static struct expression_result
@@ -1133,7 +1136,8 @@ do_helper_cas_cswitch(struct interpret_state *is,
 		do_helper_store_cswitch(size,
 					addr,
 					new,
-					rsp);
+					rsp,
+					is->registers[REG_RIP].v);
 	} else {
 		new.lo.v = seen.lo.v;
 		new.hi.v = seen.hi.v;
@@ -1169,6 +1173,7 @@ do_dirty_call_cswitch(struct interpret_state *is,
 	struct expression_result args[6];
 	unsigned x;
 	unsigned long res;
+	unsigned long rip = is->registers[REG_RIP].v;
 
 	if (details->guard) {
 		eval_expression(is, &guard, details->guard);
@@ -1206,16 +1211,16 @@ do_dirty_call_cswitch(struct interpret_state *is,
 		is->temporaries[details->tmp] =
 			do_helper_load_cswitch(is, 16, args[0].lo, args[1].lo);
 	} else if (!strcmp(details->cee->name, "helper_store_8")) {
-		do_helper_store_cswitch(1, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(1, args[0].lo, args[1], args[2].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_store_16")) {
-		do_helper_store_cswitch(2, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(2, args[0].lo, args[1], args[2].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_store_32")) {
-		do_helper_store_cswitch(4, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(4, args[0].lo, args[1], args[2].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_store_64")) {
-		do_helper_store_cswitch(8, args[0].lo, args[1], args[2].lo);
+		do_helper_store_cswitch(8, args[0].lo, args[1], args[2].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_store_128")) {
 		args[1].hi = args[2].lo;
-		do_helper_store_cswitch(16, args[0].lo, args[1], args[3].lo);
+		do_helper_store_cswitch(16, args[0].lo, args[1], args[3].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_cas_8")) {
 		is->temporaries[details->tmp] =
 			do_helper_cas_cswitch(is, 1, args[0].lo, args[1], args[2],

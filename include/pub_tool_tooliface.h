@@ -667,7 +667,8 @@ void VG_(track_pre_thread_ll_exit)   (void(*f)(ThreadId tid));
    Called before a signal is delivered;  `alt_stack' indicates if it is
    delivered on an alternative stack.  */
 void VG_(track_pre_deliver_signal) (void(*f)(ThreadId tid, Int sigNo,
-                                             Bool alt_stack));
+                                             Bool alt_stack, UWord, UWord,
+					     UWord));
 /* Called after a signal is delivered.  Nb: unfortunately, if the signal
    handler longjmps, this won't be called.  */
 void VG_(track_post_deliver_signal)(void(*f)(ThreadId tid, Int sigNo));

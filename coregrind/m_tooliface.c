@@ -411,7 +411,7 @@ DEF0(track_pre_thread_ll_create,  ThreadId, ThreadId)
 DEF0(track_pre_thread_first_insn, ThreadId)
 DEF0(track_pre_thread_ll_exit,    ThreadId)
 
-DEF0(track_pre_deliver_signal,    ThreadId, Int sigNo, Bool)
+DEF0(track_pre_deliver_signal,    ThreadId, Int sigNo, Bool, UWord, UWord, UWord)
 DEF0(track_post_deliver_signal,   ThreadId, Int sigNo)
 
 /*--------------------------------------------------------------------*/

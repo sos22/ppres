@@ -74,7 +74,15 @@ struct client_req_record {
 	UWord flavour;
 };
 
-#define RECORD_MAX_CLASS RECORD_client
+struct signal_record {
+#define RECORD_signal 11
+	UWord rip;
+	Int signo;
+	UWord err;
+	UWord virtaddr;
+};
+
+#define RECORD_MAX_CLASS RECORD_signal
 
 
 struct index_record {

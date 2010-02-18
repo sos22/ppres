@@ -176,7 +176,8 @@ record_instr(Word addr, Word reg0, Word reg1, Word reg2, Word reg3, Word reg4)
 }
 
 static void
-record_load(const void *ptr, unsigned size, void *base, unsigned long rsp)
+record_load(const void *ptr, unsigned size, void *base, unsigned long rsp,
+	    unsigned long rip)
 {
 	struct mem_read_record *mrr;
 	VG_(memcpy)(base, ptr, size);
@@ -188,7 +189,8 @@ record_load(const void *ptr, unsigned size, void *base, unsigned long rsp)
 }
 
 static void
-record_store(void *ptr, unsigned size, const void *base, unsigned long rsp)
+record_store(void *ptr, unsigned size, const void *base, unsigned long rsp,
+	     unsigned long rip)
 {
 	struct mem_write_record *mrr;
 	VG_(memcpy)(ptr, base, size);
@@ -328,7 +330,7 @@ pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 			int expected;
 			int observed;
 			expected = syscall_args[2];
-			record_load((int *)syscall_args[0], 4, &observed, 0);
+			record_load((int *)syscall_args[0], 4, &observed, 0, 0);
 			if (expected == observed)
 				emit_record(&logfile, RECORD_thread_blocking, 0);
 			break;
@@ -504,6 +506,7 @@ init(void)
 static void
 fini(Int ignore)
 {
+	VG_(printf)("fini\n");
 	close_logfile(&logfile);
 }
 
@@ -543,6 +546,19 @@ handle_client_request(ThreadId tid, UWord *arg_block, UWord *ret)
 }
 
 static void
+pre_deliver_signal(ThreadId tid, Int signal, Bool alt_stack,
+		   UWord err, UWord virtaddr, UWord rip)
+{
+	struct signal_record *sr;
+
+	sr = emit_record(&logfile, RECORD_signal, sizeof(*sr));
+	sr->rip = rip;
+	sr->signo = signal;
+	sr->err = err;
+	sr->virtaddr = virtaddr;
+}
+
+static void
 pre_clo_init(void)
 {
 	tool_provided_rdtsc = record_rdtsc;
@@ -555,6 +571,7 @@ pre_clo_init(void)
 	VG_(basic_tool_funcs)(init, instrument_func, fini);
 	VG_(needs_syscall_wrapper)(pre_syscall, post_syscall);
 	VG_(needs_client_requests)(handle_client_request);
+	VG_(track_pre_deliver_signal)(pre_deliver_signal);
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)

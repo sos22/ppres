@@ -1293,13 +1293,22 @@ void push_signal_frame ( ThreadId tid, const vki_siginfo_t *siginfo,
                    (Word)tst->altstack.ss_size );
 
       /* Signal delivery to tools */
-      VG_TRACK( pre_deliver_signal, tid, sigNo, /*alt_stack*/True );
-      
+#ifdef VGA_amd64
+      VG_TRACK( pre_deliver_signal, tid, sigNo, /*alt_stack*/True,
+		uc ? uc->uc_mcontext.err : 0,
+		siginfo->_sifields._sigfault._addr,
+		tst->arch.vex.guest_RIP );
+#endif
    } else {
       esp_top_of_frame = VG_(get_SP)(tid) - VG_STACK_REDZONE_SZB;
 
       /* Signal delivery to tools */
-      VG_TRACK( pre_deliver_signal, tid, sigNo, /*alt_stack*/False );
+#ifdef VGA_amd64
+      VG_TRACK( pre_deliver_signal, tid, sigNo, /*alt_stack*/False,
+		uc ? uc->uc_mcontext.err : 0,
+		siginfo->_sifields._sigfault._addr,
+		tst->arch.vex.guest_RIP );
+#endif
    }
 
    vg_assert(scss.scss_per_sig[sigNo].scss_handler != VKI_SIG_IGN);
@@ -1707,6 +1716,12 @@ static void deliver_signal ( ThreadId tid, const vki_siginfo_t *info,
    vg_assert(handler_fn != VKI_SIG_IGN);
 
    if (handler_fn == VKI_SIG_DFL) {
+#ifdef VGA_amd64
+      VG_TRACK( pre_deliver_signal, tid, sigNo, /*alt_stack*/False,
+		uc ? uc->uc_mcontext.err : 0,
+		info->_sifields._sigfault._addr,
+		tst->arch.vex.guest_RIP );
+#endif
       default_action(info, tid);
    } else {
       /* Create a signal delivery frame, and set the client's %ESP and

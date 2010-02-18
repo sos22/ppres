@@ -229,7 +229,7 @@ typedef struct {
    void (*track_pre_thread_first_insn)(ThreadId);
    void (*track_pre_thread_ll_exit)  (ThreadId);
 
-   void (*track_pre_deliver_signal) (ThreadId, Int sigNo, Bool);
+   void (*track_pre_deliver_signal) (ThreadId, Int sigNo, Bool, UWord, UWord, UWord);
    void (*track_post_deliver_signal)(ThreadId, Int sigNo);
 
 } VgToolInterface;

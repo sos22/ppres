@@ -308,9 +308,9 @@ IRSB *instrument_func(VgCallbackClosure *closure,
 		      IRType hWordTy);
 
 void load_event(const void *ptr, unsigned size, void *read_bytes,
-		unsigned long rsp);
+		unsigned long rsp, unsigned long rip);
 void store_event(void *ptr, unsigned size, const void *written_bytes,
-		 unsigned long rsp);
+		 unsigned long rsp, unsigned long rip);
 void footstep_event(Addr rip, Word rdx, Word rcx, Word rax,
 		    unsigned long xmm3a, unsigned long xmm0a);
 void syscall_event(VexGuestAMD64State *state);

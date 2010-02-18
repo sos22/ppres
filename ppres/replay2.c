@@ -56,7 +56,8 @@ struct client_event_record {
 	       EVENT_store,
 	       EVENT_client_request,
 	       EVENT_blocking,
-	       EVENT_unblocked } type;
+	       EVENT_unblocked,
+	       EVENT_signal } type;
 	unsigned nr_args;
 
 	/* Careful: this is on the stack of the thread which generated
@@ -217,6 +218,46 @@ safeish_read(int fd, void *buffer, size_t buffer_size)
 		}
 		x += this_time;
 	}
+}
+
+static jmp_buf
+safe_memcpy_jmpbuf;
+
+static void
+safe_memcpy_sighandler(Int signo, Addr addr)
+{
+	if (signo == VKI_SIGBUS || signo == VKI_SIGSEGV)
+		__builtin_longjmp(safe_memcpy_jmpbuf, 1);
+}
+
+static Bool
+safe_memcpy(void *dest, const void *src, unsigned size)
+{
+	vki_sigset_t sigmask;
+	Bool should_be_in_gen;
+
+	should_be_in_gen = VG_(in_generated_code);
+	check_fpu_control();
+	if (__builtin_setjmp(&safe_memcpy_jmpbuf)) {
+		/* longjmp(), for some reason, clobbers the FPU
+		   control work.  Put it back. */
+		load_fpu_control();
+		check_fpu_control();
+		VG_(in_generated_code) = should_be_in_gen;
+		VG_(set_fault_catcher)(NULL);
+		VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+		return False;
+	}
+	VG_(in_generated_code) = False;
+	VG_(sigprocmask)(VKI_SIG_SETMASK, NULL, &sigmask);
+	VG_(set_fault_catcher)(safe_memcpy_sighandler);
+	VG_(memcpy)(dest, src, size);
+	VG_(set_fault_catcher)(NULL);
+	VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+	VG_(in_generated_code) = should_be_in_gen;
+	check_fpu_control();
+
+	return True;
 }
 
 int
@@ -532,7 +573,7 @@ syscall_event(VexGuestAMD64State *state)
 				int expected = state->guest_RDX;
 				int observed;
 
-				load_event((int *)state->guest_RDI, 4, &observed, 0);
+				load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 				if (expected == observed) {
 					event(EVENT_blocking);
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
@@ -573,9 +614,11 @@ rdtsc_event(void)
 
 void
 load_event(const void *ptr, unsigned size, void *read_bytes,
-	   unsigned long rsp)
+	   unsigned long rsp, unsigned long rip)
 {
-	VG_(memcpy)(read_bytes, ptr, size);
+	while (!safe_memcpy(read_bytes, ptr, size)) {
+		event(EVENT_signal, rip, 11, 4, (UWord)ptr);
+	}
 	check_fpu_control();
 	if (IS_STACK(ptr, rsp)) {
 		if (!current_thread->in_monitor)
@@ -609,9 +652,12 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 
 void
 store_event(void *ptr, unsigned size, const void *written_bytes,
-	    unsigned long rsp)
+	    unsigned long rsp, unsigned long rip)
 {
-	VG_(memcpy)(ptr, written_bytes, size);
+	check_fpu_control();
+	while (!safe_memcpy(ptr, written_bytes, size)) {
+		event(EVENT_signal, rip, 11, 4, (UWord)ptr);
+	}
 	check_fpu_control();
 	if (IS_STACK(ptr, rsp)) {
 		if (!current_thread->in_monitor)
@@ -1006,53 +1052,37 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_control(), rec->cls, RECORD_thread_unblocked);
 		return;
 	}
+	case EVENT_signal: {
+		const struct signal_record *sr = payload;
+		replay_assert_eq(reason_control(), rec->cls, RECORD_signal);
+		replay_assert_eq(reason_other(),
+				 args[0],
+				 sr->rip);
+		replay_assert_eq(reason_other(),
+				 args[1],
+				 sr->signo);
+		replay_assert_eq(reason_other(),
+				 args[3],
+				 sr->virtaddr);
+		return;
+	}
 	case EVENT_nothing:
 		VG_(tool_panic)((Char *)"validate event when no event present?");
 	}
 	VG_(tool_panic)((Char *)"bad event type");
 }
 
-static jmp_buf
-replay_memory_jmpbuf;
-
-static void
-replay_memory_sighandler(Int signo, Addr addr)
-{
-	if (signo == VKI_SIGBUS || signo == VKI_SIGSEGV) {
-		/* Something bad has happened, and we can't replay the
-		   memory record which we captured.  This shouldn't
-		   happen if we follow the script, but it's possible
-		   if we've diverged. */
-		__builtin_longjmp(replay_memory_jmpbuf, 1);
-	}
-}
-
 static void
 replay_memory_record(struct record_header *rh,
 		     struct memory_record *mr)
 {
-	vki_sigset_t sigmask;
-	Bool should_be_in_gen;
-
-	should_be_in_gen = VG_(in_generated_code);
-	if (__builtin_setjmp(&replay_memory_jmpbuf)) {
-		VG_(in_generated_code) = should_be_in_gen;
-		VG_(set_fault_catcher)(NULL);
-		VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
+	if (!safe_memcpy(mr->ptr,
+			 mr + 1,
+			 rh->size - sizeof(*rh) - sizeof(*mr))) {
 		VG_(printf)("Signal trying to replay memory at %p -> thread failed\n",
 			    mr->ptr);
 		my__exit(1);
 	}
-
-	VG_(in_generated_code) = False;
-	VG_(sigprocmask)(VKI_SIG_SETMASK, NULL, &sigmask);
-	VG_(set_fault_catcher)(replay_memory_sighandler);
-	VG_(memcpy)(mr->ptr,
-		    mr + 1,
-		    rh->size - sizeof(*rh) - sizeof(*mr));
-	VG_(set_fault_catcher)(NULL);
-	VG_(sigprocmask)(VKI_SIG_SETMASK, &sigmask, NULL);
-	VG_(in_generated_code) = should_be_in_gen;
 }
 
 static void

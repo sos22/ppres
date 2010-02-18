@@ -15,18 +15,22 @@
 
 #define mk_helper_load(typ, suffix)                            \
 static typ                                                     \
-helper_load_ ## suffix (const typ *ptr, unsigned long rsp)     \
+ helper_load_ ## suffix (const typ *ptr, unsigned long rsp,    \
+			 unsigned long rip)		       \
 {							       \
         typ val;					       \
-	load_worker_function(ptr, sizeof(val), &val, rsp);     \
+	load_worker_function(ptr, sizeof(val), &val, rsp,      \
+			     rip);			       \
 	return val;					       \
 }
 
 #define mk_helper_store(typ, suffix)                           \
 static void						       \
-helper_store_ ## suffix (typ *ptr, typ val, unsigned long rsp) \
+ helper_store_ ## suffix (typ *ptr, typ val, unsigned long rsp,\
+			  unsigned long rip)		       \
 {							       \
-	store_worker_function(ptr, sizeof(val), &val, rsp);    \
+	store_worker_function(ptr, sizeof(val), &val, rsp,     \
+			      rip);			       \
 }
 
 #define mk_helpers(typ, suffix)                        \
@@ -47,20 +51,21 @@ mk_helpers(ultralong_t, 128)
 
 /* We're single-threaded, so these don't have to worry about locking
    or anything like that. */
-#define mk_helper_cas(typ, suffix)                     \
-static typ                                             \
-helper_cas_ ## suffix (typ *addr,                      \
-		       typ expected,                   \
-		       typ data,                       \
-                       unsigned long rsp)	       \
-{                                                      \
-	typ seen;                                      \
-                                                       \
-	seen = helper_load_ ## suffix (addr, rsp);     \
-	if (seen == expected)                          \
-		helper_store_ ## suffix (addr, data,   \
-					 rsp);	       \
-	return seen;                                   \
+#define mk_helper_cas(typ, suffix)				       \
+static typ						               \
+helper_cas_ ## suffix (typ *addr,				       \
+			       typ expected,			       \
+		       typ data,				       \
+                       unsigned long rsp,			       \
+		       unsigned long rip)			       \
+{								       \
+	typ seen;						       \
+								       \
+	seen = helper_load_ ## suffix (addr, rsp, rip);		       \
+	if (seen == expected)					       \
+		helper_store_ ## suffix (addr, data,		       \
+					 rsp, rip);		       \
+	return seen;						       \
 }
 
 mk_helper_cas(unsigned, 32)
@@ -133,8 +138,9 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 		}
 #undef HLP
 
-		args = mkIRExprVec_2(log_reads_expr(sb, exp->Iex.Load.addr),
-				     IRExpr_Get(OFFSET_amd64_RSP, Ity_I64));
+		args = mkIRExprVec_3(log_reads_expr(sb, exp->Iex.Load.addr),
+				     IRExpr_Get(OFFSET_amd64_RSP, Ity_I64),
+				     IRExpr_Get(OFFSET_amd64_RIP, Ity_I64));
 		dest = newIRTemp(sb->tyenv, exp->Iex.Load.ty);
 		f = unsafeIRDirty_1_N(dest,
 				      0,
@@ -171,10 +177,12 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 	IRDirty *f;
 	IRExpr **args;
 	IRExpr *rsp;
+	IRExpr *rip;
 	const char *helper_name;
 	void *helper_addr;
 
 	rsp = IRExpr_Get(OFFSET_amd64_RSP, Ity_I64);
+	rip = IRExpr_Get(OFFSET_amd64_RIP, Ity_I64);
 	args = NULL;
 	switch (typ) {
 	case Ity_I8:
@@ -199,24 +207,26 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 	case Ity_I128:
 		helper_name = "helper_store_128";
 		helper_addr = helper_store_128;
-		args = mkIRExprVec_4(addr,
+		args = mkIRExprVec_5(addr,
 				     IRExpr_Unop(Iop_128to64, data),
 				     IRExpr_Unop(Iop_128HIto64, data),
-				     rsp);
+				     rsp,
+				     rip);
 		break;
 	case Ity_V128:
 		helper_name = "helper_store_128";
 		helper_addr = helper_store_128;
-		args = mkIRExprVec_4(addr,
+		args = mkIRExprVec_5(addr,
 				     IRExpr_Unop(Iop_V128to64, data),
 				     IRExpr_Unop(Iop_V128HIto64, data),
-				     rsp);
+				     rsp,
+				     rip);
 		break;
 	default:
 		VG_(tool_panic)((signed char *)"Bad write");
 	}
 	if (!args)
-		args = mkIRExprVec_3(addr, data, rsp);
+		args = mkIRExprVec_4(addr, data, rsp, rip);
 	f = unsafeIRDirty_0_N(0,
 			      (HChar *)helper_name,
 			      VG_(fnptr_to_fnentry)(helper_addr),

@@ -7,6 +7,7 @@
 
 typedef unsigned long Word;
 typedef unsigned int UInt;
+typedef int Int;
 typedef unsigned long ULong;
 typedef unsigned long UWord;
 #define False false
@@ -165,6 +166,13 @@ main(int argc, char *argv[])
 			struct client_req_record *crr = payload;
 			epoch++;
 			printf("client request %lx\n", crr->flavour);
+			break;
+		}
+		case RECORD_signal: {
+			struct signal_record *sr = payload;
+			epoch++;
+			printf("signal %d at rip %lx, err %lx, addr %lx\n",
+			       sr->signo, sr->rip, sr->err, sr->virtaddr);
 			break;
 		}
 		default:
