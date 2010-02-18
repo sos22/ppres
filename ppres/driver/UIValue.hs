@@ -23,7 +23,6 @@ data UIValue = UIValueNull
              | UIValueInteger Integer
              | UIValueTraceLocation TraceLocation
              | UIValueThreadState ThreadState
-             | UIValueHistoryDiff HistoryDiff
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -46,7 +45,6 @@ instance Show UIValue where
     show (UIValueInteger r) = "0x" ++ (showHex r "")
     show (UIValueTraceLocation tr) = "{" ++ (show tr) ++ "}"
     show (UIValueThreadState ts) = show ts
-    show (UIValueHistoryDiff hd) = show hd
 
 first :: (a -> b) -> (a, c) -> (b, c)
 first f (x, y) = (f x, y)
@@ -161,8 +159,3 @@ instance AvailInUI ThreadState where
     toUI = UIValueThreadState
     fromUI (UIValueThreadState i) = Right i
     fromUI e = coerceError "thread state" e
-
-instance AvailInUI HistoryDiff where
-    toUI = UIValueHistoryDiff
-    fromUI (UIValueHistoryDiff i) = Right i
-    fromUI e = coerceError "history diff" e

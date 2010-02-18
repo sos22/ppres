@@ -45,8 +45,6 @@ data UIExpression = UIDummyFunction
                   | UIVGIntermediate UIExpression Word64
                   | UIEnum UIExpression
                   | UILiteral UIValue
-                  | UIHistDiff UIExpression UIExpression
-                  | UIHistFixup UIExpression UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -143,8 +141,6 @@ expressionParser =
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
                twoExprArgParser "flippair" UIFlipPair,
-               twoExprArgParser "histdiff" UIHistDiff,
-               twoExprArgParser "histfixup" UIHistFixup,
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
@@ -250,14 +246,6 @@ evalExpression ws f =
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
                     return $ findControlFlowRaces a' b'
-      UIHistDiff a b ->
-          toUI $ do a' <- fromUI $ evalExpression ws a
-                    b' <- fromUI $ evalExpression ws b
-                    return $ historyDiff a' b'
-      UIHistFixup a b ->
-          toUI $ do a' <- fromUI $ evalExpression ws a
-                    b' <- fromUI $ evalExpression ws b
-                    return $ applyHistoryDiff a' b'
       UIRemoveFootsteps e ->
           toUI $ do es <- fromUI $ evalExpression ws e
                     let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
