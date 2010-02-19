@@ -355,18 +355,84 @@ advanceHist hist =
       Nothing -> hist
       Just h -> h
 
+{- Standard queue structure -- head is in the right order, tail is
+   reversed, giving fast append-tail and pop-head operations. -}
+data Queue a = Queue { q_head :: [a],
+                       q_tail :: [a] }
 
-data EnumerationState = EnumerationState [History]
+emptyQueue :: Queue a
+emptyQueue = Queue [] []
 
-addEnumStates :: EnumerationState -> [History] -> EnumerationState
-addEnumStates (EnumerationState t) x = EnumerationState $ x ++ t
+appendQueue :: a -> Queue a -> Queue a
+appendQueue item q = q { q_tail = item:(q_tail q) }
+
+queuePop :: Queue a -> Maybe (a, Queue a)
+queuePop q =
+    case q_head q of
+      (a:as) -> Just (a, q { q_head = as })
+      [] ->
+          case q_tail q of
+            [] -> Nothing
+            _ -> queuePop $ q { q_head = reverse $ q_tail q,
+                                q_tail = [] }
+
+queueToList :: Queue a -> [a] -> [a]
+queueToList q trail =
+    (q_head q) ++ (reverse $ q_tail q) ++ trail
+
+singletonQueue :: a -> Queue a
+singletonQueue i = appendQueue i emptyQueue
+
+rs_epoch :: ReplayState -> Topped EpochNr
+rs_epoch (ReplayStateOkay x) = Finite x
+rs_epoch (ReplayStateFinished) = Infinity
+rs_epoch (ReplayStateFailed _ _ _ e _) = Finite e
+
+{- We use a breadth-first search locally, and depth-first globally.
+   The idea is that you start off doing breadth first, and then if you
+   advance a long way you switch to depth first.  This is implemented
+   by having a current generation of replay points which is maintained
+   as a queue and a backlog list which is maintained as a stack.  If
+   we try to add a new state which is more than some number of epochs
+   ahead of the current state then we flush the queue to the stack and
+   start a new queue.  When we need to pick a state, we grab the queue
+   first, if it's non-empty, and then fall back to the stack if
+   there's nothing available there. -}
+data EnumerationState = EnumerationState {ens_stack :: [History],
+                                          ens_queue :: Queue History,
+                                          ens_current :: History }
+
+addEnumState :: History -> EnumerationState -> EnumerationState
+addEnumState new es =
+    let currentEpoch = rs_epoch $ replayState $ ens_current es
+        newEpoch = rs_epoch $ replayState new
+        flushQueue = newEpoch > currentEpoch - 10
+        new_stack = if flushQueue
+                    then queueToList (ens_queue es) (ens_stack es)
+                    else ens_stack es
+        new_queue = if flushQueue
+                    then singletonQueue new
+                    else appendQueue new $ ens_queue es
+    in es { ens_stack = new_stack,
+            ens_queue = new_queue }
+
+addEnumStates :: [History] -> EnumerationState -> EnumerationState
+addEnumStates xs es = foldr addEnumState es xs
 
 enumStateFinished :: History -> EnumerationState
-enumStateFinished hist = EnumerationState [hist]
+enumStateFinished hist = EnumerationState {ens_stack = [hist],
+                                           ens_queue = emptyQueue,
+                                           ens_current = hist}
 
 getNextExploreState :: EnumerationState -> Maybe (History, EnumerationState)
-getNextExploreState (EnumerationState []) = Nothing
-getNextExploreState (EnumerationState (a:as)) = Just (a, EnumerationState as)
+getNextExploreState es =
+    case queuePop $ ens_queue es of
+      Nothing ->
+          case ens_stack es of
+            [] -> Nothing
+            (a:as) -> Just (a, es { ens_stack = as })
+      Just (a, new_queue) ->
+          Just (a, es {ens_queue = new_queue})
 
 {- Enumerate all ``interesting'' small-step advances we can make from
    this state.  We stop as soon as we find a replay which succeeds.
@@ -440,7 +506,7 @@ enumerateHistoriesSmallStep start trailer =
               thread_action t (acc, targ) =
                   setThread (fst $ runMemoryThread start t (acc + 1)) targ
               thread_actions = concat [map (thread_action t) (racing_access_for_thread t) | t <- threads]
-              result = addEnumStates trailer thread_actions
+              result = addEnumStates thread_actions trailer
           in result
 
 {- Enumerate big-step advances we can make in the history.  This
@@ -479,4 +545,4 @@ enumerateHistories' startState =
             ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
 
 enumerateHistories :: History -> Maybe History
-enumerateHistories start = enumerateHistories' $ EnumerationState [start]
+enumerateHistories start = enumerateHistories' $ EnumerationState [start] emptyQueue start
