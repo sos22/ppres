@@ -520,7 +520,7 @@ send_expression(const struct expression *e)
 			expr(e->u.reg.name, e->u.reg.val);
 			break;
 		case EXPR_MEM:
-			expr(e->u.mem.size, e->u.mem.when.epoch_nr, e->u.mem.when.access_nr);
+			expr(e->u.mem.size, e->u.mem.when.access_nr);
 			send_expression(e->u.mem.ptr_e);
 			send_expression(e->u.mem.val);
 			break;

@@ -129,7 +129,6 @@ struct response_string {
 
 
 typedef struct {
-	unsigned long epoch_nr;
 	unsigned long access_nr;
 } replay_coord_t;
 

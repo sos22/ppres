@@ -76,16 +76,16 @@ define dump_control_command
       printf "kill\n"
     else
       if $cmd == 0x1236
-	printf "run to %ld:%ld\n", ($arg0)->u.run.when.epoch_nr, ($arg0)->u.run.when.access_nr
+	printf "run to %ld\n", ($arg0)->u.run.when.access_nr
       else
 	if $cmd == 0x1237
-	  printf "trace to %ld:%ld\n", ($arg0)->u.trace.when.epoch_nr, ($arg0)->u.trace.when.access_nr
+	  printf "trace to %ld\n", ($arg0)->u.trace.when.access_nr
 	else
 	  if $cmd == 0x1239
 	    printf "trace thread %d\n", ($arg0)->u.trace_thread.thread
 	  else
 	    if $cmd == 0x123a
-	      printf "trace address 0x%lx %ld:%ld\n", ($arg0)->u.trace_mem.address, ($arg0)->u.trace_mem.when.epoch_nr, ($arg0)->u.trace_mem.when.access_nr
+	      printf "trace address 0x%lx %ld\n", ($arg0)->u.trace_mem.address, ($arg0)->u.trace_mem.when.access_nr
 	    else
 	      if $cmd == 0x123b
 		printf "thread state\n"
@@ -94,7 +94,7 @@ define dump_control_command
 		  printf "replay state\n"
 		else
 		  if $cmd == 0x123d
-		    printf "control trace %ld:%ld\n", ($arg0)->u.control_trace.when.epoch_nr, ($arg0)->u.control_trace.when.access_nr
+		    printf "control trace %ld\n", ($arg0)->u.control_trace.when.access_nr
 		  else
 		    if $cmd == 0x123e
 		      printf "fetch memory $lx %lx\n", ($arg0)->u.get_memory.addr, ($arg0)->u.get_memory.size

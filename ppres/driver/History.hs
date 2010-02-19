@@ -41,9 +41,7 @@ mkHistory h = History (last_coord h) (length h) (listToDl h)
 {- Estimate of cost of going from a to b. -}
 replayCost :: ReplayCoord -> ReplayCoord -> Integer
 replayCost a b =
-    if rc_epoch a == rc_epoch b
-    then toInteger $ rc_access b - rc_access a
-    else toInteger $ (rc_epoch b - rc_epoch a) * 10
+    toInteger $ rc_access b - rc_access a
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
 doHistoryEntry w (HistoryRun cntr) =
