@@ -76,43 +76,39 @@ define dump_control_command
       printf "kill\n"
     else
       if $cmd == 0x1236
-	printf "run to %ld\n", ($arg0)->u.run.nr
+	printf "run to %ld:%ld\n", ($arg0)->u.run.when.epoch_nr, ($arg0)->u.run.when.access_nr
       else
 	if $cmd == 0x1237
-	  printf "trace to %ld\n", ($arg0)->u.trace.nr
+	  printf "trace to %ld:%ld\n", ($arg0)->u.trace.when.epoch_nr, ($arg0)->u.trace.when.access_nr
 	else
-	  if $cmd == 0x1238
-	    printf "run memory to %ld\n", ($arg0)->u.runm.nr
+	  if $cmd == 0x1239
+	    printf "trace thread %d\n", ($arg0)->u.trace_thread.thread
 	  else
-	    if $cmd == 0x1239
-	      printf "trace thread %d\n", ($arg0)->u.trace_thread.thread
+	    if $cmd == 0x123a
+	      printf "trace address 0x%lx %ld:%ld\n", ($arg0)->u.trace_mem.address, ($arg0)->u.trace_mem.when.epoch_nr, ($arg0)->u.trace_mem.when.access_nr
 	    else
-	      if $cmd == 0x123a
-		printf "trace address 0x%lx\n", ($arg0)->u.trace_mem.address
+	      if $cmd == 0x123b
+		printf "thread state\n"
 	      else
-		if $cmd == 0x123b
-		  printf "thread state\n"
+		if $cmd == 0x123c
+		  printf "replay state\n"
 		else
-		  if $cmd == 0x123c
-		    printf "replay state\n"
+		  if $cmd == 0x123d
+		    printf "control trace %ld:%ld\n", ($arg0)->u.control_trace.when.epoch_nr, ($arg0)->u.control_trace.when.access_nr
 		  else
-		    if $cmd == 0x123d
-		      printf "control trace %ld\n", ($arg0)->u.control_trace.nr
+		    if $cmd == 0x123e
+		      printf "fetch memory $lx %lx\n", ($arg0)->u.get_memory.addr, ($arg0)->u.get_memory.size
 		    else
-		      if $cmd == 0x123e
-			printf "fetch memory $lx %lx\n", ($arg0)->u.get_memory.addr, ($arg0)->u.get_memory.size
+		      if $cmd == 0x123f
+			printf "vg intermediate %lx\n", ($arg0)->u.vg_intermediate.addr
 		      else
-			if $cmd == 0x123f
-			  printf "vg intermediate %lx\n", ($arg0)->u.vg_intermediate.addr
+			if $cmd == 0x1240
+			  printf "next thread\n"
 			else
-			  if $cmd == 0x1240
-			    printf "next thread\n"
+			  if $cmd == 0x1241
+			    printf "set thread %d\n", ($arg0)->u.set_thread.tid
 			  else
-			    if $cmd == 0x1241
-			      printf "set thread %d\n", ($arg0)->u.set_thread.tid
-			    else
-			      inspect /x $arg0
-			    end
+			    inspect /x $arg0
 			  end
 			end
 		      end

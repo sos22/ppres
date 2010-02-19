@@ -5,7 +5,7 @@
 #define WORKER_KILL 0x1235
 #define WORKER_RUN 0x1236
 #define WORKER_TRACE 0x1237
-#define WORKER_RUNM 0x1238
+
 
 #define WORKER_TRACE_ADDRESS 0x123a
 #define WORKER_THREAD_STATE 0x123b
@@ -128,6 +128,12 @@ struct response_string {
 #define EXPR_NOT 20
 
 
+typedef struct {
+	unsigned long epoch_nr;
+	unsigned long access_nr;
+} replay_coord_t;
+
+
 extern Bool VG_(in_generated_code);
 
 
@@ -147,10 +153,7 @@ struct expression {
 			unsigned long val;
 		} imported;
 		struct {
-			unsigned long epoch_nr;
-			unsigned long record_nr;
-			unsigned mem_access_nr;
-			unsigned threadid;
+			replay_coord_t when;
 			unsigned size;
 			const struct expression *ptr_e;
 			const struct expression *val;
@@ -191,7 +194,7 @@ struct replay_thread {
 	 * what we return. */
 	ULong rdtsc_result;
 
-	unsigned long last_epoch_nr;
+	replay_coord_t last_run;
 	Bool dead;
 	Bool in_monitor;
 	Bool blocked;
@@ -215,19 +218,17 @@ struct control_command {
 	unsigned cmd;
 	union {
 		struct {
-			long nr;
+			replay_coord_t when;
 		} run;
 		struct {
-			long nr;
+			replay_coord_t when;
 		} trace;
 		struct {
-			long nr;
+			replay_coord_t when;
 		} control_trace;
 		struct {
-			long nr;
-		} runm;
-		struct {
 			long address;
+			replay_coord_t when;
 		} trace_mem;
 		struct {
 			unsigned long addr;
@@ -245,9 +246,8 @@ struct control_command {
 extern struct replay_thread *head_thread;
 extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
-extern unsigned access_nr;
-extern unsigned long epoch_nr;
 extern struct record_consumer logfile;
+extern replay_coord_t now;
 
 int ui_loop(void);
 int do_snapshot(int parent_fd);

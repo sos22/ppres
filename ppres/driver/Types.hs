@@ -14,7 +14,8 @@ type ThreadId = Integer
 type VariableName = String
 
 newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord, Read)
-newtype EpochNr = EpochNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read)
+newtype EpochNr = EpochNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read, Integral)
+newtype AccessNr = AccessNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read, Integral)
 
 data Worker = Worker { worker_fd :: Socket,
                        worker_alive :: IORef Bool }
@@ -22,15 +23,24 @@ data Worker = Worker { worker_fd :: Socket,
 instance Show Worker where
     show w = "worker fd " ++ (show $ worker_fd w)
 
-data TraceLocation = TraceLocation { trc_epoch :: EpochNr,
-                                     trc_record :: RecordNr,
-                                     trc_access :: Integer,
-                                     trc_thread :: ThreadId } deriving Eq
+data ReplayCoord = ReplayCoord { rc_epoch :: EpochNr,
+                                 rc_access :: AccessNr } deriving (Eq)
 
-instance Show TraceLocation where
-    show tl = (show $ trc_epoch tl) ++ ":" ++ (show $ trc_record tl) ++ ":" ++ (show $ trc_access tl) ++ ":" ++ (show $ trc_thread tl)
+instance Ord ReplayCoord where
+    compare a b =
+        if rc_epoch a < rc_epoch b
+        then LT
+        else if rc_epoch a == rc_epoch b
+             then rc_access a `compare` rc_access b
+             else GT
 
-instance Read TraceLocation where
+startCoord :: ReplayCoord
+startCoord = ReplayCoord 0 0
+
+instance Show ReplayCoord where
+    show tl = (show $ rc_epoch tl) ++ ":" ++ (show $ rc_access tl)
+
+instance Read ReplayCoord where
     readsPrec _ x =
         let readChar _ [] = []
             readChar c (c':o) = if c == c' then [o]
@@ -38,12 +48,8 @@ instance Read TraceLocation where
         in
         do (epoch,trail1) <- reads x
            trail2 <- readChar ':' trail1
-           (record,trail3) <- reads trail2
-           trail4 <- readChar ':' trail3
-           (access,trail5) <- reads trail4
-           trail6 <- readChar ':' trail5
-           (thread,trail7) <- reads trail6
-           return (TraceLocation epoch record access thread, trail7)
+           (access,trail3) <- reads trail2
+           return (ReplayCoord epoch access, trail3)
                               
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
@@ -110,7 +116,7 @@ instance Read TraceEntry where
              _ -> []
 
 data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
-                                 trc_loc :: TraceLocation } deriving (Show, Read)
+                                 trc_loc :: ReplayCoord } deriving (Show, Read)
 
 data RegisterName = REG_RAX
                   | REG_RDX
@@ -153,7 +159,7 @@ data Binop = BinopCombine
 
 data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
-                | ExpressionMem Int TraceLocation Expression Expression
+                | ExpressionMem Int ReplayCoord Expression Expression
                 | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression deriving (Show, Read)
@@ -161,13 +167,13 @@ data Expression = ExpressionRegister RegisterName Word64
 data ReplayFailureReason = FailureReasonControl 
                          | FailureReasonData Expression Expression deriving (Show, Read)
 
-data ReplayState = ReplayStateOkay EpochNr
+data ReplayState = ReplayStateOkay ReplayCoord
                  | ReplayStateFinished
-                 | ReplayStateFailed String RecordNr ThreadId EpochNr ReplayFailureReason deriving (Show, Read)
+                 | ReplayStateFailed String ThreadId ReplayCoord ReplayFailureReason deriving (Show, Read)
 
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,
-                                 ts_last_epoch :: EpochNr,
+                                 ts_last_run :: ReplayCoord,
                                  ts_last_rip :: Word64 } deriving Show
 
 instance Monad (Either a) where
@@ -237,6 +243,9 @@ instance Forcable x => Forcable (Topped x) where
 instance Forcable EpochNr where
     force (EpochNr x) = force x
 
+instance Forcable AccessNr where
+    force (AccessNr x) = force x
+
 instance Forcable Integer where
     force = seq
 
@@ -250,6 +259,8 @@ instance Forcable x => Forcable (Maybe x) where
     force Nothing = id
     force (Just x) = force x
 
+instance Forcable ReplayCoord where
+    force rc = (force $ rc_epoch rc) . (force $ rc_access rc)
 
 data DListEntry a = DListEntry {dle_prev :: Maybe (DListEntry a),
                                 dle_next :: Maybe (DListEntry a),

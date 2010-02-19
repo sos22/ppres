@@ -1,4 +1,4 @@
-module Worker(killWorker, traceWorker, runMemoryWorker,
+module Worker(killWorker, traceWorker,
               takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker)
@@ -29,31 +29,33 @@ sendWorkerCommand worker cp =
         then error $ "send command to dead worker on fd " ++ (show $ worker_fd worker)
         else sendSocketCommand (worker_fd worker) cp
 
-fromTI :: Topped Integer -> Word64
-fromTI Infinity = -1
-fromTI (Finite x) = fromInteger x
+fromRC :: Topped ReplayCoord -> [Word64]
+fromRC Infinity = [-1, -1]
+fromRC (Finite (ReplayCoord (EpochNr epoch) (AccessNr acc))) = [fromInteger epoch, fromInteger acc]
 
-fromEN :: Topped EpochNr -> Word64
-fromEN Infinity = -1
-fromEN (Finite (EpochNr x)) = fromInteger x
+snapshotPacket :: ControlPacket
+snapshotPacket = ControlPacket 0x1234 []
 
 killPacket :: ControlPacket
 killPacket = ControlPacket 0x1235 []
 
-runPacket :: Topped EpochNr -> ControlPacket
-runPacket cntr = ControlPacket 0x1236 [fromEN cntr]
+runPacket :: Topped ReplayCoord -> ControlPacket
+runPacket x = ControlPacket 0x1236 $ fromRC x
 
-tracePacket :: Topped EpochNr -> ControlPacket
-tracePacket cntr = ControlPacket 0x1237 [fromEN cntr]
+tracePacket :: Topped ReplayCoord -> ControlPacket
+tracePacket x = ControlPacket 0x1237 $ fromRC x
 
-runMemoryPacket :: Integer -> ControlPacket
-runMemoryPacket cntr = ControlPacket 0x1238 [fromInteger cntr]
+traceAddressPacket :: Word64 -> Topped ReplayCoord -> ControlPacket
+traceAddressPacket addr to = ControlPacket 0x123a $ addr:(fromRC to)
 
-traceAddressPacket :: Word64 -> ControlPacket
-traceAddressPacket addr = ControlPacket 0x123a [addr]
+threadStatePacket :: ControlPacket
+threadStatePacket = ControlPacket 0x123b []
 
-controlTracePacket :: Topped Integer -> ControlPacket
-controlTracePacket cntr = ControlPacket 0x123d [fromTI cntr]
+replayStatePacket :: ControlPacket
+replayStatePacket = ControlPacket 0x123c []
+
+controlTracePacket :: Topped ReplayCoord -> ControlPacket
+controlTracePacket to = ControlPacket 0x123d $ fromRC to
 
 fetchMemoryPacket :: Word64 -> Word64 -> ControlPacket
 fetchMemoryPacket addr size = ControlPacket 0x123e [addr, size]
@@ -80,7 +82,7 @@ killWorker worker =
                   writeIORef (worker_alive worker) False
           else error "can't kill worker?"
 
-runWorker :: Worker -> (Topped EpochNr) -> IO Bool
+runWorker :: Worker -> Topped ReplayCoord -> IO Bool
 runWorker worker = trivCommand worker . runPacket
 
 ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
@@ -88,11 +90,9 @@ ancillaryDataToTrace [] = []
 ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
-    let (loc', other_args) = splitAt 4 args
-        loc = TraceLocation { trc_epoch = EpochNr $ fromIntegral $ loc'!!0,
-                              trc_record = RecordNr $ fromIntegral $ loc'!!1,
-                              trc_access = toInteger $ loc'!!2,
-                              trc_thread = fromIntegral $ loc'!!3 }
+    let (loc', other_args) = splitAt 2 args
+        loc = ReplayCoord { rc_epoch = EpochNr $ fromIntegral $ loc'!!0,
+                            rc_access = AccessNr $ fromIntegral $ loc'!!1 }
         (entry, rest) =
             case code of
               1 -> (TraceFootstep { trc_foot_rip = fromIntegral $ other_args!!0,
@@ -128,19 +128,15 @@ traceCmd worker pkt =
     do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
        return $ ancillaryDataToTrace args
 
-traceWorker :: Worker -> Topped EpochNr -> IO [TraceRecord]
+traceWorker :: Worker -> Topped ReplayCoord -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
 
-traceAddressWorker :: Worker -> Word64 -> IO [TraceRecord]
-traceAddressWorker worker = traceCmd worker . traceAddressPacket
-
-runMemoryWorker :: Worker -> Integer -> IO [TraceRecord]
-runMemoryWorker worker = traceCmd worker . runMemoryPacket
+traceAddressWorker :: Worker -> Word64 -> Topped ReplayCoord -> IO [TraceRecord]
+traceAddressWorker worker addr to = traceCmd worker $ traceAddressPacket addr to
 
 takeSnapshot :: Worker -> IO (Maybe Worker)
 takeSnapshot worker =
-    do (ResponsePacket s _) <-
-           sendWorkerCommand worker (ControlPacket 0x1234 [])
+    do (ResponsePacket s _) <- sendWorkerCommand worker snapshotPacket
        if s
         then do newFd <- recvSocket (worker_fd worker)
                 newAlive <- newIORef True
@@ -150,24 +146,23 @@ takeSnapshot worker =
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
-        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_epoch, last_rip]) <- consume
+        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_epoch, last_access, last_rip]) <- consume
                        return (fromIntegral $ tid,
                                ThreadState (is_dead /= 0)
                                            (is_blocked /= 0)
-                                           (EpochNr $ fromIntegral last_epoch)
+                                           (ReplayCoord (EpochNr $ fromIntegral last_epoch) (AccessNr $ fromIntegral last_access))
                                            last_rip)
     in
-      do (ResponsePacket s params) <-
-             sendWorkerCommand worker (ControlPacket 0x123b [])
+      do (ResponsePacket s params) <- sendWorkerCommand worker threadStatePacket
          return $ if s
                   then evalConsumer params (consumeMany parseItem)
                   else error "error getting thread state"
 
  
 parseReplayState :: [ResponseData] -> ReplayState
-parseReplayState [ResponseDataAncillary 10 [epoch_nr]] = ReplayStateOkay $ EpochNr $ fromIntegral epoch_nr
-parseReplayState (ResponseDataAncillary 11 [x, record_nr, tid, epoch_nr]:(ResponseDataString s):items) =
-    ReplayStateFailed s (RecordNr $ fromIntegral record_nr) (fromIntegral tid) (EpochNr $ fromIntegral epoch_nr) $
+parseReplayState [ResponseDataAncillary 10 [epoch_nr, access_nr]] = ReplayStateOkay $ ReplayCoord (EpochNr $ fromIntegral epoch_nr) (AccessNr $ fromIntegral access_nr)
+parseReplayState (ResponseDataAncillary 11 [x, tid, epoch_nr, access_nr]:(ResponseDataString s):items) =
+    ReplayStateFailed s (fromIntegral tid) (ReplayCoord (EpochNr $ fromIntegral epoch_nr) (AccessNr $ fromIntegral access_nr)) $
                       case x of
                         0 -> case items of
                                [] -> FailureReasonControl
@@ -179,8 +174,7 @@ parseReplayState x = error $ "bad replay state " ++ (show x)
 
 replayStateWorker :: Worker -> IO ReplayState
 replayStateWorker worker =
-    do (ResponsePacket _ params) <-
-           sendWorkerCommand worker (ControlPacket 0x123c [])
+    do (ResponsePacket _ params) <- sendWorkerCommand worker replayStatePacket
        return $ parseReplayState params
 
 data ConsumerMonad a b = ConsumerMonad { runConsumer :: [a] -> (b, [a]) }
@@ -273,13 +267,11 @@ parseExpression =
        case params of
          [0, val] -> return $ ExpressionConst val
          [1, reg, val] -> return $ ExpressionRegister (parseRegister reg) val
-         [2, sz, epoch, rec, acc,  thr] ->
+         [2, sz, epoch, acc] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) (TraceLocation { trc_epoch = EpochNr $ fromIntegral epoch,
-                                                                          trc_record = RecordNr $ fromIntegral rec,
-                                                                          trc_access = fromIntegral acc,
-                                                                          trc_thread = fromIntegral thr }) ptr val
+                return $ ExpressionMem (fromIntegral sz) (ReplayCoord { rc_epoch = EpochNr $ fromIntegral epoch,
+                                                                        rc_access = fromIntegral acc}) ptr val
          [3, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression
@@ -293,10 +285,9 @@ parseExpressions :: [ResponseData] -> [Expression]
 parseExpressions items =
     evalConsumer items $ consumeMany parseExpression
 
-controlTraceWorker :: Worker -> Topped Integer -> IO [Expression]
+controlTraceWorker :: Worker -> Topped ReplayCoord -> IO [Expression]
 controlTraceWorker worker cntr =
-    do (ResponsePacket _ params) <-
-           sendWorkerCommand worker $ controlTracePacket cntr
+    do (ResponsePacket _ params) <- sendWorkerCommand worker $ controlTracePacket cntr
        return $ parseExpressions params
 
 fetchMemoryWorker :: Worker -> Word64 -> Word64 -> IO (Maybe [Word8])

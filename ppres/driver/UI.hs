@@ -18,10 +18,9 @@ import Analysis
 import History
 
 data UIExpression = UIDummyFunction
-                  | UIRun UIExpression (Topped EpochNr)
-                  | UITrace UIExpression (Topped EpochNr)
-                  | UITraceAddress UIExpression Word64
-                  | UIRunMemory UIExpression Integer
+                  | UIRun UIExpression (Topped ReplayCoord)
+                  | UITrace UIExpression (Topped ReplayCoord)
+                  | UITraceAddress UIExpression Word64 (Topped ReplayCoord)
                   | UISetThread UIExpression ThreadId
                   | UIDir
                   | UIVarName VariableName
@@ -32,15 +31,10 @@ data UIExpression = UIDummyFunction
                   | UIRemoveFootsteps UIExpression
                   | UIFindRacingAccesses UIExpression UIExpression
                   | UIReplayState UIExpression
-                  | UIControlTrace UIExpression (Topped Integer)
+                  | UIControlTrace UIExpression (Topped ReplayCoord)
                   | UIFindControlRaces UIExpression UIExpression
-                  | UIFixHist UIExpression
-                  | UIFixHist2 UIExpression
-                  | UIAdvHist UIExpression
-                  | UITruncHist UIExpression (Topped EpochNr)
+                  | UITruncHist UIExpression (Topped ReplayCoord)
                   | UIFetchMemory UIExpression Word64 Word64
-                  | UIFindCritPairs UIExpression
-                  | UIFlipPair UIExpression UIExpression
                   | UIIndex UIExpression Int
                   | UIVGIntermediate UIExpression Word64
                   | UIEnum UIExpression
@@ -75,17 +69,16 @@ expressionParser =
                a <- expressionParser
                b <- expressionParser
                return $ constructor a b
-        topped_int = option Infinity (liftM Finite $ P.integer command_lexer)
-        topped_en = liftM (fmap EpochNr) topped_int
         parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
         parseEpochNr = keyword "EpochNr" >> liftM EpochNr parseInteger
+        parseAccessNr = keyword "AccessNr" >> liftM AccessNr parseInteger
+        parseReplayCoord = do e <- parseEpochNr
+                              a <- parseAccessNr
+                              return $ ReplayCoord e a                              
         parseThreadId = parseInteger
         parseInteger = P.integer command_lexer
         parseHistoryEntry = tchoice [do keyword "HistoryRun"
-                                        liftM HistoryRun $ parseTopped parseEpochNr,
-                                     do keyword "HistoryRunMemory"
-                                        i <- parseInteger
-                                        return $ HistoryRunMemory i,
+                                        liftM HistoryRun $ parseTopped parseReplayCoord,
                                      do keyword "HistorySetThread"
                                         tid <- parseThreadId
                                         return $ HistorySetThread tid]
@@ -95,31 +88,28 @@ expressionParser =
                oneExprArgParser "thread_state" UIThreadState,
                do keyword "run"
                   snap <- expressionParser
-                  cntr <- topped_en
+                  cntr <- parseTopped parseReplayCoord
                   return $ UIRun snap cntr,
                do keyword "trace"
                   snap <- expressionParser
-                  cntr <- topped_en
+                  cntr <- parseTopped parseReplayCoord
                   return $ UITrace snap cntr,
                do keyword "control_trace"
                   snap <- expressionParser
-                  cntr <- topped_int
+                  cntr <- parseTopped parseReplayCoord
                   return $ UIControlTrace snap cntr,
                do keyword "tracem"
                   snap <- expressionParser
                   addr <- parseInteger
-                  return $ UITraceAddress snap $ fromInteger addr,
+                  to <- parseTopped parseReplayCoord
+                  return $ UITraceAddress snap (fromInteger addr) to,
                do keyword "setthread"
                   snap <- expressionParser
                   tid <- parseThreadId
                   return $ UISetThread snap tid,
-               do keyword "runm"
-                  snap <- expressionParser
-                  n <- parseInteger
-                  return $ UIRunMemory snap n,
                do keyword "trunc"
                   hist <- expressionParser
-                  n <- topped_en
+                  n <- parseTopped parseReplayCoord
                   return $ UITruncHist hist n,
                do keyword "index"
                   hist <- expressionParser
@@ -140,15 +130,10 @@ expressionParser =
                twoExprArgParser "pair" UIPair,
                twoExprArgParser "findraces" UIFindRacingAccesses,
                twoExprArgParser "findcontrolraces" UIFindControlRaces,
-               twoExprArgParser "flippair" UIFlipPair,
                oneExprArgParser "first" UIFirst,
                oneExprArgParser "second" UISecond,
                oneExprArgParser "defootstep" UIRemoveFootsteps,
                oneExprArgParser "replay_state" UIReplayState,
-               oneExprArgParser "fixhist" UIFixHist,
-               oneExprArgParser "advhist" UIAdvHist,
-               oneExprArgParser "fixhist2" UIFixHist2,
-               oneExprArgParser "findcritpairs" UIFindCritPairs,
                oneExprArgParser "enum" UIEnum,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
@@ -213,9 +198,6 @@ evalExpression ws f =
           case evalExpression ws a of
             UIValuePair _ a'' -> a''
             _ -> UIValueError "needed a pair for second"
-      UIFixHist a -> withSnapshot ws a $ \s -> fixControlHistory s
-      UIAdvHist a -> withSnapshot ws a $ \s -> advanceHist s
-      UIFixHist2 a -> withSnapshot ws a $ \s -> fixControlHistory' s
       UITruncHist hist n ->
           withSnapshot ws hist $ \s -> truncateHistory s n
       UIDir ->
@@ -224,10 +206,8 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> run s cntr
       UITrace name cntr ->
           withSnapshot ws name $ \s -> trace s cntr
-      UITraceAddress name addr ->
-          withSnapshot ws name $ \s -> traceAddress s addr
-      UIRunMemory name cntr ->
-          withSnapshot ws name $ \s -> runMemory s cntr
+      UITraceAddress name addr to ->
+          withSnapshot ws name $ \s -> traceAddress s addr to
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
       UISetThread snap tid ->
@@ -238,10 +218,6 @@ evalExpression ws f =
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
                     return $ findRacingAccesses a' b'
-      UIFlipPair a b ->
-          toUI $ do a' <- fromUI $ evalExpression ws a
-                    b' <- fromUI $ evalExpression ws b
-                    return $ flipPair a' b'
       UIFindControlRaces a b ->
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b
@@ -255,8 +231,6 @@ evalExpression ws f =
           withSnapshot ws hist $ \s -> fetchMemory s addr size
       UIVGIntermediate hist addr ->
           withSnapshot ws hist $ \s -> vgIntermediate s addr
-      UIFindCritPairs hist ->
-          withSnapshot ws hist findCritPairs
       UIIndex lst idx ->
           case evalExpression ws lst of
             UIValueList lst' ->

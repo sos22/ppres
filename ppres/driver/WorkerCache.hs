@@ -4,7 +4,7 @@
    are responsible for mapping them into Workers as and when
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, run,
-                   trace, traceAddress, runMemory,
+                   trace, traceAddress,
                    threadState, replayState, controlTrace,
                    fetchMemory, vgIntermediate, nextThread,
                    setThread) where
@@ -12,7 +12,6 @@ module WorkerCache(initWorkerCache, destroyWorkerCache, run,
 import Data.Word
 import Control.Monad.State
 import Data.IORef
-import qualified Debug.Trace
 import Data.List
 
 import System.IO.Unsafe
@@ -21,6 +20,7 @@ import Types
 import Worker
 import History
 
+--import qualified Debug.Trace
 dt :: String -> a -> a
 dt = const id
 
@@ -171,7 +171,7 @@ getWorker target =
        mapM_ (killWorker . snd) expired_lru
        
        new_worker <- reallySnapshot best_worker
-       if best_hist == target
+       dt ("found " ++ (show best_hist) ++ " for " ++ (show target)) $ if best_hist == target
         then return new_worker
         else let doFixup currentWorker currentHistory cost_base =
                      do costOrPartial <- fixupWorkerForHist 50 currentWorker currentHistory target
@@ -206,23 +206,17 @@ traceCmd he start w =
                             killWorker worker
                             return (newHist, r)
 
-run :: History -> Topped EpochNr -> History
+run :: History -> Topped ReplayCoord -> History
 run start cntr = appendHistory start $ HistoryRun cntr
 
-trace :: History -> Topped EpochNr -> (History, [TraceRecord])
+trace :: History -> Topped ReplayCoord -> (History, [TraceRecord])
 trace start cntr =
     dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
-traceAddress :: History -> Word64 -> (History, [TraceRecord])
-traceAddress start addr =
-    traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr
-
-runMemory :: History -> Integer -> (History, [TraceRecord])
-runMemory start cntr =
-    dt ("runMemory " ++ (show start) ++ " " ++ (show cntr)) $
-    traceCmd (HistoryRunMemory cntr) start $
-            \worker -> runMemoryWorker worker cntr
+traceAddress :: History -> Word64 -> Topped ReplayCoord -> (History, [TraceRecord])
+traceAddress start addr to =
+    traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr to
 
 queryCmd :: History -> (Worker -> IO a) -> a
 queryCmd hist w =
@@ -237,7 +231,7 @@ threadState hist = queryCmd hist threadStateWorker
 replayState :: History -> ReplayState
 replayState hist = queryCmd hist replayStateWorker
 
-controlTrace :: History -> Topped Integer -> [Expression]
+controlTrace :: History -> Topped ReplayCoord -> [Expression]
 controlTrace hist cntr =
     dt ("controlTrace " ++ (show hist) ++ " " ++ (show cntr)) $ snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
 

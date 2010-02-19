@@ -21,7 +21,7 @@ data UIValue = UIValueNull
              | UIValueExpression Expression
              | UIValueByte Word8
              | UIValueInteger Integer
-             | UIValueTraceLocation TraceLocation
+             | UIValueReplayCoord ReplayCoord
              | UIValueThreadState ThreadState
 
 instance Show UIValue where
@@ -43,7 +43,7 @@ instance Show UIValue where
     show (UIValueExpression e) = "EXPR " ++ (show e)
     show (UIValueByte b) = "BYTE 0x" ++ (showHex b "")
     show (UIValueInteger r) = "0x" ++ (showHex r "")
-    show (UIValueTraceLocation tr) = "{" ++ (show tr) ++ "}"
+    show (UIValueReplayCoord tr) = "{" ++ (show tr) ++ "}"
     show (UIValueThreadState ts) = show ts
 
 first :: (a -> b) -> (a, c) -> (b, c)
@@ -145,9 +145,9 @@ instance AvailInUI Word8 where
     fromUI (UIValueByte b) = Right b
     fromUI e = coerceError "byte" e
 
-instance AvailInUI TraceLocation where
-    toUI = UIValueTraceLocation
-    fromUI (UIValueTraceLocation l) = Right l
+instance AvailInUI ReplayCoord where
+    toUI = UIValueReplayCoord
+    fromUI (UIValueReplayCoord l) = Right l
     fromUI e = coerceError "trace location" e
 
 instance AvailInUI Integer where

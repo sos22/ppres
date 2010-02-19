@@ -44,8 +44,7 @@ extern UInt (*VG_(interpret))(VexGuestArchState *state);
 extern void VG_(client_syscall)(ThreadId tid, UInt trc);
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
-static void run_for_n_epochs(struct record_consumer *logfile,
-			     unsigned long nr_epochs);
+static void run_to(struct record_consumer *logfile, replay_coord_t to);
 
 struct client_event_record {
 	enum { EVENT_nothing = 0xf001,
@@ -91,9 +90,6 @@ current_thread;
 static int
 control_process_socket;
 
-unsigned
-access_nr;
-
 static Bool
 trace_mode;
 
@@ -112,8 +108,8 @@ want_to_interpret;
 struct record_consumer
 logfile;
 
-unsigned long
-epoch_nr;
+replay_coord_t
+now;
 
 static void
 my_mprotect(void *base, size_t len, int prot)
@@ -401,6 +397,15 @@ send_bytes(unsigned size, const void *buf)
 	send_okay();
 }
 
+static replay_coord_t
+read_trace_coord(int fd)
+{
+	replay_coord_t res;
+	safeish_read(fd, &res.epoch_nr, 8);
+	safeish_read(fd, &res.access_nr, 8);
+	return res;
+}
+
 static void
 get_control_command(struct control_command *cmd)
 {
@@ -416,20 +421,21 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
-		tl_assert(ch.nr_args == 1);
-		safeish_read(control_process_socket, &cmd->u.run.nr, 8);
+		tl_assert(ch.nr_args == 2);
+		cmd->u.run.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_TRACE:
-		tl_assert(ch.nr_args == 1);
-		safeish_read(control_process_socket, &cmd->u.trace.nr, 8);
+		tl_assert(ch.nr_args == 2);
+		cmd->u.trace.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_CONTROL_TRACE:
-		tl_assert(ch.nr_args == 1);
-		safeish_read(control_process_socket, &cmd->u.control_trace.nr, 8);
+		tl_assert(ch.nr_args == 2);
+		cmd->u.control_trace.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_TRACE_ADDRESS:
-		tl_assert(ch.nr_args == 1);
+		tl_assert(ch.nr_args == 3);
 		safeish_read(control_process_socket, &cmd->u.trace_mem.address, 8);
+		cmd->u.trace_mem.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_VG_INTERMEDIATE:
 		tl_assert(ch.nr_args == 1);
@@ -438,10 +444,6 @@ get_control_command(struct control_command *cmd)
 	case WORKER_SET_THREAD:
 		tl_assert(ch.nr_args == 1);
 		safeish_read(control_process_socket, &cmd->u.set_thread.tid, 8);
-		break;
-	case WORKER_RUNM:
-		tl_assert(ch.nr_args == 1);
-		safeish_read(control_process_socket, &cmd->u.runm.nr, 8);
 		break;
 	case WORKER_GET_MEMORY:
 		tl_assert(ch.nr_args == 2);
@@ -457,10 +459,8 @@ get_control_command(struct control_command *cmd)
 
 #define _TRACE(code, args...)                             \
 	send_ancillary(ANCILLARY_TRACE_ ## code,	  \
-		       epoch_nr,			  \
-		       logfile.record_nr,		  \
-		       access_nr,			  \
-		       current_thread->id,		  \
+		       now.epoch_nr,			  \
+		       now.access_nr,			  \
 		       ## args)
 
 #define TRACE(code, args...)						\
@@ -488,6 +488,8 @@ run_thread(struct client_event_record *cer)
 	tl_assert(client_event == NULL);
 	tl_assert(VG_(running_tid) == VG_INVALID_THREADID);
 	tl_assert(!current_thread->dead);
+
+	current_thread->last_run = now;
 
 	cer->type = EVENT_nothing;
 	client_event = cer;
@@ -643,7 +645,7 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 		       (unsigned long)ptr,
 		       current_thread->in_monitor);
 	if (!current_thread->in_monitor) {
-		access_nr++;
+		now.access_nr++;
 		event(EVENT_load, (unsigned long)ptr, size,
 		      (unsigned long)read_bytes);
 	}
@@ -682,7 +684,7 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 		       (unsigned long)ptr,
 		       current_thread->in_monitor);
 	if (!current_thread->in_monitor) {
-		access_nr++;
+		now.access_nr++;
 		event(EVENT_store, (unsigned long)ptr, size,
 		      (unsigned long)written_bytes);
 	}
@@ -741,8 +743,8 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_epoch_nr,
-			       rt->last_rip);
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_run.epoch_nr,
+			       rt->last_run.access_nr, rt->last_rip);
 	send_okay();
 }
 
@@ -836,7 +838,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			my__exit(0);
 		case WORKER_TRACE:
 			trace_mode = True;
-			run_for_n_epochs(&logfile, cmd.u.trace.nr);
+			run_to(&logfile, cmd.u.trace.when);
 			trace_mode = False;
 			send_okay();
 			break;
@@ -844,8 +846,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			do_thread_state_command();
 			break;
 		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, logfile.record_nr, failure_reason->tid,
-				       epoch_nr);
+			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, failure_reason->tid,
+				       now.epoch_nr, now.access_nr);
 			send_string(msg);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
@@ -889,9 +891,10 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	do {								\
 		if ((a) != (b)) {					\
 			replay_failed(reason,				\
-				      "%ld:%ld: Replay failed at %d: %s(%lx) != %s(%lx)", \
+				      "%ld:%ld:%ld: Replay failed at %d: %s(%lx) != %s(%lx)", \
 				      record_nr,			\
-				      epoch_nr,				\
+				      now.epoch_nr,			\
+				      now.access_nr,			\
 				      __LINE__,				\
 				      STR(a),				\
 				      (unsigned long)(a),		\
@@ -1246,28 +1249,6 @@ replay_record(const struct record_header *rec,
 }
 
 static void
-run_for_n_mem_accesses(unsigned nr_accesses)
-{
-	struct client_event_record cer;
-
-	trace_mode = True;
-	want_to_interpret = False;
-	while (access_nr < nr_accesses) {
-		run_thread(&cer);
-		if (cer.type == EVENT_footstep)
-			continue;
-		if (cer.type != EVENT_load &&
-		    cer.type != EVENT_store) {
-			replay_failed(reason_control(),
-				      "%d: Client made unexpected event %x\n",
-				      logfile.record_nr,
-				      cer.type);
-		}
-	}
-	trace_mode = False;
-}
-
-static void
 next_record(void)
 {
 	const struct record_header *rec;
@@ -1285,39 +1266,57 @@ next_record(void)
 		rec = get_current_record(&logfile);
 	}
 
-	access_nr = 0;
-	epoch_nr++;
+	now.access_nr = 0;
+	now.epoch_nr++;
 
 	current_thread = get_thread_by_id(rec->tid);
 	tl_assert(current_thread != NULL);
 }
 
+static Bool
+replay_coord_lt(replay_coord_t l, replay_coord_t r)
+{
+	if (r.epoch_nr == -1ul)
+		return True;
+	if (l.epoch_nr < r.epoch_nr)
+		return True;
+	if (l.epoch_nr > r.epoch_nr)
+		return False;
+	if (l.access_nr < r.access_nr)
+		return True;
+	return False;
+}
+
 static void
-run_for_n_epochs(struct record_consumer *logfile,
-		 unsigned long nr_epochs)
+run_to(struct record_consumer *logfile, replay_coord_t when)
 {
 	const struct record_header *rec;
 	struct client_event_record thread_event;
 
-	while (epoch_nr != nr_epochs) {
+	while (replay_coord_lt(now, when)) {
 		rec = get_current_record(logfile);
 		if (!rec)
 			break;
 
 		tl_assert(rec->cls != RECORD_memory);
 
-		do {
+		while (1) {
 			run_thread(&thread_event);
-		} while (!(use_memory ||
-			   (thread_event.type != EVENT_load &&
-			    thread_event.type != EVENT_store)));
-
+			if ((thread_event.type != EVENT_load &&
+			     thread_event.type != EVENT_store) ||
+			    use_memory)
+				break;
+			if (!replay_coord_lt(now, when)) {
+				current_thread->last_run = now;
+				return;
+			}
+		}
 
 		validate_event(rec, &thread_event, logfile->record_nr);
 
 		replay_record(rec, &thread_event, logfile); /* Finishes the record */
 
-		current_thread->last_epoch_nr = epoch_nr;
+		current_thread->last_run = now;
 
 		next_record();
 	}
@@ -1334,24 +1333,20 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
-		run_for_n_epochs(logfile, cmd->u.run.nr);
+		run_to(logfile, cmd->u.run.when);
 		send_okay();
 		break;
 	case WORKER_TRACE:
 		trace_mode = True;
-		run_for_n_epochs(logfile, cmd->u.trace.nr);
+		run_to(logfile, cmd->u.trace.when);
 		trace_mode = False;
 		send_okay();
 		break;
 	case WORKER_CONTROL_TRACE:
 		want_to_interpret = True;
-		run_for_n_epochs(logfile, cmd->u.control_trace.nr);
+		run_to(logfile, cmd->u.control_trace.when);
 		want_to_interpret = False;
 		commit_interpreter_state();
-		send_okay();
-		break;
-	case WORKER_RUNM:
-		run_for_n_mem_accesses(cmd->u.runm.nr);
 		send_okay();
 		break;
 	case WORKER_SNAPSHOT:
@@ -1359,7 +1354,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
-		run_for_n_epochs(logfile, -1);
+		run_to(logfile, cmd->u.trace_mem.when);
 		send_okay();
 		break;
 	case WORKER_THREAD_STATE:
@@ -1369,7 +1364,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		if (logfile->finished)
 			send_ancillary(ANCILLARY_REPLAY_FINISHED);
 		else
-			send_ancillary(ANCILLARY_REPLAY_SUCCESS, epoch_nr);
+			send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.epoch_nr, now.access_nr);
 		send_okay();
 		break;
 	case WORKER_GET_MEMORY:

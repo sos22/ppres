@@ -363,10 +363,7 @@ expr_mem(unsigned size, const struct expression *ptr, const struct expression *v
 	e->u.mem.size = size;
 	e->u.mem.ptr_e = ptr;
 	e->u.mem.val = val;
-	e->u.mem.epoch_nr = epoch_nr;
-	e->u.mem.record_nr = logfile.record_nr;
-	e->u.mem.mem_access_nr = access_nr;
-	e->u.mem.threadid = current_thread->id;
+	e->u.mem.when = now;
 	return e;
 }
 
@@ -523,8 +520,7 @@ send_expression(const struct expression *e)
 			expr(e->u.reg.name, e->u.reg.val);
 			break;
 		case EXPR_MEM:
-			expr(e->u.mem.size, e->u.mem.epoch_nr, e->u.mem.record_nr,
-			     e->u.mem.mem_access_nr, e->u.mem.threadid);
+			expr(e->u.mem.size, e->u.mem.when.epoch_nr, e->u.mem.when.access_nr);
 			send_expression(e->u.mem.ptr_e);
 			send_expression(e->u.mem.val);
 			break;

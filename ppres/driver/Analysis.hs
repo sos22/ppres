@@ -1,5 +1,5 @@
-module Analysis(findRacingAccesses, findControlFlowRaces, fixControlHistory,
-                fixControlHistory', findCritPairs, flipPair, advanceHist,
+module Analysis(findRacingAccesses, findControlFlowRaces, 
+                evalExpressionInSnapshot, evalExpressionWithStore,
                 enumerateHistories) where
 
 import Types
@@ -8,14 +8,9 @@ import History
 import ReplayState()
 import Timing
 
-import qualified Debug.Trace
 import Data.Bits
 import Data.Word
 import Data.List
-
-dt :: String -> b -> b
-dt = Debug.Trace.trace
-
 
 {- We have two traces, A and B.  A represents what actually happened,
    and B an estimate of what we could have done by running some other
@@ -100,92 +95,22 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
        r <- evalExpressionWithStore r' st
        return $ binopFunc op l r
 
-live_threads :: History -> [ThreadId]
-live_threads _ = [1,2]
-
 traceThread :: History -> ThreadId -> [TraceRecord]
 traceThread start thr =
-    let cur_record = case replayState start of
-                       ReplayStateOkay x -> Finite x
-                       ReplayStateFinished -> Infinity
-                       ReplayStateFailed _ _ _ e _ -> Finite e
-    in snd $ trace (appendHistory start $ HistorySetThread thr) (cur_record + 1)
+    case histCoord start of
+      Infinity -> []
+      Finite cur_record ->
+          let new_record = ReplayCoord { rc_epoch = rc_epoch cur_record + 1,
+                                         rc_access = 0 }
+          in snd $ trace (appendHistory start $ HistorySetThread thr) $ Finite new_record
 
-runMemoryThread :: History -> ThreadId -> Integer -> (History, [TraceRecord])
-runMemoryThread start tid cntr =
-    runMemory (appendHistory start (HistorySetThread tid)) cntr
-
-fixControlHistoryL :: History -> [[History]]
-fixControlHistoryL start =
-    let (ReplayStateFailed _ _ dead_thread epoch_nr _) = replayState start
-        probes_order_n n =
-            let prefix = truncateHistory start $ Finite $ epoch_nr - n
-                criticalExpressions = [(e, evalExpressionWithStore e []) | e <- controlTrace prefix Infinity]
-                otherThreads = [x | x <- live_threads start, x /= dead_thread]
-                otherStoresForThread t =
-                    [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _ ) when) <- traceThread prefix t]
-                storeSatisfiesExpression (ptr,val,_) (expr, v) =
-                    evalExpressionWithStore expr [(ptr,val)] /= v
-                satisfiedExpressions st =
-                    [ind | (ind, expr) <- zip [0..] criticalExpressions, storeSatisfiesExpression st expr]
-                interestingStores =
-                    concat [[(st, ind) | st <- otherStoresForThread t, ind <- satisfiedExpressions st]
-                            | t <- otherThreads]
-                tryStore ((_, _, (TraceLocation _ _ acc thr)), _) =
-                    run (fst $ runMemoryThread prefix thr (acc + 1)) Infinity
-            in map tryStore interestingStores
-        allProbes = map probes_order_n [1..32]
-    in allProbes
-
-{- One of the strategies for fixing replays which don't work.  Back up
-   to the previous non-failing record, then do a control trace forward
-   in the failing thread.  That'll give us a bunch of expressions such
-   that making any of them true will cause the replay to behave
-   differently.  Once we've got them, we do a tracet on the other
-   threads in the replay, and see if they have any writes which would
-   cause an expression to become true.  If they do, we try running
-   those accesses before running the failed thread.  If that succeeds,
-   we return the resulting history. -}
-fixControlHistory' :: History -> Maybe History
-fixControlHistory' start =
-    case replayState start of
-      ReplayStateOkay _ -> Nothing
-      ReplayStateFinished -> Nothing
-      ReplayStateFailed _ _ _ nr_epochs _ ->
-          let probes = head $ fixControlHistoryL start
-              allProbes = [(p, replayState p) | p <- probes]
-              probeIsGood (_, ReplayStateOkay _) = True
-              probeIsGood (_, ReplayStateFinished) = True
-              probeIsGood (_, ReplayStateFailed _ _ _ progress _ ) =
-                  progress > nr_epochs
-              goodProbes = filter probeIsGood allProbes
-              probeIsVeryGood (_, ReplayStateOkay _) = True
-              probeIsVeryGood (_, ReplayStateFinished) = True
-              probeIsVeryGood (_, ReplayStateFailed _ _ _ progress _) =
-                  progress > nr_epochs + 100
-              compareFailureReasons ReplayStateFinished _ = LT
-              compareFailureReasons (ReplayStateOkay _) _ = LT
-              compareFailureReasons _ (ReplayStateOkay _) = GT
-              compareFailureReasons _ ReplayStateFinished = GT
-              compareFailureReasons (ReplayStateFailed _ proga _ _ _)
-                                    (ReplayStateFailed _ progb _ _ _) =
-                                        compare proga progb
-              sortedProbes = sortBy ordering goodProbes
-                             where ordering (_, ra) (_, rb) = compareFailureReasons ra rb
-          in dt ("probes " ++ (show allProbes)) $
-             dt ("sortedProbes " ++ (show sortedProbes)) $
-             case find probeIsVeryGood goodProbes of
-               Just (x, _) -> Just x
-               Nothing ->
-                   case sortedProbes of
-                     [] -> Nothing
-                     ((x,_):_) -> Just x
-
-fixControlHistory :: History -> History
-fixControlHistory start =
-    case fixControlHistory' start of
-      Nothing -> start
-      Just x -> fixControlHistory x
+runMemoryThread :: History -> ThreadId -> AccessNr -> (History, [TraceRecord])
+runMemoryThread start tid acc =
+    case histCoord start of
+      Infinity -> (start, [])
+      Finite (ReplayCoord epoch_nr _) ->
+          let targetCoord = ReplayCoord { rc_epoch = epoch_nr, rc_access = acc }
+          in trace (appendHistory start (HistorySetThread tid)) $ Finite targetCoord
 
 fetchMemory8 :: History -> Word64 -> Maybe Word64
 fetchMemory8 hist addr =
@@ -208,152 +133,6 @@ evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
        return $ binopFunc op l r
 evalExpressionInSnapshot (ExpressionNot l) hist st =
     fmap complement $ evalExpressionInSnapshot l hist st
-
-lastSucceedingRecordAnyThread :: History -> (ThreadId, EpochNr)
-lastSucceedingRecordAnyThread hist =
-    let myMax a b = if ts_last_epoch (snd a) <= ts_last_epoch (snd b)
-                    then b
-                    else a
-        (tid, ts) = foldl1 myMax $ threadState hist
-    in (tid, ts_last_epoch ts)
-
-threadState' :: History -> ThreadId -> ThreadState
-threadState' hist thr =
-    case lookup thr $ threadState hist of
-      Nothing -> error "lost a thread"
-      Just ts -> ts
-
-{- This is trying to fix races assuming that we've just transitioned
-   from thread A to thread B and then failed in the first record of
-   thread B.  We try to fix it by moving some of the thread B accesses
-   a little bit earlier, so that they overlap with the last thread A
-   record. -}
-findCritPairs :: History -> [(TraceLocation, TraceLocation)]
-findCritPairs hist =
-    case replayState hist of
-      ReplayStateOkay _ -> []
-      ReplayStateFinished -> []
-      ReplayStateFailed _ _ threadB _ _ ->
-          let (threadA, threadALastSuccess) = lastSucceedingRecordAnyThread hist
-              prefix1 = truncateHistory hist $ Finite $ threadALastSuccess
-              prefix2 = truncateHistory hist $ Finite $ (ts_last_epoch $ threadState' hist threadA) - 1
-              ctrl_expressions = controlTrace prefix1 Infinity
-              store_trace = [(ptr, val, when) | (TraceRecord (TraceStore val _ ptr _) when) <- snd $ trace prefix2 $ Finite threadALastSuccess]
-              store_changes_expr expr (ptr, val, _) =
-                  evalExpressionInSnapshot expr prefix2 [] /= evalExpressionInSnapshot expr prefix2 [(ptr, val)]
-              expressionLocations p@(ptr, _, _) expr =
-                  case expr of
-                    ExpressionRegister _ _ -> []
-                    ExpressionConst _ -> []
-                    ExpressionMem _ loc ptr' _ ->
-                        (case evalExpressionInSnapshot ptr' prefix2 [] of
-                           Just ptr'' | ptr'' == ptr ->
-                                         ((:) loc)
-                           _ -> id) $ expressionLocations p ptr'
-                    ExpressionImported _ -> []
-                    ExpressionBinop _ l r -> (expressionLocations p l) ++ (expressionLocations p r)
-                    ExpressionNot x -> expressionLocations p x
-              critical_pairs = [(st, exprloc) | expr <- ctrl_expressions,
-                                                st <- store_trace,
-                                                exprloc <- expressionLocations st expr,
-                                                store_changes_expr expr st]
-          in dt ("threadA " ++ (show threadA)) $
-             dt ("threadB " ++ (show threadB)) $
-             dt ("last success " ++ (show threadALastSuccess)) $
-             if threadA == threadB
-             then []
-             else [(l, e) | ((_, _, l), e) <- critical_pairs]
-
-
-{- flipPair hist (acc1, acc2) -> tweak hist so that it runs up to the
-   record before acc1, then runs acc1's thread until the access
-   immediately before acc1, then run acc2's thread until the access
-   immediately after acc2.  If acc2 is an access shortly after acc1
-   then this has the effect or reordering them so that acc2 happens
-   immediately before acc1. -}
-{- This really only makes sense if the acc2's thread is actually
-   runnable and if acc2 is in the next record which it has to run.  It
-   pretty much means to flip one of the races found by
-   findCritPairs. -}
-flipPair :: History -> (TraceLocation, TraceLocation) -> History
-flipPair start (post, pre) =
-    let (prefix, trc) =
-            runMemoryThread (truncateHistory start $ Finite $ trc_epoch post)
-                                (trc_thread post) (trc_access post)
-        (res, trc2) =
-            runMemoryThread prefix (trc_thread pre) (trc_access pre + 1)
-    in dt ("flipPair " ++ (show post) ++ " " ++ (show pre)) $
-       dt ("trc1 " ++ (show trc)) $
-       dt ("trc2 " ++ (show trc2)) $
-       res
-
-type Goodness a = a -> Topped Integer
-type Explorer a = a -> [[a]]
-
-historyGoodness :: Goodness History
-historyGoodness hist =
-    case replayState hist of
-      ReplayStateOkay _ -> Infinity
-      ReplayStateFinished -> Infinity
-      ReplayStateFailed _ (RecordNr x) _ _ _ -> Finite x
-
-data ExplorationParameters a = ExplorationParameters { ep_advance :: Explorer a,
-                                                       ep_goodness :: Goodness a}
-
-{- The idea is that we maintain a list of things which we're currently
-   investigating, known as the fringe, and another list of points
-   which we could sensibly backtrack to.  The main difference between
-   fringe and backtrack is that a backtrack point is somewhat more
-   expensive to visit, and so we don't want to go there unless the
-   fringe is empty. -}
-data Show a => ExplorationState a = ExplorationState { es_fringe :: [(Topped Integer, a)],
-                                                       es_backtracks :: [[a]] } deriving Show
-
-exploreStep :: Show a => ExplorationParameters a -> ExplorationState a -> Maybe ((Topped Integer, a), ExplorationState a)
-exploreStep params state =
-    case es_fringe state of
-      [] ->
-          case es_backtracks state of
-            [] -> Nothing
-            (x:xs) ->
-                exploreStep params $ ExplorationState { es_fringe = [(ep_goodness params x', x') | x' <- x],
-                                                        es_backtracks = xs }
-      (s@(_, startingPoint):otherFringe) ->
-          case ep_advance params startingPoint of
-            [] -> exploreStep params $ state { es_fringe = otherFringe }
-            (newFringePoints:newBacktrackPoints) ->
-                let newItems = [(ep_goodness params x, x) | x <- newFringePoints]
-                    newFringe = sortBy (\a b -> (fst a) `compare` (fst b)) $ newItems ++ otherFringe
-                    newBacktrack = newBacktrackPoints ++ (es_backtracks state)
-                in case newFringe of
-                     [] -> exploreStep params $ state { es_fringe = [] }
-                     ((bestGoodness,_):_) ->
-                                  Just (s, ExplorationState { es_fringe = filter (\x -> fst x > bestGoodness - 1000) newFringe,
-                                                              es_backtracks = newBacktrack })
-               
-explore :: Show a => ExplorationParameters a -> ExplorationState a -> Maybe a
-explore params state =
-    case exploreStep params state of
-      Nothing -> Nothing
-      Just (start, state') ->
-          worker start state'
-          where worker (Infinity,x) _ = Just x
-                worker (thisGoodness, this) st =
-                    case exploreStep params st of
-                      Nothing -> Just this
-                      Just ((newGoodness, newThing),st') ->
-                          worker (if newGoodness > thisGoodness
-                                  then (newGoodness, newThing)
-                                  else (thisGoodness, this)) st'
-
-advanceHist :: History -> History
-advanceHist hist =
-    case explore (ExplorationParameters { ep_goodness = historyGoodness,
-                                          ep_advance = fixControlHistoryL })
-                 (ExplorationState { es_fringe = [],
-                                     es_backtracks = [[hist]] }) of
-      Nothing -> hist
-      Just h -> h
 
 {- Standard queue structure -- head is in the right order, tail is
    reversed, giving fast append-tail and pop-head operations. -}
@@ -383,14 +162,14 @@ queueToList q trail =
 singletonQueue :: a -> Queue a
 singletonQueue i = appendQueue i emptyQueue
 
-histEpoch :: History -> Topped EpochNr
-histEpoch hist = case histLastEpoch hist of
+histCoord :: History -> Topped ReplayCoord
+histCoord hist = case histLastCoord hist of
                    Finite x -> Finite x
                    Infinity ->
                        case replayState hist of
                          ReplayStateOkay x -> Finite x
                          ReplayStateFinished -> Infinity
-                         ReplayStateFailed _ _ _ e _ -> Finite e
+                         ReplayStateFailed _ _ e _ -> Finite e
 
 instance Show a => Show (Queue a) where
     show x = "Queue " ++ (show $ queueToList x [])
@@ -415,9 +194,14 @@ addEnumState new es =
     if ens_finished es
     then es
     else
-        let currentEpoch = histEpoch $ ens_current es
-            newEpoch = histEpoch new
-            flushQueue = newEpoch > currentEpoch - 10
+        let currentEpoch = histCoord $ ens_current es
+            newEpoch = histCoord new
+            flushQueue =
+                case (newEpoch, currentEpoch) of
+                  (Finite newEpoch', Finite currentEpoch') ->
+                      rc_epoch newEpoch' > rc_epoch currentEpoch' - 10
+                  _ -> False
+
             new_stack = if flushQueue
                         then queueToList (ens_queue es) (ens_stack es)
                         else ens_stack es
@@ -464,7 +248,7 @@ getNextExploreState es =
 enumerateHistoriesSmallStep :: History -> EnumerationState -> EnumerationState
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
-      ReplayStateFailed _ _ _ _ _ -> trailer
+      ReplayStateFailed _ _ _ _ -> trailer
       ReplayStateFinished -> enumStateFinished start
       ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
@@ -487,7 +271,7 @@ enumerateHistoriesSmallStep start trailer =
                  that access x in this thread races with some access
                  in thread y. -}
 
-              racing_access_for_thread :: ThreadId -> [(Integer, ThreadId)]
+              racing_access_for_thread :: ThreadId -> [(AccessNr, ThreadId)]
               racing_access_for_thread t =
                   let races_with_thread t' =
                           let racingAccesses =
@@ -506,7 +290,7 @@ enumerateHistoriesSmallStep start trailer =
                                                                      access_overlaps (TraceLoad _ _ ptr' _) = ptr' == ptr
                                                                      access_overlaps (TraceStore _ _ ptr' _) = ptr' == ptr
                                                                      access_overlaps _ = False
-                          in map (trc_access . trc_loc) racingAccesses
+                          in map (rc_access . trc_loc) racingAccesses
                       entry_for_thread t' =
                           case races_with_thread t' of
                             [] -> Nothing
@@ -529,18 +313,20 @@ enumerateHistoriesBigStep :: History -> EnumerationState -> EnumerationState
 enumerateHistoriesBigStep start trailer =
     case replayState start of
       ReplayStateFinished -> enumStateFinished start
-      ReplayStateFailed _ _ _ _ _ -> trailer
+      ReplayStateFailed _ _ _ _ -> trailer
       ReplayStateOkay start_epoch ->
           case replayState $ run start Infinity of
             ReplayStateFinished ->
                 {- We're done; no point exploring any further -}
                 enumStateFinished $ run start Infinity
             ReplayStateOkay _ -> error "replay got lost somewhere?"
-            ReplayStateFailed _ _ _ fail_epoch _ ->
+            ReplayStateFailed _ _ fail_epoch _ ->
                 tlog ("failed at " ++ (show fail_epoch)) $
-                let ss_starts = [if e == start_epoch
+                let epochs = [(rc_epoch start_epoch)..(rc_epoch fail_epoch)]
+                    coords = [(ReplayCoord e 0) | e <- epochs]
+                    ss_starts = [if e == start_epoch
                                  then start 
-                                 else run start (Finite e) | e <- reverse [start_epoch..fail_epoch]]
+                                 else run start (Finite e) | e <- reverse coords]
                 in foldr enumerateHistoriesSmallStep trailer ss_starts
 
 {- Exhaustively explore all future schedulings available from hist and
@@ -554,7 +340,7 @@ enumerateHistories' startState =
           tlog ("explore " ++ (show startHist)) $
           case replayState startHist of
             ReplayStateFinished -> Just startHist -- Succeeded
-            ReplayStateFailed _ _ _ _ _ -> enumerateHistories' nextState
+            ReplayStateFailed _ _ _ _ -> enumerateHistories' nextState
             ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
 
 enumerateHistories :: History -> Maybe History
