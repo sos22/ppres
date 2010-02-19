@@ -3,7 +3,7 @@
 unsigned global;
 pthread_mutex_t mux;
 
-#define NR_LOOPS 100000
+#define NR_LOOPS 1000
 
 static void
 thread(void)
