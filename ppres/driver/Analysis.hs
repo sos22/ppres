@@ -12,6 +12,11 @@ import Data.Bits
 import Data.Word
 import Data.List
 
+import qualified Debug.Trace
+
+dt :: String -> a -> a
+dt = Debug.Trace.trace
+
 {- We have two traces, A and B.  A represents what actually happened,
    and B an estimate of what we could have done by running some other
    thread.  A pair of accesses races if one is a load in A from some
@@ -230,6 +235,10 @@ getNextExploreState es =
       Just (a, new_queue) ->
           Just (a, es {ens_queue = new_queue})
 
+live_threads :: History -> [ThreadId]
+live_threads hist =
+    [a | (a, b) <- threadState hist, not (ts_dead b || ts_blocked b)]
+
 {- Enumerate all ``interesting'' small-step advances we can make from
    this state.  We stop as soon as we find a replay which succeeds.
    The ``default'' action, of just running the trace-selected thread
@@ -251,7 +260,7 @@ enumerateHistoriesSmallStep start trailer =
       ReplayStateFailed _ _ _ _ -> trailer
       ReplayStateFinished -> enumStateFinished start
       ReplayStateOkay _ ->
-          let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
+          let threads = live_threads start
               trace_for_thread t = traceThread start t
               footstep_is_mem (TraceLoad _ _ _ False) = True
               footstep_is_mem (TraceStore _ _ _ False) = True
@@ -305,6 +314,106 @@ enumerateHistoriesSmallStep start trailer =
               result = addEnumStates thread_actions trailer
           in result
 
+{- Find all of the steps we can make which just advance us one
+   racing access. -}
+singleAccessAdvances :: History -> [History]
+singleAccessAdvances start =
+    let threads = live_threads start
+        trace_for_thread t = traceThread start t
+        footstep_is_mem (TraceLoad _ _ _ False) = True
+        footstep_is_mem (TraceStore _ _ _ False) = True
+        footstep_is_mem _ = False
+        memtrace_for_thread' = filter (footstep_is_mem . trc_trc) . trace_for_thread
+        thread_traces = zip threads $ map memtrace_for_thread' threads
+        memtrace_for_thread t =
+            case lookup t thread_traces of
+              Just x -> x
+              Nothing -> error $ "lost a thread somewhere, wanted " ++ (show t) ++ ", had " ++ (show thread_traces)
+        racing_access_for_thread :: ThreadId -> [(AccessNr, ThreadId)]
+        racing_access_for_thread t =
+            let races_with_thread t' =
+                    let racingAccesses =
+                            filter (isRace . trc_trc) $ memtrace_for_thread t
+                        isRace (TraceLoad _ _ ptr _) =
+                            or $ map (isStore . trc_trc) $ overlapping_accesses ptr
+                        isRace (TraceStore _ _ ptr _) =
+                            case overlapping_accesses ptr of
+                              [] -> False
+                              _ -> True
+                        isRace _ = False
+                        isStore (TraceStore _ _ _ _) = True
+                        isStore _ = False
+                        overlapping_accesses ptr = filter (access_overlaps . trc_trc) $ memtrace_for_thread t'
+                            where
+                              access_overlaps (TraceLoad _ _ ptr' _) = ptr' == ptr
+                              access_overlaps (TraceStore _ _ ptr' _) = ptr' == ptr
+                              access_overlaps _ = False
+                    in map (rc_access . trc_loc) racingAccesses
+                entry_for_thread t' =
+                    case races_with_thread t' of
+                      [] -> Nothing
+                      (x:_) -> Just (x, t')
+                maybeEntries = map entry_for_thread $ filter ((/=) t) threads
+                deMaybe (Just x) y = x:y
+                deMaybe Nothing y = y
+            in foldr deMaybe [] maybeEntries
+        thread_action t (acc, targ) =
+            setThread (fst $ runMemoryThread start t (acc + 1)) targ
+        res = (concat [map (thread_action t) (racing_access_for_thread t) | t <- threads])
+    in res
+        
+{- Find all of the paths we can take from this epoch to the very next
+   one which don't cause an immediate failure. -}
+{- We cheat a bit: if we find a path to the end of the entire log,
+   we might just return that, rather than going through everything. -}
+enumerateNextEpoch :: History -> [History]
+enumerateNextEpoch start =
+    dt ("enum epoch " ++ (show start)) $
+    case replayState start of
+      ReplayStateFinished -> [start]
+      ReplayStateFailed _ _ _ _ -> []
+      ReplayStateOkay start_coord ->
+          let next_coord = Finite ReplayCoord {rc_epoch = rc_epoch start_coord + 1,
+                                               rc_access = 0}
+              trivHistory = run start next_coord
+
+              {- We advance breadth-first for this phase of the search. -}
+              addNextLevel [] = []
+              addNextLevel previousLevel =
+                  previousLevel ++ (let nextLevel = concatMap singleAccessAdvances previousLevel
+                                    in addNextLevel nextLevel)
+                  
+              tweakedSchedules = addNextLevel [start]
+
+              newSchedules = [run x next_coord | x <- tweakedSchedules]
+
+              {- We filter the returned schedules so as we remove all
+                 definitely-failed ones and get out quickly if we hit
+                 the end of the replay log. -}
+              {- The argument is likely to be very large and the result
+                 will usually not be completely explored, so laziness
+                 is important here. -}
+              filterSchedules [] = []
+              filterSchedules (x:xs) =
+                  dt ("check schedule " ++ (show x)) $
+                  case replayState x of
+                    ReplayStateFinished -> [x]
+                    ReplayStateOkay _ -> x:(filterSchedules xs)
+                    ReplayStateFailed _ _ _ _ -> filterSchedules xs
+
+              res = filterSchedules newSchedules
+          in res
+
+enumerateAllEpochs :: [History] -> Maybe History
+enumerateAllEpochs [] = Nothing
+enumerateAllEpochs [x] =
+    case replayState x of
+      ReplayStateFinished -> Just x
+      _ -> enumerateAllEpochs $ enumerateNextEpoch x
+enumerateAllEpochs (thisHist:otherHists) =
+    dt ("enum big " ++ (show thisHist)) $
+    enumerateAllEpochs $ (enumerateNextEpoch thisHist) ++ otherHists
+
 {- Enumerate big-step advances we can make in the history.  This
    means, basically, running the log as far as we can in
    trace-directed mode, and then backtracking one epoch at a time when
@@ -344,4 +453,5 @@ enumerateHistories' startState =
             ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
 
 enumerateHistories :: History -> Maybe History
-enumerateHistories start = enumerateHistories' $ EnumerationState [start] emptyQueue start False
+--enumerateHistories start = enumerateHistories' $ EnumerationState [start] emptyQueue start False
+enumerateHistories start = enumerateAllEpochs [start]
