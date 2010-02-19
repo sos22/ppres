@@ -883,7 +883,7 @@ static void handle_SCSS_change ( Bool force_update )
 
       /* Trying to do anything with SIGKILL is pointless; just ignore
          it. */
-      if (sig == VKI_SIGKILL || sig == VKI_SIGSTOP)
+      if (sig == VKI_SIGKILL || sig == VKI_SIGSTOP || sig == VKI_SIGSEGV)
          continue;
 
       if (!force_update) {

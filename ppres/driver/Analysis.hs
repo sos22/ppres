@@ -11,6 +11,10 @@ import Timing
 import Data.Bits
 import Data.Word
 import Data.List
+import qualified Debug.Trace
+
+dt :: String -> a -> a
+dt = Debug.Trace.trace
 
 {- We have two traces, A and B.  A represents what actually happened,
    and B an estimate of what we could have done by running some other
@@ -97,20 +101,17 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 
 traceThread :: History -> ThreadId -> [TraceRecord]
 traceThread start thr =
+    dt ("trace thread " ++ (show thr) ++ " in " ++ (show start)) $
     case histCoord start of
       Infinity -> []
       Finite cur_record ->
-          let new_record = ReplayCoord { rc_epoch = rc_epoch cur_record,
-                                         rc_access = rc_access cur_record + 50000 }
+          let new_record = ReplayCoord { rc_access = rc_access cur_record + 50000 }
           in snd $ trace (appendHistory start $ HistorySetThread thr) $ Finite new_record
 
 runMemoryThread :: History -> ThreadId -> AccessNr -> (History, [TraceRecord])
 runMemoryThread start tid acc =
-    case histCoord start of
-      Infinity -> (start, [])
-      Finite (ReplayCoord epoch_nr _) ->
-          let targetCoord = ReplayCoord { rc_epoch = epoch_nr, rc_access = acc }
-          in trace (appendHistory start (HistorySetThread tid)) $ Finite targetCoord
+    let targetCoord = ReplayCoord acc
+    in trace (appendHistory start (HistorySetThread tid)) $ Finite targetCoord
 
 fetchMemory8 :: History -> Word64 -> Maybe Word64
 fetchMemory8 hist addr =
@@ -184,35 +185,35 @@ instance Show a => Show (Queue a) where
    start a new queue.  When we need to pick a state, we grab the queue
    first, if it's non-empty, and then fall back to the stack if
    there's nothing available there. -}
-data EnumerationState = EnumerationState {ens_stack :: [History],
-                                          ens_queue :: Queue History,
+data EnumerationState = EnumerationState {ens_stack :: [(ReplayCoord, History)],
+                                          ens_queue :: Queue (ReplayCoord, History),
                                           ens_current :: History,
                                           ens_finished :: Bool } deriving Show
 
-addEnumState :: History -> EnumerationState -> EnumerationState
-addEnumState new es =
+addEnumState :: ReplayCoord -> History -> EnumerationState -> EnumerationState
+addEnumState origin new es =
     if ens_finished es
     then es
     else
         let currentEpoch = histCoord $ ens_current es
-            newEpoch = histCoord new
+            newEpoch = origin
             flushQueue =
-                case (newEpoch, currentEpoch) of
-                  (Finite newEpoch', Finite currentEpoch') ->
-                      rc_epoch newEpoch' > rc_epoch currentEpoch' - 10
+                case currentEpoch of
+                  Finite currentEpoch' ->
+                      rc_access newEpoch > rc_access currentEpoch' - 100
                   _ -> False
 
             new_stack = if flushQueue
                         then queueToList (ens_queue es) (ens_stack es)
                         else ens_stack es
             new_queue = if flushQueue
-                        then singletonQueue new
-                        else appendQueue new $ ens_queue es
+                        then singletonQueue (origin, new)
+                        else appendQueue (origin, new) $ ens_queue es
         in es { ens_stack = new_stack,
                 ens_queue = new_queue }
 
-addEnumStates :: [History] -> EnumerationState -> EnumerationState
-addEnumStates xs es = foldr addEnumState es xs
+addEnumStates :: ReplayCoord -> [History] -> EnumerationState -> EnumerationState
+addEnumStates origin xs es = foldr (addEnumState origin) es xs
 
 enumStateFinished :: History -> EnumerationState
 enumStateFinished hist = EnumerationState {ens_stack = [],
@@ -226,8 +227,8 @@ getNextExploreState es =
       Nothing ->
           case ens_stack es of
             [] -> Nothing
-            (a:as) -> Just (a, es { ens_stack = as })
-      Just (a, new_queue) ->
+            ((_,a):as) -> Just (a, es { ens_stack = as })
+      Just ((_,a), new_queue) ->
           Just (a, es {ens_queue = new_queue})
 
 {- Enumerate all ``interesting'' small-step advances we can make from
@@ -250,7 +251,7 @@ enumerateHistoriesSmallStep start trailer =
     case replayState start of
       ReplayStateFailed _ _ _ _ -> trailer
       ReplayStateFinished -> enumStateFinished start
-      ReplayStateOkay _ ->
+      ReplayStateOkay origin ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
               trace_for_thread t = traceThread start t
               footstep_is_mem (TraceLoad _ _ _ False) = True
@@ -302,7 +303,7 @@ enumerateHistoriesSmallStep start trailer =
               thread_action t (acc, targ) =
                   setThread (fst $ runMemoryThread start t (acc + 1)) targ
               thread_actions = concat [map (thread_action t) (racing_access_for_thread t) | t <- threads]
-              result = addEnumStates thread_actions trailer
+              result = addEnumStates origin thread_actions trailer
           in result
 
 {- Enumerate big-step advances we can make in the history.  This
@@ -322,12 +323,11 @@ enumerateHistoriesBigStep start trailer =
             ReplayStateOkay _ -> error "replay got lost somewhere?"
             ReplayStateFailed _ _ fail_epoch _ ->
                 tlog ("failed at " ++ (show fail_epoch)) $
-                let epochs = [(rc_epoch start_epoch)..(rc_epoch fail_epoch)]
-                    coords = [(ReplayCoord e 0) | e <- epochs]
+                let epochs = map ReplayCoord [(rc_access start_epoch)..(rc_access fail_epoch)]
                     ss_starts = [if e == start_epoch
                                  then start 
-                                 else run start (Finite e) | e <- reverse coords]
-                in foldr enumerateHistoriesSmallStep trailer ss_starts
+                                 else run start (Finite e) | e <- epochs]
+                in foldl (flip enumerateHistoriesSmallStep) trailer ss_starts
 
 {- Exhaustively explore all future schedulings available from hist and
    return the first successful one (or Nothing, if we can't find
@@ -344,4 +344,4 @@ enumerateHistories' startState =
             ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
 
 enumerateHistories :: History -> Maybe History
-enumerateHistories start = enumerateHistories' $ EnumerationState [start] emptyQueue start False
+enumerateHistories start = enumerateHistories' $ EnumerationState [(startCoord, start)] emptyQueue start False

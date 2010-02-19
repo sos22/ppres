@@ -30,8 +30,8 @@ sendWorkerCommand worker cp =
         else sendSocketCommand (worker_fd worker) cp
 
 fromRC :: Topped ReplayCoord -> [Word64]
-fromRC Infinity = [-1, -1]
-fromRC (Finite (ReplayCoord (EpochNr epoch) (AccessNr acc))) = [fromInteger epoch, fromInteger acc]
+fromRC Infinity = [-1]
+fromRC (Finite (ReplayCoord (AccessNr acc))) = [fromInteger acc]
 
 snapshotPacket :: ControlPacket
 snapshotPacket = ControlPacket 0x1234 []
@@ -90,9 +90,8 @@ ancillaryDataToTrace [] = []
 ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
-    let (loc', other_args) = splitAt 2 args
-        loc = ReplayCoord { rc_epoch = EpochNr $ fromIntegral $ loc'!!0,
-                            rc_access = AccessNr $ fromIntegral $ loc'!!1 }
+    let (loc', other_args) = splitAt 1 args
+        loc = ReplayCoord { rc_access = AccessNr $ fromIntegral $ loc'!!0 }
         (entry, rest) =
             case code of
               1 -> (TraceFootstep { trc_foot_rip = fromIntegral $ other_args!!0,
@@ -146,11 +145,11 @@ takeSnapshot worker =
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
-        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_epoch, last_access, last_rip]) <- consume
+        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_access, last_rip]) <- consume
                        return (fromIntegral $ tid,
                                ThreadState (is_dead /= 0)
                                            (is_blocked /= 0)
-                                           (ReplayCoord (EpochNr $ fromIntegral last_epoch) (AccessNr $ fromIntegral last_access))
+                                           (ReplayCoord (AccessNr $ fromIntegral last_access))
                                            last_rip)
     in
       do (ResponsePacket s params) <- sendWorkerCommand worker threadStatePacket
@@ -160,9 +159,9 @@ threadStateWorker worker =
 
  
 parseReplayState :: [ResponseData] -> ReplayState
-parseReplayState [ResponseDataAncillary 10 [epoch_nr, access_nr]] = ReplayStateOkay $ ReplayCoord (EpochNr $ fromIntegral epoch_nr) (AccessNr $ fromIntegral access_nr)
-parseReplayState (ResponseDataAncillary 11 [x, tid, epoch_nr, access_nr]:(ResponseDataString s):items) =
-    ReplayStateFailed s (fromIntegral tid) (ReplayCoord (EpochNr $ fromIntegral epoch_nr) (AccessNr $ fromIntegral access_nr)) $
+parseReplayState [ResponseDataAncillary 10 [access_nr]] = ReplayStateOkay $ ReplayCoord (AccessNr $ fromIntegral access_nr)
+parseReplayState (ResponseDataAncillary 11 [x, tid, access_nr]:(ResponseDataString s):items) =
+    ReplayStateFailed s (fromIntegral tid) (ReplayCoord (AccessNr $ fromIntegral access_nr)) $
                       case x of
                         0 -> case items of
                                [] -> FailureReasonControl
@@ -267,10 +266,10 @@ parseExpression =
        case params of
          [0, val] -> return $ ExpressionConst val
          [1, reg, val] -> return $ ExpressionRegister (parseRegister reg) val
-         [2, sz, epoch, acc] ->
+         [2, sz, acc] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) (ReplayCoord { rc_epoch = EpochNr $ fromIntegral epoch,
+                return $ ExpressionMem (fromIntegral sz) (ReplayCoord { 
                                                                         rc_access = fromIntegral acc}) ptr val
          [3, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression

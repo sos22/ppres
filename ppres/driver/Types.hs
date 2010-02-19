@@ -14,7 +14,6 @@ type ThreadId = Integer
 type VariableName = String
 
 newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord, Read)
-newtype EpochNr = EpochNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read, Integral)
 newtype AccessNr = AccessNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read, Integral)
 
 data Worker = Worker { worker_fd :: Socket,
@@ -23,33 +22,21 @@ data Worker = Worker { worker_fd :: Socket,
 instance Show Worker where
     show w = "worker fd " ++ (show $ worker_fd w)
 
-data ReplayCoord = ReplayCoord { rc_epoch :: EpochNr,
-                                 rc_access :: AccessNr } deriving (Eq)
+data ReplayCoord = ReplayCoord { rc_access :: AccessNr } deriving (Eq)
 
 instance Ord ReplayCoord where
-    compare a b =
-        if rc_epoch a < rc_epoch b
-        then LT
-        else if rc_epoch a == rc_epoch b
-             then rc_access a `compare` rc_access b
-             else GT
+    compare a b = rc_access a `compare` rc_access b
 
 startCoord :: ReplayCoord
-startCoord = ReplayCoord 0 0
+startCoord = ReplayCoord 0
 
 instance Show ReplayCoord where
-    show tl = (show $ rc_epoch tl) ++ ":" ++ (show $ rc_access tl)
+    show tl = (show $ rc_access tl)
 
 instance Read ReplayCoord where
     readsPrec _ x =
-        let readChar _ [] = []
-            readChar c (c':o) = if c == c' then [o]
-                                else []
-        in
-        do (epoch,trail1) <- reads x
-           trail2 <- readChar ':' trail1
-           (access,trail3) <- reads trail2
-           return (ReplayCoord epoch access, trail3)
+        do (access,trail3) <- reads x
+           return (ReplayCoord access, trail3)
                               
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
@@ -240,9 +227,6 @@ instance Forcable x => Forcable (Topped x) where
     force Infinity = id
     force (Finite _) = id
 
-instance Forcable EpochNr where
-    force (EpochNr x) = force x
-
 instance Forcable AccessNr where
     force (AccessNr x) = force x
 
@@ -260,7 +244,7 @@ instance Forcable x => Forcable (Maybe x) where
     force (Just x) = force x
 
 instance Forcable ReplayCoord where
-    force rc = (force $ rc_epoch rc) . (force $ rc_access rc)
+    force rc = force $ rc_access rc
 
 data DListEntry a = DListEntry {dle_prev :: Maybe (DListEntry a),
                                 dle_next :: Maybe (DListEntry a),

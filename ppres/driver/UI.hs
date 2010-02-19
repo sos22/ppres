@@ -70,11 +70,8 @@ expressionParser =
                b <- expressionParser
                return $ constructor a b
         parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
-        parseEpochNr = keyword "EpochNr" >> liftM EpochNr parseInteger
         parseAccessNr = keyword "AccessNr" >> liftM AccessNr parseInteger
-        parseReplayCoord = do e <- parseEpochNr
-                              a <- parseAccessNr
-                              return $ ReplayCoord e a                              
+        parseReplayCoord = liftM ReplayCoord parseAccessNr
         parseThreadId = parseInteger
         parseInteger = P.integer command_lexer
         parseHistoryEntry = tchoice [do keyword "HistoryRun"

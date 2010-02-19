@@ -401,7 +401,6 @@ static replay_coord_t
 read_trace_coord(int fd)
 {
 	replay_coord_t res;
-	safeish_read(fd, &res.epoch_nr, 8);
 	safeish_read(fd, &res.access_nr, 8);
 	return res;
 }
@@ -421,19 +420,19 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
-		tl_assert(ch.nr_args == 2);
+		tl_assert(ch.nr_args == 1);
 		cmd->u.run.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_TRACE:
-		tl_assert(ch.nr_args == 2);
+		tl_assert(ch.nr_args == 1);
 		cmd->u.trace.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_CONTROL_TRACE:
-		tl_assert(ch.nr_args == 2);
+		tl_assert(ch.nr_args == 1);
 		cmd->u.control_trace.when = read_trace_coord(control_process_socket);
 		break;
 	case WORKER_TRACE_ADDRESS:
-		tl_assert(ch.nr_args == 3);
+		tl_assert(ch.nr_args == 2);
 		safeish_read(control_process_socket, &cmd->u.trace_mem.address, 8);
 		cmd->u.trace_mem.when = read_trace_coord(control_process_socket);
 		break;
@@ -459,7 +458,6 @@ get_control_command(struct control_command *cmd)
 
 #define _TRACE(code, args...)                             \
 	send_ancillary(ANCILLARY_TRACE_ ## code,	  \
-		       now.epoch_nr,			  \
 		       now.access_nr,			  \
 		       ## args)
 
@@ -743,7 +741,7 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked, rt->last_run.epoch_nr,
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked,
 			       rt->last_run.access_nr, rt->last_rip);
 	send_okay();
 }
@@ -847,7 +845,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			break;
 		case WORKER_REPLAY_STATE:
 			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, failure_reason->tid,
-				       now.epoch_nr, now.access_nr);
+				       now.access_nr);
 			send_string(msg);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
@@ -891,9 +889,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	do {								\
 		if ((a) != (b)) {					\
 			replay_failed(reason,				\
-				      "%ld:%ld:%ld: Replay failed at %d: %s(%lx) != %s(%lx)", \
+				      "%ld:%ld Replay failed at %d: %s(%lx) != %s(%lx)", \
 				      record_nr,			\
-				      now.epoch_nr,			\
 				      now.access_nr,			\
 				      __LINE__,				\
 				      STR(a),				\
@@ -1266,9 +1263,6 @@ next_record(void)
 		rec = get_current_record(&logfile);
 	}
 
-	now.access_nr = 0;
-	now.epoch_nr++;
-
 	current_thread = get_thread_by_id(rec->tid);
 	tl_assert(current_thread != NULL);
 }
@@ -1276,12 +1270,6 @@ next_record(void)
 static Bool
 replay_coord_lt(replay_coord_t l, replay_coord_t r)
 {
-	if (r.epoch_nr == -1ul)
-		return True;
-	if (l.epoch_nr < r.epoch_nr)
-		return True;
-	if (l.epoch_nr > r.epoch_nr)
-		return False;
 	if (l.access_nr < r.access_nr)
 		return True;
 	return False;
@@ -1364,7 +1352,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		if (logfile->finished)
 			send_ancillary(ANCILLARY_REPLAY_FINISHED);
 		else
-			send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.epoch_nr, now.access_nr);
+			send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.access_nr);
 		send_okay();
 		break;
 	case WORKER_GET_MEMORY:
