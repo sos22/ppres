@@ -383,10 +383,17 @@ queueToList q trail =
 singletonQueue :: a -> Queue a
 singletonQueue i = appendQueue i emptyQueue
 
-rs_epoch :: ReplayState -> Topped EpochNr
-rs_epoch (ReplayStateOkay x) = Finite x
-rs_epoch (ReplayStateFinished) = Infinity
-rs_epoch (ReplayStateFailed _ _ _ e _) = Finite e
+histEpoch :: History -> Topped EpochNr
+histEpoch hist = case histLastEpoch hist of
+                   Finite x -> Finite x
+                   Infinity ->
+                       case replayState hist of
+                         ReplayStateOkay x -> Finite x
+                         ReplayStateFinished -> Infinity
+                         ReplayStateFailed _ _ _ e _ -> Finite e
+
+instance Show a => Show (Queue a) where
+    show x = "Queue " ++ (show $ queueToList x [])
 
 {- We use a breadth-first search locally, and depth-first globally.
    The idea is that you start off doing breadth first, and then if you
@@ -400,29 +407,34 @@ rs_epoch (ReplayStateFailed _ _ _ e _) = Finite e
    there's nothing available there. -}
 data EnumerationState = EnumerationState {ens_stack :: [History],
                                           ens_queue :: Queue History,
-                                          ens_current :: History }
+                                          ens_current :: History,
+                                          ens_finished :: Bool } deriving Show
 
 addEnumState :: History -> EnumerationState -> EnumerationState
 addEnumState new es =
-    let currentEpoch = rs_epoch $ replayState $ ens_current es
-        newEpoch = rs_epoch $ replayState new
-        flushQueue = newEpoch > currentEpoch - 10
-        new_stack = if flushQueue
-                    then queueToList (ens_queue es) (ens_stack es)
-                    else ens_stack es
-        new_queue = if flushQueue
-                    then singletonQueue new
-                    else appendQueue new $ ens_queue es
-    in es { ens_stack = new_stack,
-            ens_queue = new_queue }
+    if ens_finished es
+    then es
+    else
+        let currentEpoch = histEpoch $ ens_current es
+            newEpoch = histEpoch new
+            flushQueue = newEpoch > currentEpoch - 10
+            new_stack = if flushQueue
+                        then queueToList (ens_queue es) (ens_stack es)
+                        else ens_stack es
+            new_queue = if flushQueue
+                        then singletonQueue new
+                        else appendQueue new $ ens_queue es
+        in es { ens_stack = new_stack,
+                ens_queue = new_queue }
 
 addEnumStates :: [History] -> EnumerationState -> EnumerationState
 addEnumStates xs es = foldr addEnumState es xs
 
 enumStateFinished :: History -> EnumerationState
-enumStateFinished hist = EnumerationState {ens_stack = [hist],
+enumStateFinished hist = EnumerationState {ens_stack = [],
                                            ens_queue = emptyQueue,
-                                           ens_current = hist}
+                                           ens_current = hist,
+                                           ens_finished = True}
 
 getNextExploreState :: EnumerationState -> Maybe (History, EnumerationState)
 getNextExploreState es =
@@ -539,10 +551,11 @@ enumerateHistories' startState =
     case getNextExploreState startState of
       Nothing -> Nothing -- failed
       Just (startHist, nextState) ->
+          tlog ("explore " ++ (show startHist)) $
           case replayState startHist of
             ReplayStateFinished -> Just startHist -- Succeeded
             ReplayStateFailed _ _ _ _ _ -> enumerateHistories' nextState
             ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
 
 enumerateHistories :: History -> Maybe History
-enumerateHistories start = enumerateHistories' $ EnumerationState [start] emptyQueue start
+enumerateHistories start = enumerateHistories' $ EnumerationState [start] emptyQueue start False

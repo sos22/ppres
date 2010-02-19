@@ -1,6 +1,6 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History, HistoryEntry(..),
-               mkHistory) where
+               mkHistory, histLastEpoch) where
 
 import Control.Monad
 import Debug.Trace
@@ -17,6 +17,9 @@ data HistoryEntry = HistoryRun !(Topped EpochNr)
    the number of entries in the history.  This means we can do a quick
    out in historyPrefixOf in many useful cases. -}
 data History = History (Topped EpochNr) Int (DList HistoryEntry) deriving (Show, Eq, Read)
+
+histLastEpoch :: History -> Topped EpochNr
+histLastEpoch (History x _ _) = x
 
 {- Either id, for valid histories, or undefined for invalid ones. -}
 sanityCheckHistory :: History -> History
