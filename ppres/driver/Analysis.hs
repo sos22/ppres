@@ -100,8 +100,8 @@ traceThread start thr =
     case histCoord start of
       Infinity -> []
       Finite cur_record ->
-          let new_record = ReplayCoord { rc_epoch = rc_epoch cur_record + 1,
-                                         rc_access = 0 }
+          let new_record = ReplayCoord { rc_epoch = rc_epoch cur_record,
+                                         rc_access = rc_access cur_record + 50000 }
           in snd $ trace (appendHistory start $ HistorySetThread thr) $ Finite new_record
 
 runMemoryThread :: History -> ThreadId -> AccessNr -> (History, [TraceRecord])
