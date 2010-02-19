@@ -356,6 +356,18 @@ advanceHist hist =
       Just h -> h
 
 
+data EnumerationState = EnumerationState [History]
+
+addEnumStates :: EnumerationState -> [History] -> EnumerationState
+addEnumStates (EnumerationState t) x = EnumerationState $ x ++ t
+
+enumStateFinished :: History -> EnumerationState
+enumStateFinished hist = EnumerationState [hist]
+
+getNextExploreState :: EnumerationState -> Maybe (History, EnumerationState)
+getNextExploreState (EnumerationState []) = Nothing
+getNextExploreState (EnumerationState (a:as)) = Just (a, EnumerationState as)
+
 {- Enumerate all ``interesting'' small-step advances we can make from
    this state.  We stop as soon as we find a replay which succeeds.
    The ``default'' action, of just running the trace-selected thread
@@ -371,11 +383,11 @@ advanceHist hist =
    need to emit anything for threads which don't have any races in
    them.
 -}
-enumerateHistoriesSmallStep :: History -> [History] -> [History]
+enumerateHistoriesSmallStep :: History -> EnumerationState -> EnumerationState
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
       ReplayStateFailed _ _ _ _ _ -> trailer
-      ReplayStateFinished -> [start]
+      ReplayStateFinished -> enumStateFinished start
       ReplayStateOkay _ ->
           let threads = [a | (a, b) <- threadState start, not (ts_dead b || ts_blocked b) ]
               trace_for_thread t = traceThread start t
@@ -428,23 +440,23 @@ enumerateHistoriesSmallStep start trailer =
               thread_action t (acc, targ) =
                   setThread (fst $ runMemoryThread start t (acc + 1)) targ
               thread_actions = concat [map (thread_action t) (racing_access_for_thread t) | t <- threads]
-              result = thread_actions ++ trailer
+              result = addEnumStates trailer thread_actions
           in result
 
 {- Enumerate big-step advances we can make in the history.  This
    means, basically, running the log as far as we can in
    trace-directed mode, and then backtracking one epoch at a time when
    we get a failure. -}
-enumerateHistoriesBigStep :: History -> [History] -> [History]
+enumerateHistoriesBigStep :: History -> EnumerationState -> EnumerationState
 enumerateHistoriesBigStep start trailer =
     case replayState start of
-      ReplayStateFinished -> [start]
+      ReplayStateFinished -> enumStateFinished start
       ReplayStateFailed _ _ _ _ _ -> trailer
       ReplayStateOkay start_epoch ->
           case replayState $ run start Infinity of
             ReplayStateFinished ->
                 {- We're done; no point exploring any further -}
-                [run start Infinity]
+                enumStateFinished $ run start Infinity
             ReplayStateOkay _ -> error "replay got lost somewhere?"
             ReplayStateFailed _ _ _ fail_epoch _ ->
                 tlog ("failed at " ++ (show fail_epoch)) $
@@ -456,12 +468,15 @@ enumerateHistoriesBigStep start trailer =
 {- Exhaustively explore all future schedulings available from hist and
    return the first successful one (or Nothing, if we can't find
    anything. -}
-enumerateHistories :: [History] -> Maybe History
-enumerateHistories [] = Nothing
-enumerateHistories (a:as) =
-    tlog ("explore " ++ (show a)) $
-    case replayState a of
-      ReplayStateFinished -> Just a -- We're done
-      ReplayStateFailed _ _ _ _ _ -> enumerateHistories as -- Strip off any which have already failed
-      ReplayStateOkay _ -> -- we have to do something more clever
-          enumerateHistories $ enumerateHistoriesBigStep a as
+enumerateHistories' :: EnumerationState -> Maybe History
+enumerateHistories' startState =
+    case getNextExploreState startState of
+      Nothing -> Nothing -- failed
+      Just (startHist, nextState) ->
+          case replayState startHist of
+            ReplayStateFinished -> Just startHist -- Succeeded
+            ReplayStateFailed _ _ _ _ _ -> enumerateHistories' nextState
+            ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
+
+enumerateHistories :: History -> Maybe History
+enumerateHistories start = enumerateHistories' $ EnumerationState [start]
