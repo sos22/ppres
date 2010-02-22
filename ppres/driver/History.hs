@@ -51,11 +51,11 @@ doHistoryEntry w (HistoryRun cntr) =
              do runWorker w cntr
                 rs' <- replayStateWorker w
                 case rs' of
-                  ReplayStateFinished -> return 100 -- Just make something up
+                  ReplayStateFinished e' -> return $ replayCost e e'
                   ReplayStateFailed _ _ e' _ ->
                       return $ replayCost e e'
                   ReplayStateOkay e' -> return $ replayCost e e'
-         ReplayStateFinished -> return 1
+         ReplayStateFinished _ -> return 1
          ReplayStateFailed _ _ _ _ -> return 1
 doHistoryEntry w (HistorySetThread tid) = setThreadWorker w tid >> return 1
 

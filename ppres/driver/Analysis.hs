@@ -170,7 +170,7 @@ histCoord hist = case histLastCoord hist of
                    Infinity ->
                        case replayState hist of
                          ReplayStateOkay x -> Finite x
-                         ReplayStateFinished -> Infinity
+                         ReplayStateFinished _ -> Infinity
                          ReplayStateFailed _ _ e _ -> Finite e
 
 instance Show a => Show (Queue a) where
@@ -255,7 +255,7 @@ enumerateHistoriesSmallStep :: History -> EnumerationState -> EnumerationState
 enumerateHistoriesSmallStep start trailer =
     case replayState start of
       ReplayStateFailed _ _ _ _ -> trailer
-      ReplayStateFinished -> enumStateFinished start
+      ReplayStateFinished _ -> enumStateFinished start
       ReplayStateOkay origin ->
           let threads = live_threads start
               trace_for_thread t = traceThread start t
@@ -376,7 +376,7 @@ enumerateNextEpoch :: History -> [History]
 enumerateNextEpoch start =
     dt ("enum epoch " ++ (show start)) $
     case replayState start of
-      ReplayStateFinished -> [start]
+      ReplayStateFinished _ -> [start]
       ReplayStateFailed _ _ _ _ -> []
       ReplayStateOkay start_coord ->
           let next_coord = Finite ReplayCoord { rc_access = rc_access start_coord + 5000}
@@ -396,7 +396,7 @@ enumerateNextEpoch start =
               filterSchedules (x:xs) =
                   dt ("check schedule " ++ (show x)) $
                   case replayState x of
-                    ReplayStateFinished -> [x]
+                    ReplayStateFinished _ -> [x]
                     ReplayStateOkay _ -> x:(filterSchedules xs)
                     ReplayStateFailed _ _ _ _ -> filterSchedules xs
 
@@ -407,7 +407,7 @@ enumerateAllEpochs :: [History] -> Maybe History
 enumerateAllEpochs [] = Nothing
 enumerateAllEpochs [x] =
     case replayState x of
-      ReplayStateFinished -> Just x
+      ReplayStateFinished _ -> Just x
       _ -> enumerateAllEpochs $ enumerateNextEpoch x
 enumerateAllEpochs (thisHist:otherHists) =
     dt ("enum big " ++ (show thisHist)) $
@@ -420,11 +420,11 @@ enumerateAllEpochs (thisHist:otherHists) =
 enumerateHistoriesBigStep :: History -> EnumerationState -> EnumerationState
 enumerateHistoriesBigStep start trailer =
     case replayState start of
-      ReplayStateFinished -> enumStateFinished start
+      ReplayStateFinished _ -> enumStateFinished start
       ReplayStateFailed _ _ _ _ -> trailer
       ReplayStateOkay start_epoch ->
           case replayState $ run start Infinity of
-            ReplayStateFinished ->
+            ReplayStateFinished _ ->
                 {- We're done; no point exploring any further -}
                 enumStateFinished $ run start Infinity
             ReplayStateOkay _ -> error "replay got lost somewhere?"
@@ -446,7 +446,7 @@ enumerateHistories' startState =
       Just (startHist, nextState) ->
           tlog ("explore " ++ (show startHist)) $
           case replayState startHist of
-            ReplayStateFinished -> Just startHist -- Succeeded
+            ReplayStateFinished _ -> Just startHist -- Succeeded
             ReplayStateFailed _ _ _ _ -> enumerateHistories' nextState
             ReplayStateOkay _ -> enumerateHistories' $ enumerateHistoriesBigStep startHist nextState
 
@@ -454,7 +454,7 @@ enumerateHistories :: History -> Maybe History
 --enumerateHistories start = enumerateHistories' $ EnumerationState [(startCoord, start)] emptyQueue start False
 --enumerateHistories start = enumerateAllEpochs [start]
 enumerateHistories start = case filter (\x -> case replayState x of
-                                                ReplayStateFinished -> True
+                                                ReplayStateFinished _ -> True
                                                 _ -> False) $ breadthFirstExplore enumerateNextEpoch start of
                              [] -> Nothing
                              (x:_) -> Just x

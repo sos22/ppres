@@ -155,7 +155,7 @@ data ReplayFailureReason = FailureReasonControl
                          | FailureReasonData Expression Expression deriving (Show, Read)
 
 data ReplayState = ReplayStateOkay ReplayCoord
-                 | ReplayStateFinished
+                 | ReplayStateFinished ReplayCoord
                  | ReplayStateFailed String ThreadId ReplayCoord ReplayFailureReason deriving (Show, Read)
 
 data ThreadState = ThreadState { ts_dead :: Bool,

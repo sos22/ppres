@@ -168,7 +168,7 @@ parseReplayState (ResponseDataAncillary 11 [x, tid, access_nr]:(ResponseDataStri
                                _ -> error $ "unexpected extra data in a failure control response " ++ (show items)
                         1 -> uncurry FailureReasonData $  evalConsumer items $ pairM parseExpression parseExpression
                         _ -> error $ "unexpected failure class " ++ (show x)
-parseReplayState [ResponseDataAncillary 14 []] = ReplayStateFinished
+parseReplayState [ResponseDataAncillary 14 [access_nr]] = ReplayStateFinished $ ReplayCoord $ AccessNr $ fromIntegral access_nr
 parseReplayState x = error $ "bad replay state " ++ (show x)
 
 replayStateWorker :: Worker -> IO ReplayState

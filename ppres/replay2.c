@@ -1350,7 +1350,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_REPLAY_STATE:
 		if (logfile->finished)
-			send_ancillary(ANCILLARY_REPLAY_FINISHED);
+			send_ancillary(ANCILLARY_REPLAY_FINISHED, now.access_nr);
 		else
 			send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.access_nr);
 		send_okay();
