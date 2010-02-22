@@ -670,7 +670,6 @@ __attribute__ ((noreturn))
 static
 void failure_exit ( void )
 {
-   LibVEX_ShowAllocStats();
    VG_(core_panic)("LibVEX called failure_exit().");
 }
 

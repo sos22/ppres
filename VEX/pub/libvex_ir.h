@@ -48,6 +48,7 @@
 #define __LIBVEX_IR_H
 
 #include "libvex_basictypes.h"
+#include "libvex_alloc.h"
 
    
 /*---------------------------------------------------------------*/
@@ -300,6 +301,8 @@ typedef
    }
    IRConst;
 
+DECLARE_VEX_TYPE(IRConst)
+
 /* IRConst constructors */
 extern IRConst* IRConst_U1   ( Bool );
 extern IRConst* IRConst_U8   ( UChar );
@@ -345,6 +348,8 @@ typedef
    }
    IRCallee;
 
+DECLARE_VEX_TYPE(IRCallee)
+
 /* Create an IRCallee. */
 extern IRCallee* mkIRCallee ( Int regparms, HChar* name, void* addr );
 
@@ -367,6 +372,8 @@ typedef
       Int    nElems; /* number of elements in the indexed area */
    }
    IRRegArray;
+
+DECLARE_VEX_TYPE(IRRegArray)
 
 extern IRRegArray* mkIRRegArray ( Int, IRType, Int );
 
@@ -967,6 +974,8 @@ typedef
    struct _IRExpr
    IRExpr;
 
+DECLARE_VEX_TYPE(IRExpr)
+
 struct _IRExpr {
    IRExprTag tag;
    union {
@@ -1357,6 +1366,8 @@ typedef
    }
    IRDirty;
 
+DECLARE_VEX_TYPE(IRDirty)
+
 /* Pretty-print a dirty call */
 extern void     ppIRDirty ( IRDirty* );
 
@@ -1472,6 +1483,8 @@ typedef
       IRExpr*   dataLo;
    }
    IRCAS;
+
+DECLARE_VEX_TYPE(IRCAS)
 
 extern void ppIRCAS ( IRCAS* cas );
 
@@ -1718,6 +1731,8 @@ typedef
    }
    IRStmt;
 
+DECLARE_VEX_TYPE(IRStmt)
+
 /* Statement constructors. */
 extern IRStmt* IRStmt_NoOp    ( void );
 extern IRStmt* IRStmt_IMark   ( Addr64 addr, Int len );
@@ -1757,6 +1772,8 @@ typedef
    }
    IRTypeEnv;
 
+DECLARE_VEX_TYPE(IRTypeEnv)
+
 /* Obtain a new IRTemp */
 extern IRTemp newIRTemp ( IRTypeEnv*, IRType );
 
@@ -1790,6 +1807,8 @@ typedef
       IRJumpKind jumpkind;
    }
    IRSB;
+
+DECLARE_VEX_TYPE(IRSB)
 
 /* Allocate a new, uninitialised IRSB */
 extern IRSB* emptyIRSB ( void );

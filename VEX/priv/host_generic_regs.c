@@ -203,10 +203,10 @@ HReg lookupHRegRemap ( HRegRemap* map, HReg orig )
 
 HInstrArray* newHInstrArray ( void )
 {
-   HInstrArray* ha = LibVEX_Alloc(sizeof(HInstrArray));
+   HInstrArray* ha = LibVEX_Alloc_HInstrArray();
    ha->arr_size = 4;
    ha->arr_used = 0;
-   ha->arr      = LibVEX_Alloc(ha->arr_size * sizeof(HInstr*));
+   ha->arr      = LibVEX_Alloc_Array_HInstr(ha->arr_size);
    ha->n_vregs  = 0;
    return ha;
 }
@@ -219,7 +219,7 @@ void addHInstr ( HInstrArray* ha, HInstr* instr )
       ha->arr_used++;
    } else {
       Int      i;
-      HInstr** arr2 = LibVEX_Alloc(ha->arr_size * 2 * sizeof(HInstr*));
+      HInstr** arr2 = LibVEX_Alloc_Array_HInstr(ha->arr_size * 2);
       for (i = 0; i < ha->arr_size; i++)
          arr2[i] = ha->arr[i];
       ha->arr_size *= 2;
@@ -228,6 +228,8 @@ void addHInstr ( HInstrArray* ha, HInstr* instr )
    }
 }
 
+
+DEFINE_VEX_TYPE_NO_DESTRUCT(HInstrArray, { visit(this->arr); });
 
 /*---------------------------------------------------------------*/
 /*--- end                                 host_generic_regs.c ---*/

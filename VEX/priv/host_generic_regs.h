@@ -225,6 +225,7 @@ extern HReg lookupHRegRemap ( HRegRemap*, HReg );
 
 typedef  void  HInstr;
 
+DECLARE_VEX_TYPE(HInstr)
 
 /* An expandable array of HInstr*'s.  Handy for insn selection and
    register allocation.  n_vregs indicates the number of virtual
@@ -239,6 +240,8 @@ typedef
       Int      n_vregs;
    }
    HInstrArray;
+
+DECLARE_VEX_TYPE(HInstrArray)
 
 extern HInstrArray* newHInstrArray ( void );
 extern void         addHInstr ( HInstrArray*, HInstr* );

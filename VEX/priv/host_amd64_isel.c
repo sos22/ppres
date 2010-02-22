@@ -149,6 +149,13 @@ typedef
    }
    ISelEnv;
 
+DECLARE_VEX_TYPE(ISelEnv)
+DEFINE_VEX_TYPE_NO_DESTRUCT(ISelEnv, {
+    visit(this->type_env);
+    visit(this->vregmap);
+    visit(this->vregmapHI);
+    visit(this->code);
+  });
 
 static HReg lookupIRTemp ( ISelEnv* env, IRTemp tmp )
 {
@@ -4005,7 +4012,7 @@ HInstrArray* iselSB_AMD64 ( IRSB* bb, VexArch      arch_host,
                                  |VEX_HWCAPS_AMD64_CX16)));
 
    /* Make up an initial environment to use. */
-   env = LibVEX_Alloc(sizeof(ISelEnv));
+   env = LibVEX_Alloc_ISelEnv();
    env->vreg_ctr = 0;
 
    /* Set up output code array. */
@@ -4017,8 +4024,8 @@ HInstrArray* iselSB_AMD64 ( IRSB* bb, VexArch      arch_host,
    /* Make up an IRTemp -> virtual HReg mapping.  This doesn't
       change as we go along. */
    env->n_vregmap = bb->tyenv->types_used;
-   env->vregmap   = LibVEX_Alloc(env->n_vregmap * sizeof(HReg));
-   env->vregmapHI = LibVEX_Alloc(env->n_vregmap * sizeof(HReg));
+   env->vregmap   = LibVEX_Alloc_Bytes(env->n_vregmap * sizeof(HReg));
+   env->vregmapHI = LibVEX_Alloc_Bytes(env->n_vregmap * sizeof(HReg));
 
    /* and finally ... */
    env->hwcaps = hwcaps_host;

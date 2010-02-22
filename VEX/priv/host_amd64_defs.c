@@ -52,6 +52,71 @@
 #include "host_generic_regs.h"
 #include "host_amd64_defs.h"
 
+DEFINE_VEX_TYPE(AMD64AMode);
+DEFINE_VEX_TYPE_NO_DESTRUCT(AMD64RMI, { if (this->tag == Armi_Mem) visit(this->Armi.Mem.am); });
+DEFINE_VEX_TYPE(AMD64RI);
+DEFINE_VEX_TYPE_NO_DESTRUCT(AMD64RM, { if (this->tag == Arm_Mem) visit(this->Arm.Mem.am); });
+static void
+visit_AMD64Instr(AMD64Instr *this, void (*visit)(const void *))
+{
+   switch (this->tag) {
+   case Ain_Alu64R:
+     visit(this->Ain.Alu64R.src);
+     break;
+   case Ain_Alu64M:
+     visit(this->Ain.Alu64M.src);
+     visit(this->Ain.Alu64M.dst);
+     break;
+   case Ain_Lea64:
+     visit(this->Ain.Lea64.am);
+     break;
+   case Ain_MulL:
+     visit(this->Ain.MulL.src);
+     break;
+   case Ain_Div:
+     visit(this->Ain.Div.src);
+     break;
+   case Ain_Push:
+     visit(this->Ain.Push.src);
+     break;
+   case Ain_Goto:
+     visit(this->Ain.Goto.dst);
+     break;
+   case Ain_CMov64:
+     visit(this->Ain.CMov64.src);
+     break;
+   case Ain_LoadEX:
+     visit(this->Ain.LoadEX.src);
+     break;
+   case Ain_Store:
+     visit(this->Ain.Store.dst);
+     break;
+   case Ain_ACAS:
+     visit(this->Ain.ACAS.addr);
+     break;
+   case Ain_DACAS:
+     visit(this->Ain.DACAS.addr);
+     break;
+   case Ain_A87PushPop:
+     visit(this->Ain.A87PushPop.addr);
+     break;
+   case Ain_A87LdCW:
+     visit(this->Ain.A87LdCW.addr);
+     break;
+   case Ain_A87StSW:
+     visit(this->Ain.A87StSW.addr);
+     break;
+   case Ain_SseLdSt:
+     visit(this->Ain.SseLdSt.addr);
+     break;
+   case Ain_SseLdzLO:
+     visit(this->Ain.SseLdSt.addr);
+     break;
+   default:
+     break;
+   }
+}
+__DEFINE_VEX_TYPE_NO_DESTRUCT(AMD64Instr, visit_AMD64Instr);
 
 /* --------- Registers. --------- */
 
@@ -169,7 +234,7 @@ void getAllocableRegs_AMD64 ( Int* nregs, HReg** arr )
 #endif
 #if 1
    *nregs = 20;
-   *arr = LibVEX_Alloc(*nregs * sizeof(HReg));
+   *arr = LibVEX_Alloc_Bytes(*nregs * sizeof(HReg));
    (*arr)[ 0] = hregAMD64_RSI();
    (*arr)[ 1] = hregAMD64_RDI();
    (*arr)[ 2] = hregAMD64_R8();
@@ -225,14 +290,14 @@ HChar* showAMD64CondCode ( AMD64CondCode cond )
 /* --------- AMD64AMode: memory address expressions. --------- */
 
 AMD64AMode* AMD64AMode_IR ( UInt imm32, HReg reg ) {
-   AMD64AMode* am = LibVEX_Alloc(sizeof(AMD64AMode));
+   AMD64AMode* am = LibVEX_Alloc_AMD64AMode();
    am->tag        = Aam_IR;
    am->Aam.IR.imm = imm32;
    am->Aam.IR.reg = reg;
    return am;
 }
 AMD64AMode* AMD64AMode_IRRS ( UInt imm32, HReg base, HReg indEx, Int shift ) {
-   AMD64AMode* am = LibVEX_Alloc(sizeof(AMD64AMode));
+   AMD64AMode* am = LibVEX_Alloc_AMD64AMode();
    am->tag = Aam_IRRS;
    am->Aam.IRRS.imm   = imm32;
    am->Aam.IRRS.base  = base;
@@ -307,19 +372,19 @@ static void mapRegs_AMD64AMode ( HRegRemap* m, AMD64AMode* am ) {
 /* --------- Operand, which can be reg, immediate or memory. --------- */
 
 AMD64RMI* AMD64RMI_Imm ( UInt imm32 ) {
-   AMD64RMI* op       = LibVEX_Alloc(sizeof(AMD64RMI));
+   AMD64RMI* op       = LibVEX_Alloc_AMD64RMI();
    op->tag            = Armi_Imm;
    op->Armi.Imm.imm32 = imm32;
    return op;
 }
 AMD64RMI* AMD64RMI_Reg ( HReg reg ) {
-   AMD64RMI* op     = LibVEX_Alloc(sizeof(AMD64RMI));
+   AMD64RMI* op     = LibVEX_Alloc_AMD64RMI();
    op->tag          = Armi_Reg;
    op->Armi.Reg.reg = reg;
    return op;
 }
 AMD64RMI* AMD64RMI_Mem ( AMD64AMode* am ) {
-   AMD64RMI* op    = LibVEX_Alloc(sizeof(AMD64RMI));
+   AMD64RMI* op    = LibVEX_Alloc_AMD64RMI();
    op->tag         = Armi_Mem;
    op->Armi.Mem.am = am;
    return op;
@@ -378,13 +443,13 @@ static void mapRegs_AMD64RMI ( HRegRemap* m, AMD64RMI* op ) {
 /* --------- Operand, which can be reg or immediate only. --------- */
 
 AMD64RI* AMD64RI_Imm ( UInt imm32 ) {
-   AMD64RI* op       = LibVEX_Alloc(sizeof(AMD64RI));
+   AMD64RI* op       = LibVEX_Alloc_AMD64RI();
    op->tag           = Ari_Imm;
    op->Ari.Imm.imm32 = imm32;
    return op;
 }
 AMD64RI* AMD64RI_Reg ( HReg reg ) {
-   AMD64RI* op     = LibVEX_Alloc(sizeof(AMD64RI));
+   AMD64RI* op     = LibVEX_Alloc_AMD64RI();
    op->tag         = Ari_Reg;
    op->Ari.Reg.reg = reg;
    return op;
@@ -434,13 +499,13 @@ static void mapRegs_AMD64RI ( HRegRemap* m, AMD64RI* op ) {
 /* --------- Operand, which can be reg or memory only. --------- */
 
 AMD64RM* AMD64RM_Reg ( HReg reg ) {
-   AMD64RM* op       = LibVEX_Alloc(sizeof(AMD64RM));
+   AMD64RM* op       = LibVEX_Alloc_AMD64RM();
    op->tag         = Arm_Reg;
    op->Arm.Reg.reg = reg;
    return op;
 }
 AMD64RM* AMD64RM_Mem ( AMD64AMode* am ) {
-   AMD64RM* op    = LibVEX_Alloc(sizeof(AMD64RM));
+   AMD64RM* op    = LibVEX_Alloc_AMD64RM();
    op->tag        = Arm_Mem;
    op->Arm.Mem.am = am;
    return op;
@@ -638,14 +703,14 @@ HChar* showAMD64SseOp ( AMD64SseOp op ) {
 }
 
 AMD64Instr* AMD64Instr_Imm64 ( ULong imm64, HReg dst ) {
-   AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i      = LibVEX_Alloc_AMD64Instr();
    i->tag             = Ain_Imm64;
    i->Ain.Imm64.imm64 = imm64;
    i->Ain.Imm64.dst   = dst;
    return i;
 }
 AMD64Instr* AMD64Instr_Alu64R ( AMD64AluOp op, AMD64RMI* src, HReg dst ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_Alu64R;
    i->Ain.Alu64R.op  = op;
    i->Ain.Alu64R.src = src;
@@ -653,7 +718,7 @@ AMD64Instr* AMD64Instr_Alu64R ( AMD64AluOp op, AMD64RMI* src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Alu64M ( AMD64AluOp op, AMD64RI* src, AMD64AMode* dst ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_Alu64M;
    i->Ain.Alu64M.op  = op;
    i->Ain.Alu64M.src = src;
@@ -662,7 +727,7 @@ AMD64Instr* AMD64Instr_Alu64M ( AMD64AluOp op, AMD64RI* src, AMD64AMode* dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Sh64 ( AMD64ShiftOp op, UInt src, HReg dst ) {
-   AMD64Instr* i   = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i   = LibVEX_Alloc_AMD64Instr();
    i->tag          = Ain_Sh64;
    i->Ain.Sh64.op  = op;
    i->Ain.Sh64.src = src;
@@ -670,35 +735,35 @@ AMD64Instr* AMD64Instr_Sh64 ( AMD64ShiftOp op, UInt src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Test64 ( UInt imm32, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_Test64;
    i->Ain.Test64.imm32 = imm32;
    i->Ain.Test64.dst   = dst;
    return i;
 }
 AMD64Instr* AMD64Instr_Unary64 ( AMD64UnaryOp op, HReg dst ) {
-   AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i      = LibVEX_Alloc_AMD64Instr();
    i->tag             = Ain_Unary64;
    i->Ain.Unary64.op  = op;
    i->Ain.Unary64.dst = dst;
    return i;
 }
 AMD64Instr* AMD64Instr_Lea64 ( AMD64AMode* am, HReg dst ) {
-   AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i      = LibVEX_Alloc_AMD64Instr();
    i->tag             = Ain_Lea64;
    i->Ain.Lea64.am    = am;
    i->Ain.Lea64.dst   = dst;
    return i;
 }
 AMD64Instr* AMD64Instr_MulL ( Bool syned, AMD64RM* src ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_MulL;
    i->Ain.MulL.syned = syned;
    i->Ain.MulL.src   = src;
    return i;
 }
 AMD64Instr* AMD64Instr_Div ( Bool syned, Int sz, AMD64RM* src ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_Div;
    i->Ain.Div.syned  = syned;
    i->Ain.Div.sz     = sz;
@@ -707,7 +772,7 @@ AMD64Instr* AMD64Instr_Div ( Bool syned, Int sz, AMD64RM* src ) {
    return i;
 }
 //.. AMD64Instr* AMD64Instr_Sh3232  ( AMD64ShiftOp op, UInt amt, HReg src, HReg dst ) {
-//..    AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
 //..    i->tag            = Xin_Sh3232;
 //..    i->Xin.Sh3232.op  = op;
 //..    i->Xin.Sh3232.amt = amt;
@@ -717,13 +782,13 @@ AMD64Instr* AMD64Instr_Div ( Bool syned, Int sz, AMD64RM* src ) {
 //..    return i;
 //.. }
 AMD64Instr* AMD64Instr_Push( AMD64RMI* src ) {
-   AMD64Instr* i   = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i   = LibVEX_Alloc_AMD64Instr();
    i->tag          = Ain_Push;
    i->Ain.Push.src = src;
    return i;
 }
 AMD64Instr* AMD64Instr_Call ( AMD64CondCode cond, Addr64 target, Int regparms ) {
-   AMD64Instr* i        = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i        = LibVEX_Alloc_AMD64Instr();
    i->tag               = Ain_Call;
    i->Ain.Call.cond     = cond;
    i->Ain.Call.target   = target;
@@ -732,7 +797,7 @@ AMD64Instr* AMD64Instr_Call ( AMD64CondCode cond, Addr64 target, Int regparms ) 
    return i;
 }
 AMD64Instr* AMD64Instr_Goto ( IRJumpKind jk, AMD64CondCode cond, AMD64RI* dst ) {
-   AMD64Instr* i    = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i    = LibVEX_Alloc_AMD64Instr();
    i->tag           = Ain_Goto;
    i->Ain.Goto.cond = cond;
    i->Ain.Goto.dst  = dst;
@@ -740,7 +805,7 @@ AMD64Instr* AMD64Instr_Goto ( IRJumpKind jk, AMD64CondCode cond, AMD64RI* dst ) 
    return i;
 }
 AMD64Instr* AMD64Instr_CMov64 ( AMD64CondCode cond, AMD64RM* src, HReg dst ) {
-   AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i      = LibVEX_Alloc_AMD64Instr();
    i->tag             = Ain_CMov64;
    i->Ain.CMov64.cond = cond;
    i->Ain.CMov64.src  = src;
@@ -749,7 +814,7 @@ AMD64Instr* AMD64Instr_CMov64 ( AMD64CondCode cond, AMD64RM* src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_MovZLQ ( HReg src, HReg dst ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_MovZLQ;
    i->Ain.MovZLQ.src = src;
    i->Ain.MovZLQ.dst = dst;
@@ -757,7 +822,7 @@ AMD64Instr* AMD64Instr_MovZLQ ( HReg src, HReg dst ) {
 }
 AMD64Instr* AMD64Instr_LoadEX ( UChar szSmall, Bool syned,
                                 AMD64AMode* src, HReg dst ) {
-   AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
    i->tag                = Ain_LoadEX;
    i->Ain.LoadEX.szSmall = szSmall;
    i->Ain.LoadEX.syned   = syned;
@@ -767,7 +832,7 @@ AMD64Instr* AMD64Instr_LoadEX ( UChar szSmall, Bool syned,
    return i;
 }
 AMD64Instr* AMD64Instr_Store ( UChar sz, HReg src, AMD64AMode* dst ) {
-   AMD64Instr* i    = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i    = LibVEX_Alloc_AMD64Instr();
    i->tag           = Ain_Store;
    i->Ain.Store.sz  = sz;
    i->Ain.Store.src = src;
@@ -776,14 +841,14 @@ AMD64Instr* AMD64Instr_Store ( UChar sz, HReg src, AMD64AMode* dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Set64 ( AMD64CondCode cond, HReg dst ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_Set64;
    i->Ain.Set64.cond = cond;
    i->Ain.Set64.dst  = dst;
    return i;
 }
 AMD64Instr* AMD64Instr_Bsfr64 ( Bool isFwds, HReg src, HReg dst ) {
-   AMD64Instr* i        = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i        = LibVEX_Alloc_AMD64Instr();
    i->tag               = Ain_Bsfr64;
    i->Ain.Bsfr64.isFwds = isFwds;
    i->Ain.Bsfr64.src    = src;
@@ -791,12 +856,12 @@ AMD64Instr* AMD64Instr_Bsfr64 ( Bool isFwds, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_MFence ( void ) {
-   AMD64Instr* i = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i = LibVEX_Alloc_AMD64Instr();
    i->tag        = Ain_MFence;
    return i;
 }
 AMD64Instr* AMD64Instr_ACAS ( AMD64AMode* addr, UChar sz ) {
-   AMD64Instr* i    = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i    = LibVEX_Alloc_AMD64Instr();
    i->tag           = Ain_ACAS;
    i->Ain.ACAS.addr = addr;
    i->Ain.ACAS.sz   = sz;
@@ -804,7 +869,7 @@ AMD64Instr* AMD64Instr_ACAS ( AMD64AMode* addr, UChar sz ) {
    return i;
 }
 AMD64Instr* AMD64Instr_DACAS ( AMD64AMode* addr, UChar sz ) {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_DACAS;
    i->Ain.DACAS.addr = addr;
    i->Ain.DACAS.sz   = sz;
@@ -814,7 +879,7 @@ AMD64Instr* AMD64Instr_DACAS ( AMD64AMode* addr, UChar sz ) {
 
 AMD64Instr* AMD64Instr_A87Free ( Int nregs )
 {
-   AMD64Instr* i        = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i        = LibVEX_Alloc_AMD64Instr();
    i->tag               = Ain_A87Free;
    i->Ain.A87Free.nregs = nregs;
    vassert(nregs >= 1 && nregs <= 7);
@@ -822,7 +887,7 @@ AMD64Instr* AMD64Instr_A87Free ( Int nregs )
 }
 AMD64Instr* AMD64Instr_A87PushPop ( AMD64AMode* addr, Bool isPush )
 {
-   AMD64Instr* i            = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i            = LibVEX_Alloc_AMD64Instr();
    i->tag                   = Ain_A87PushPop;
    i->Ain.A87PushPop.addr   = addr;
    i->Ain.A87PushPop.isPush = isPush;
@@ -830,28 +895,28 @@ AMD64Instr* AMD64Instr_A87PushPop ( AMD64AMode* addr, Bool isPush )
 }
 AMD64Instr* AMD64Instr_A87FpOp ( A87FpOp op )
 {
-   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i     = LibVEX_Alloc_AMD64Instr();
    i->tag            = Ain_A87FpOp;
    i->Ain.A87FpOp.op = op;
    return i;
 }
 AMD64Instr* AMD64Instr_A87LdCW ( AMD64AMode* addr )
 {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_A87LdCW;
    i->Ain.A87LdCW.addr = addr;
    return i;
 }
 AMD64Instr* AMD64Instr_A87StSW ( AMD64AMode* addr )
 {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_A87StSW;
    i->Ain.A87StSW.addr = addr;
    return i;
 }
 
 //.. AMD64Instr* AMD64Instr_FpUnary ( AMD64FpOp op, HReg src, HReg dst ) {
-//..    AMD64Instr* i        = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i        = LibVEX_Alloc_AMD64Instr();
 //..    i->tag             = Xin_FpUnary;
 //..    i->Xin.FpUnary.op  = op;
 //..    i->Xin.FpUnary.src = src;
@@ -859,7 +924,7 @@ AMD64Instr* AMD64Instr_A87StSW ( AMD64AMode* addr )
 //..    return i;
 //.. }
 //.. AMD64Instr* AMD64Instr_FpBinary ( AMD64FpOp op, HReg srcL, HReg srcR, HReg dst ) {
-//..    AMD64Instr* i          = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i          = LibVEX_Alloc_AMD64Instr();
 //..    i->tag               = Xin_FpBinary;
 //..    i->Xin.FpBinary.op   = op;
 //..    i->Xin.FpBinary.srcL = srcL;
@@ -868,7 +933,7 @@ AMD64Instr* AMD64Instr_A87StSW ( AMD64AMode* addr )
 //..    return i;
 //.. }
 //.. AMD64Instr* AMD64Instr_FpLdSt ( Bool isLoad, UChar sz, HReg reg, AMD64AMode* addr ) {
-//..    AMD64Instr* i          = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i          = LibVEX_Alloc_AMD64Instr();
 //..    i->tag               = Xin_FpLdSt;
 //..    i->Xin.FpLdSt.isLoad = isLoad;
 //..    i->Xin.FpLdSt.sz     = sz;
@@ -879,7 +944,7 @@ AMD64Instr* AMD64Instr_A87StSW ( AMD64AMode* addr )
 //.. }
 //.. AMD64Instr* AMD64Instr_FpLdStI ( Bool isLoad, UChar sz,  
 //..                              HReg reg, AMD64AMode* addr ) {
-//..    AMD64Instr* i           = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i           = LibVEX_Alloc_AMD64Instr();
 //..    i->tag                = Xin_FpLdStI;
 //..    i->Xin.FpLdStI.isLoad = isLoad;
 //..    i->Xin.FpLdStI.sz     = sz;
@@ -889,14 +954,14 @@ AMD64Instr* AMD64Instr_A87StSW ( AMD64AMode* addr )
 //..    return i;
 //.. }
 //.. AMD64Instr* AMD64Instr_Fp64to32 ( HReg src, HReg dst ) {
-//..    AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
 //..    i->tag              = Xin_Fp64to32;
 //..    i->Xin.Fp64to32.src = src;
 //..    i->Xin.Fp64to32.dst = dst;
 //..    return i;
 //.. }
 //.. AMD64Instr* AMD64Instr_FpCMov ( AMD64CondCode cond, HReg src, HReg dst ) {
-//..    AMD64Instr* i        = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i        = LibVEX_Alloc_AMD64Instr();
 //..    i->tag             = Xin_FpCMov;
 //..    i->Xin.FpCMov.cond = cond;
 //..    i->Xin.FpCMov.src  = src;
@@ -905,18 +970,18 @@ AMD64Instr* AMD64Instr_A87StSW ( AMD64AMode* addr )
 //..    return i;
 //.. }
 AMD64Instr* AMD64Instr_LdMXCSR ( AMD64AMode* addr ) {
-   AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
    i->tag                = Ain_LdMXCSR;
    i->Ain.LdMXCSR.addr   = addr;
    return i;
 }
 //.. AMD64Instr* AMD64Instr_FpStSW_AX ( void ) {
-//..    AMD64Instr* i = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i = LibVEX_Alloc_AMD64Instr();
 //..    i->tag      = Xin_FpStSW_AX;
 //..    return i;
 //.. }
 AMD64Instr* AMD64Instr_SseUComIS ( Int sz, HReg srcL, HReg srcR, HReg dst ) {
-   AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
    i->tag                = Ain_SseUComIS;
    i->Ain.SseUComIS.sz   = toUChar(sz);
    i->Ain.SseUComIS.srcL = srcL;
@@ -926,7 +991,7 @@ AMD64Instr* AMD64Instr_SseUComIS ( Int sz, HReg srcL, HReg srcR, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_SseSI2SF ( Int szS, Int szD, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_SseSI2SF;
    i->Ain.SseSI2SF.szS = toUChar(szS);
    i->Ain.SseSI2SF.szD = toUChar(szD);
@@ -937,7 +1002,7 @@ AMD64Instr* AMD64Instr_SseSI2SF ( Int szS, Int szD, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_SseSF2SI ( Int szS, Int szD, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_SseSF2SI;
    i->Ain.SseSF2SI.szS = toUChar(szS);
    i->Ain.SseSF2SI.szD = toUChar(szD);
@@ -949,7 +1014,7 @@ AMD64Instr* AMD64Instr_SseSF2SI ( Int szS, Int szD, HReg src, HReg dst ) {
 }
 AMD64Instr* AMD64Instr_SseSDSS   ( Bool from64, HReg src, HReg dst )
 {
-   AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
    i->tag                = Ain_SseSDSS;
    i->Ain.SseSDSS.from64 = from64;
    i->Ain.SseSDSS.src    = src;
@@ -958,7 +1023,7 @@ AMD64Instr* AMD64Instr_SseSDSS   ( Bool from64, HReg src, HReg dst )
 }
 
 //.. AMD64Instr* AMD64Instr_SseConst ( UShort con, HReg dst ) {
-//..    AMD64Instr* i            = LibVEX_Alloc(sizeof(AMD64Instr));
+//..    AMD64Instr* i            = LibVEX_Alloc_AMD64Instr();
 //..    i->tag                 = Xin_SseConst;
 //..    i->Xin.SseConst.con    = con;
 //..    i->Xin.SseConst.dst    = dst;
@@ -967,7 +1032,7 @@ AMD64Instr* AMD64Instr_SseSDSS   ( Bool from64, HReg src, HReg dst )
 //.. }
 AMD64Instr* AMD64Instr_SseLdSt ( Bool isLoad, Int sz, 
                                  HReg reg, AMD64AMode* addr ) {
-   AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
    i->tag                = Ain_SseLdSt;
    i->Ain.SseLdSt.isLoad = isLoad;
    i->Ain.SseLdSt.sz     = toUChar(sz);
@@ -978,7 +1043,7 @@ AMD64Instr* AMD64Instr_SseLdSt ( Bool isLoad, Int sz,
 }
 AMD64Instr* AMD64Instr_SseLdzLO  ( Int sz, HReg reg, AMD64AMode* addr )
 {
-   AMD64Instr* i         = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i         = LibVEX_Alloc_AMD64Instr();
    i->tag                = Ain_SseLdzLO;
    i->Ain.SseLdzLO.sz    = sz;
    i->Ain.SseLdzLO.reg   = reg;
@@ -987,7 +1052,7 @@ AMD64Instr* AMD64Instr_SseLdzLO  ( Int sz, HReg reg, AMD64AMode* addr )
    return i;
 }
 AMD64Instr* AMD64Instr_Sse32Fx4 ( AMD64SseOp op, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_Sse32Fx4;
    i->Ain.Sse32Fx4.op  = op;
    i->Ain.Sse32Fx4.src = src;
@@ -996,7 +1061,7 @@ AMD64Instr* AMD64Instr_Sse32Fx4 ( AMD64SseOp op, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Sse32FLo ( AMD64SseOp op, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_Sse32FLo;
    i->Ain.Sse32FLo.op  = op;
    i->Ain.Sse32FLo.src = src;
@@ -1005,7 +1070,7 @@ AMD64Instr* AMD64Instr_Sse32FLo ( AMD64SseOp op, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Sse64Fx2 ( AMD64SseOp op, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_Sse64Fx2;
    i->Ain.Sse64Fx2.op  = op;
    i->Ain.Sse64Fx2.src = src;
@@ -1014,7 +1079,7 @@ AMD64Instr* AMD64Instr_Sse64Fx2 ( AMD64SseOp op, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_Sse64FLo ( AMD64SseOp op, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_Sse64FLo;
    i->Ain.Sse64FLo.op  = op;
    i->Ain.Sse64FLo.src = src;
@@ -1023,7 +1088,7 @@ AMD64Instr* AMD64Instr_Sse64FLo ( AMD64SseOp op, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_SseReRg ( AMD64SseOp op, HReg re, HReg rg ) {
-   AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i      = LibVEX_Alloc_AMD64Instr();
    i->tag             = Ain_SseReRg;
    i->Ain.SseReRg.op  = op;
    i->Ain.SseReRg.src = re;
@@ -1031,7 +1096,7 @@ AMD64Instr* AMD64Instr_SseReRg ( AMD64SseOp op, HReg re, HReg rg ) {
    return i;
 }
 AMD64Instr* AMD64Instr_SseCMov ( AMD64CondCode cond, HReg src, HReg dst ) {
-   AMD64Instr* i       = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i       = LibVEX_Alloc_AMD64Instr();
    i->tag              = Ain_SseCMov;
    i->Ain.SseCMov.cond = cond;
    i->Ain.SseCMov.src  = src;
@@ -1040,7 +1105,7 @@ AMD64Instr* AMD64Instr_SseCMov ( AMD64CondCode cond, HReg src, HReg dst ) {
    return i;
 }
 AMD64Instr* AMD64Instr_SseShuf ( Int order, HReg src, HReg dst ) {
-   AMD64Instr* i        = LibVEX_Alloc(sizeof(AMD64Instr));
+   AMD64Instr* i        = LibVEX_Alloc_AMD64Instr();
    i->tag               = Ain_SseShuf;
    i->Ain.SseShuf.order = order;
    i->Ain.SseShuf.src   = src;

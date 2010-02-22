@@ -160,6 +160,8 @@ typedef
    }
    AMD64AMode;
 
+DECLARE_VEX_TYPE(AMD64AMode)
+
 extern AMD64AMode* AMD64AMode_IR   ( UInt, HReg );
 extern AMD64AMode* AMD64AMode_IRRS ( UInt, HReg, HReg, Int );
 
@@ -196,6 +198,8 @@ typedef
    }
    AMD64RMI;
 
+DECLARE_VEX_TYPE(AMD64RMI)
+
 extern AMD64RMI* AMD64RMI_Imm ( UInt );
 extern AMD64RMI* AMD64RMI_Reg ( HReg );
 extern AMD64RMI* AMD64RMI_Mem ( AMD64AMode* );
@@ -227,6 +231,8 @@ typedef
    }
    AMD64RI;
 
+DECLARE_VEX_TYPE(AMD64RI)
+
 extern AMD64RI* AMD64RI_Imm ( UInt );
 extern AMD64RI* AMD64RI_Reg ( HReg );
 
@@ -256,6 +262,8 @@ typedef
       Arm;
    }
    AMD64RM;
+
+DECLARE_VEX_TYPE(AMD64RM)
 
 extern AMD64RM* AMD64RM_Reg ( HReg );
 extern AMD64RM* AMD64RM_Mem ( AMD64AMode* );
@@ -679,6 +687,8 @@ typedef
       } Ain;
    }
    AMD64Instr;
+
+DECLARE_VEX_TYPE(AMD64Instr)
 
 extern AMD64Instr* AMD64Instr_Imm64      ( ULong imm64, HReg dst );
 extern AMD64Instr* AMD64Instr_Alu64R     ( AMD64AluOp, AMD64RMI*, HReg );

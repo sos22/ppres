@@ -63,11 +63,8 @@
 #define DEFINE_PATTERN(_patt,_expr)                            \
    do {                                                        \
       if (!(_patt)) {                                          \
-         vassert(vexGetAllocMode() == VexAllocModeTEMP);       \
-         vexSetAllocMode(VexAllocModePERM);                    \
          _patt = (_expr);                                      \
-         vexSetAllocMode(VexAllocModeTEMP);                    \
-         vassert(vexGetAllocMode() == VexAllocModeTEMP);       \
+	 vexRegisterGCRoot((void **)&_patt);		       \
       }                                                        \
    } while (0)
 
