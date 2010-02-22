@@ -32,6 +32,7 @@ data UIExpression = UIDummyFunction
                   | UIFindRacingAccesses UIExpression UIExpression
                   | UIReplayState UIExpression
                   | UIControlTrace UIExpression (Topped ReplayCoord)
+                  | UIControlTraceTo UIExpression UIExpression
                   | UIFindControlRaces UIExpression UIExpression
                   | UITruncHist UIExpression (Topped ReplayCoord)
                   | UIFetchMemory UIExpression Word64 Word64
@@ -95,6 +96,10 @@ expressionParser =
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
                   return $ UIControlTrace snap cntr,
+               do keyword "ct2"
+                  start <- expressionParser
+                  end <- expressionParser
+                  return $ UIControlTraceTo start end,
                do keyword "tracem"
                   snap <- expressionParser
                   addr <- parseInteger
@@ -211,6 +216,10 @@ evalExpression ws f =
           withSnapshot ws snap $ \s -> setThread s tid
       UIReplayState name -> withSnapshot ws name $ \s -> replayState s
       UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
+      UIControlTraceTo start end ->
+          toUI $ do start' <- fromUI $ evalExpression ws start
+                    end' <- fromUI $ evalExpression ws end
+                    return $ controlTraceTo start' end'
       UIFindRacingAccesses a b ->
           toUI $ do a' <- fromUI $ evalExpression ws a
                     b' <- fromUI $ evalExpression ws b

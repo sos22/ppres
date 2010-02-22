@@ -7,7 +7,7 @@ module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    trace, traceAddress,
                    threadState, replayState, controlTrace,
                    fetchMemory, vgIntermediate, nextThread,
-                   setThread) where
+                   setThread, controlTraceTo) where
 
 import Data.Word
 import Control.Monad.State
@@ -249,3 +249,10 @@ nextThread hist =
 
 setThread :: History -> ThreadId -> History
 setThread hist tid = appendHistory hist $ HistorySetThread tid
+
+controlTraceTo :: History -> History -> Either String [Expression]
+controlTraceTo start end =
+    unsafePerformIO $ do worker <- getWorker start
+                         r <- controlTraceToWorker worker start end
+                         killWorker worker
+                         return r

@@ -1,9 +1,8 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History, HistoryEntry(..),
-               mkHistory, histLastCoord) where
+               mkHistory, histLastCoord, controlTraceToWorker) where
 
 import Control.Monad
-import Debug.Trace
 
 import Types
 import Worker
@@ -171,3 +170,20 @@ instance Forcable HistoryEntry where
 
 instance Forcable History where
     force (History a b h) = force a . force b . force h
+
+{- Take a worker and a history representing its current state and run
+   it forwards to some other history, logging control expressions as
+   we go. -}
+{- This arguably belongs in Worker.hs, but that would mean exposing
+   the internals of the History type. -}
+controlTraceToWorker :: Worker -> History -> History -> IO (Either String [Expression])
+controlTraceToWorker work start end =
+    let worker [] = return []
+        worker ((HistorySetThread tid):rest) = (setThreadWorker work tid) >> worker rest
+        worker ((HistoryRun cntr):rest) = do h <- controlTraceWorker work cntr
+                                             rest' <- worker rest
+                                             return $ h ++ rest'
+    in
+    case stripSharedPrefix start end of
+      ([], todo) -> liftM Right $ worker todo
+      _ -> return $ Left $ (show start) ++ " is not a prefix of " ++ (show end)
