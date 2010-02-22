@@ -154,15 +154,15 @@ appendHistory (History old_last_epoch old_nr_records dlh) he =
     in sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
-truncateHistory :: History -> Topped ReplayCoord -> History
+truncateHistory :: History -> Topped ReplayCoord -> Either String History
 truncateHistory (History _ _ hs) cntr =
-    mkHistory (worker $ dlToList hs)
-    where worker [HistoryRun Infinity] = [HistoryRun cntr]
-          worker ((HistoryRun c):hs') =
-              if c < cntr then (HistoryRun c):(worker hs')
-              else [HistoryRun cntr]
-          worker (h:hs') = h:(worker hs')
-          worker _ = error $ "truncate bad history " ++ (show hs)
+    let worker [HistoryRun Infinity] = Right [HistoryRun cntr]
+        worker ((HistoryRun c):hs') =
+            if c < cntr then liftM ((:) $ HistoryRun c) $ worker hs'
+            else Right [HistoryRun cntr]
+        worker (h:hs') = liftM ((:) h) $ worker hs'
+        worker _ = Left $ "truncate bad history: " ++ (show hs) ++ " to " ++ (show cntr)
+    in liftM mkHistory (worker $ dlToList hs)
 
 
 instance Forcable HistoryEntry where
