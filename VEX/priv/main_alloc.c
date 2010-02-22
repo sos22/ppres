@@ -255,6 +255,7 @@ vexUnregisterGCRoot(void **w)
   for (x = 0; x < nr_gc_roots; x++) {
     if (gc_roots[x] == w) {
       my_memmove(gc_roots + x, gc_roots + x + 1, (nr_gc_roots - x - 1) * sizeof(gc_roots[0]));
+      nr_gc_roots--;
       return;
     }
   }
