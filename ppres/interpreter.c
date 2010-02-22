@@ -1308,6 +1308,10 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 
 	vexSetAllocModeTEMP_and_clear();
 
+	irsb = NULL;
+
+	vexRegisterGCRoot(&irsb);
+
 	irsb = bb_to_IR ( &vge,
 			  NULL,
 			  disInstr_AMD64,
@@ -1482,6 +1486,8 @@ finished_block:
 	gc_expressions();
 
 	state->guest_RIP = istate->registers[REG_RIP].v;
+
+	vexUnregisterGCRoot(&irsb);
 
 	return VG_TRC_BORING;
 }
