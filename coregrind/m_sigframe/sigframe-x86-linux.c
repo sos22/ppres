@@ -381,7 +381,7 @@ void synth_ucontext(ThreadId tid, const vki_siginfo_t *si,
 
    SC2(eip,EIP);
    SC2(cs,CS);
-   sc->eflags = LibVEX_GuestX86_get_eflags(&tst->arch.vex);
+   sc->eflags = LibVEX_GuestAMD64_get_rflags(&tst->arch.vex);
    SC2(ss,SS);
    /* XXX esp_at_signal */
    sc->trapno = trapno;

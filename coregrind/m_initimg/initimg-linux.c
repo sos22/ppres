@@ -946,28 +946,7 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    /* On Linux we get client_{ip/sp/toc}, and start the client with
       all other registers zeroed. */
 
-#  if defined(VGP_x86_linux)
-   vg_assert(0 == sizeof(VexGuestX86State) % 16);
-
-   /* Zero out the initial state, and set up the simulated FPU in a
-      sane way. */
-   LibVEX_GuestX86_initialise(&arch->vex);
-
-   /* Zero out the shadow areas. */
-   VG_(memset)(&arch->vex_shadow1, 0, sizeof(VexGuestX86State));
-   VG_(memset)(&arch->vex_shadow2, 0, sizeof(VexGuestX86State));
-
-   /* Put essential stuff into the new state. */
-   arch->vex.guest_ESP = iifii.initial_client_SP;
-   arch->vex.guest_EIP = iifii.initial_client_IP;
-
-   /* initialise %cs, %ds and %ss to point at the operating systems
-      default code, data and stack segments */
-   asm volatile("movw %%cs, %0" : : "m" (arch->vex.guest_CS));
-   asm volatile("movw %%ds, %0" : : "m" (arch->vex.guest_DS));
-   asm volatile("movw %%ss, %0" : : "m" (arch->vex.guest_SS));
-
-#  elif defined(VGP_amd64_linux)
+#  if defined(VGP_amd64_linux)
    vg_assert(0 == sizeof(VexGuestAMD64State) % 16);
 
    /* Zero out the initial state, and set up the simulated FPU in a
@@ -1029,8 +1008,6 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    // FIXME jrs: what's this for?
    arch->vex.guest_R1 =  iifii.initial_client_SP;
 
-#  else
-#    error Unknown platform
 #  endif
 
    /* Tell the tool that we just wrote to the registers. */

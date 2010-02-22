@@ -237,27 +237,7 @@ static void fill_prstatus(const ThreadState *tst,
 
    vg_assert(sizeof(*regs) == sizeof(prs->pr_reg));
 
-#if defined(VGP_x86_linux)
-   regs->eflags = LibVEX_GuestX86_get_eflags( &arch->vex );
-   regs->esp    = arch->vex.guest_ESP;
-   regs->eip    = arch->vex.guest_EIP;
-
-   regs->ebx    = arch->vex.guest_EBX;
-   regs->ecx    = arch->vex.guest_ECX;
-   regs->edx    = arch->vex.guest_EDX;
-   regs->esi    = arch->vex.guest_ESI;
-   regs->edi    = arch->vex.guest_EDI;
-   regs->ebp    = arch->vex.guest_EBP;
-   regs->eax    = arch->vex.guest_EAX;
-
-   regs->cs     = arch->vex.guest_CS;
-   regs->ds     = arch->vex.guest_DS;
-   regs->ss     = arch->vex.guest_SS;
-   regs->es     = arch->vex.guest_ES;
-   regs->fs     = arch->vex.guest_FS;
-   regs->gs     = arch->vex.guest_GS;
-
-#elif defined(VGP_amd64_linux)
+#if defined(VGP_amd64_linux)
    regs->eflags = LibVEX_GuestAMD64_get_rflags( &((ThreadArchState*)arch)->vex );
    regs->rsp    = arch->vex.guest_RSP;
    regs->rip    = arch->vex.guest_RIP;
@@ -343,8 +323,6 @@ static void fill_prstatus(const ThreadState *tst,
    regs->ARM_pc   = arch->vex.guest_R15;
    regs->ARM_cpsr = LibVEX_GuestARM_get_cpsr( &((ThreadArchState*)arch)->vex );
 
-#else
-#  error Unknown ELF platform
 #endif
 }
 

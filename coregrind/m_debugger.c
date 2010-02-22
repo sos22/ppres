@@ -47,28 +47,7 @@
 
 static Int ptrace_setregs(Int pid, VexGuestArchState* vex)
 {
-#if defined(VGP_x86_linux)
-   struct vki_user_regs_struct regs;
-   VG_(memset)(&regs, 0, sizeof(regs));
-   regs.cs     = vex->guest_CS;
-   regs.ss     = vex->guest_SS;
-   regs.ds     = vex->guest_DS;
-   regs.es     = vex->guest_ES;
-   regs.fs     = vex->guest_FS;
-   regs.gs     = vex->guest_GS;
-   regs.eax    = vex->guest_EAX;
-   regs.ebx    = vex->guest_EBX;
-   regs.ecx    = vex->guest_ECX;
-   regs.edx    = vex->guest_EDX;
-   regs.esi    = vex->guest_ESI;
-   regs.edi    = vex->guest_EDI;
-   regs.ebp    = vex->guest_EBP;
-   regs.esp    = vex->guest_ESP;
-   regs.eflags = LibVEX_GuestX86_get_eflags(vex);
-   regs.eip    = vex->guest_EIP;
-   return VG_(ptrace)(VKI_PTRACE_SETREGS, pid, NULL, &regs);
-
-#elif defined(VGP_amd64_linux)
+#if defined(VGP_amd64_linux)
    struct vki_user_regs_struct regs;
    VG_(memset)(&regs, 0, sizeof(regs));
    regs.rax    = vex->guest_RAX;
@@ -239,8 +218,6 @@ static Int ptrace_setregs(Int pid, VexGuestArchState* vex)
 #elif defined(VGP_amd64_darwin)
    I_die_here;
 
-#else
-#  error Unknown arch
 #endif
 }
 
