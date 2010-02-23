@@ -51,7 +51,7 @@ findControlFlowRaces races expressions =
           expressionMentionsLoad e (ExpressionBinop _ x y) = expressionMentionsLoad e x || expressionMentionsLoad e y
           expressionMentionsLoad e (ExpressionNot x) = expressionMentionsLoad e x
           expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) loc1)
-                                     (ExpressionMem _ loc2 _ _) = loc1 == loc2
+                                     (ExpressionLoad _ loc2 _ _) = loc1 == loc2
           expressionMentionsLoad _ _ = error "confused"
 
 
@@ -85,12 +85,14 @@ binopFunc op = case op of
 evalExpressionWithStore :: Expression -> [(Word64, Word64)] -> Maybe Word64
 evalExpressionWithStore (ExpressionRegister _ n) _ = Just n
 evalExpressionWithStore (ExpressionConst n) _ = Just n
-evalExpressionWithStore (ExpressionMem _ _ addr val) st =
+evalExpressionWithStore (ExpressionLoad _ _ addr val) st =
     do addr' <- evalExpressionWithStore addr st
        val' <- evalExpressionWithStore val st
        return $ case lookup addr' st of
                   Nothing -> val'
                   Just v -> v
+evalExpressionWithStore (ExpressionStore _ val) st =
+    evalExpressionWithStore val st
 evalExpressionWithStore (ExpressionImported v) _ = Just v
 evalExpressionWithStore (ExpressionNot e) st =
     fmap complement $ evalExpressionWithStore e st
@@ -122,11 +124,13 @@ fetchMemory8 hist addr =
 evalExpressionInSnapshot :: Expression -> History -> [(Word64, Word64)] -> Maybe Word64
 evalExpressionInSnapshot (ExpressionRegister _ n) _ _ = Just n
 evalExpressionInSnapshot (ExpressionConst n) _ _ = Just n
-evalExpressionInSnapshot (ExpressionMem _ _ addr _) hist stores =
+evalExpressionInSnapshot (ExpressionLoad _ _ addr _) hist stores =
     do addr' <- evalExpressionInSnapshot addr hist stores
        case lookup addr' stores of
          Nothing -> fetchMemory8 hist addr'
          Just v -> Just v
+evalExpressionInSnapshot (ExpressionStore _ val) hist stores =
+    evalExpressionInSnapshot val hist stores
 evalExpressionInSnapshot (ExpressionImported v) _ _ = Just v
 evalExpressionInSnapshot (ExpressionBinop BinopCombine _ _) _ _ = Nothing
 evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =

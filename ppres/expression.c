@@ -147,9 +147,12 @@ gc_explore_expression(const struct expression *e)
 		case EXPR_IMPORTED:
 		case EXPR_REG:
 			break;
-		case EXPR_MEM:
-			gc_explore_expression(e->u.mem.ptr_e);
-			gc_explore_expression(e->u.mem.val);
+		case EXPR_LOAD:
+			gc_explore_expression(e->u.load.ptr_e);
+			gc_explore_expression(e->u.load.val);
+			return;
+		case EXPR_STORE:
+			gc_explore_expression(e->u.store.val);
 			return;
 		case EXPR_NOT:
 			gc_explore_expression(e->u.unop.e);
@@ -356,18 +359,28 @@ expr_const(unsigned long c)
 }
 
 const struct expression *
-expr_mem(unsigned size, const struct expression *ptr, const struct expression *val)
+expr_load(unsigned size, const struct expression *ptr, const struct expression *val)
 {
 	struct expression *e;
-	e = _new_expression(EXPR_MEM);
-	e->u.mem.size = size;
-	e->u.mem.ptr_e = ptr;
+	e = _new_expression(EXPR_LOAD);
+	e->u.load.size = size;
+	e->u.load.ptr_e = ptr;
 	/* Special case: a four byte load of 0xffffffff & x is just x */
 	if (size == 4 && val->type == EXPR_AND && val->u.binop.arg1->type == EXPR_CONST &&
 	    val->u.binop.arg1->u.cnst.val == 0xffffffff)
 		val = val->u.binop.arg2;
-	e->u.mem.val = val;
-	e->u.mem.when = now;
+	e->u.load.val = val;
+	e->u.load.when = now;
+	return e;
+}
+
+const struct expression *
+expr_store(const struct expression *val)
+{
+	struct expression *e;
+	e = _new_expression(EXPR_STORE);
+	e->u.store.when = now;
+	e->u.store.val = val;
 	return e;
 }
 
@@ -467,7 +480,7 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 		return e2;
 	/* Another special case: 0xffffffff & mem4 is just mem4. */
 	if (op == EXPR_AND && e1->type == EXPR_CONST && e1->u.cnst.val == 0xffffffff &&
-	    e2->type == EXPR_MEM && e2->u.mem.size == 4)
+	    e2->type == EXPR_LOAD && e2->u.load.size == 4)
 		return e2;
 
 	if (binop_lident_0(op) &&
@@ -527,10 +540,14 @@ send_expression(const struct expression *e)
 		case EXPR_REG:
 			expr(e->u.reg.name, e->u.reg.val);
 			break;
-		case EXPR_MEM:
-			expr(e->u.mem.size, e->u.mem.when.access_nr);
-			send_expression(e->u.mem.ptr_e);
-			send_expression(e->u.mem.val);
+		case EXPR_LOAD:
+			expr(e->u.load.size, e->u.load.when.access_nr);
+			send_expression(e->u.load.ptr_e);
+			send_expression(e->u.load.val);
+			break;
+		case EXPR_STORE:
+			expr(e->u.store.when.access_nr);
+			send_expression(e->u.store.val);
 			break;
 		case EXPR_IMPORTED:
 			expr(e->u.imported.val);

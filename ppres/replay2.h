@@ -98,29 +98,30 @@ struct response_string {
 
 #define EXPR_CONST 0
 #define EXPR_REG 1
-#define EXPR_MEM 2
-#define EXPR_IMPORTED 3
+#define EXPR_LOAD 2
+#define EXPR_STORE 3
+#define EXPR_IMPORTED 4
 
-#define EXPR_COMBINE 4
+#define EXPR_COMBINE 5
 
-#define EXPR_SUB 5
-#define EXPR_ADD 6
-#define EXPR_MUL 7
-#define EXPR_MUL_HI 8
-#define EXPR_MULS 9
+#define EXPR_SUB 6
+#define EXPR_ADD 7
+#define EXPR_MUL 8
+#define EXPR_MUL_HI 9
+#define EXPR_MULS 10
 
-#define EXPR_SHRL 10
-#define EXPR_SHL 11
-#define EXPR_SHRA 12
+#define EXPR_SHRL 11
+#define EXPR_SHL 12
+#define EXPR_SHRA 13
 
-#define EXPR_AND 13
-#define EXPR_OR 14
-#define EXPR_XOR 15
+#define EXPR_AND 14
+#define EXPR_OR 15
+#define EXPR_XOR 16
 
-#define EXPR_LE 16
-#define EXPR_BE 17
-#define EXPR_EQ 18
-#define EXPR_B 19
+#define EXPR_LE 17
+#define EXPR_BE 18
+#define EXPR_EQ 19
+#define EXPR_B 20
 
 #define EXPR_LOGICAL_FIRST EXPR_LE
 #define EXPR_LOGICAL_LAST EXPR_B
@@ -128,7 +129,7 @@ struct response_string {
 #define EXPR_BINOP_FIRST EXPR_COMBINE
 #define EXPR_BINOP_LAST EXPR_B
 
-#define EXPR_NOT 20
+#define EXPR_NOT 21
 
 
 typedef struct {
@@ -159,7 +160,11 @@ struct expression {
 			unsigned size;
 			const struct expression *ptr_e;
 			const struct expression *val;
-		} mem;
+		} load;
+		struct {
+			replay_coord_t when;
+			const struct expression *val;
+		} store;
 		struct {
 			const struct expression *arg1;
 			const struct expression *arg2;
@@ -293,12 +298,9 @@ size_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
 
 const struct expression *expr_reg(unsigned reg, unsigned long val);
 const struct expression *expr_const(unsigned long c);
-const struct expression *expr_mem(unsigned size, const struct expression *ptr,
-				  const struct expression *val);
-#define expr_mem1(p, v) expr_mem(1, (p), (v))
-#define expr_mem2(p, v) expr_mem(2, (p), (v))
-#define expr_mem4(p, v) expr_mem(4, (p), (v))
-#define expr_mem8(p, v) expr_mem(8, (p), (v))
+const struct expression *expr_load(unsigned size, const struct expression *ptr,
+				   const struct expression *val);
+const struct expression *expr_store(const struct expression *val);
 const struct expression *expr_not(const struct expression *e);
 const struct expression *expr_imported(unsigned long value);
 #define BINOP_EXPR(n)							\

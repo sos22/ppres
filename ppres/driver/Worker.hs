@@ -251,25 +251,25 @@ consumeRegisterBinding =
        return (parseRegister name, val)
 
 isBinop :: Word64 -> Bool
-isBinop x = x >= 4 && x <= 19
+isBinop x = x >= 5 && x <= 20
 
 parseBinop :: Word64 -> Binop
-parseBinop 4 = BinopCombine
-parseBinop 5 = BinopSub
-parseBinop 6 = BinopAdd
-parseBinop 7 = BinopMull
-parseBinop 8 = BinopMullHi
-parseBinop 9 = BinopMullS
-parseBinop 10 = BinopShrl
-parseBinop 11 = BinopShl
-parseBinop 12 = BinopShra
-parseBinop 13 = BinopAnd
-parseBinop 14 = BinopOr
-parseBinop 15 = BinopXor
-parseBinop 16 = BinopLe
-parseBinop 17 = BinopBe
-parseBinop 18 = BinopEq
-parseBinop 19 = BinopB
+parseBinop 5 = BinopCombine
+parseBinop 6 = BinopSub
+parseBinop 7 = BinopAdd
+parseBinop 8 = BinopMull
+parseBinop 9 = BinopMullHi
+parseBinop 10 = BinopMullS
+parseBinop 11 = BinopShrl
+parseBinop 12 = BinopShl
+parseBinop 13 = BinopShra
+parseBinop 14 = BinopAnd
+parseBinop 15 = BinopOr
+parseBinop 16 = BinopXor
+parseBinop 17 = BinopLe
+parseBinop 18 = BinopBe
+parseBinop 19 = BinopEq
+parseBinop 20 = BinopB
 parseBinop x = error $ "unknown binop " ++ (show x)
 
 parseExpression :: ConsumerMonad ResponseData Expression
@@ -282,13 +282,14 @@ parseExpression =
          [2, sz, acc] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionMem (fromIntegral sz) (ReplayCoord { 
-                                                                        rc_access = fromIntegral acc}) ptr val
-         [3, val] -> return $ ExpressionImported val
+                return $ ExpressionLoad (fromIntegral sz) (ReplayCoord $ fromIntegral acc) ptr val
+         [3, acc] -> do val <- parseExpression
+                        return $ ExpressionStore (ReplayCoord $ fromIntegral acc) val
+         [4, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression
                                return $ ExpressionBinop (parseBinop r) a1 a2
-         [20] -> do e <- parseExpression
+         [21] -> do e <- parseExpression
                     return $ ExpressionNot e
 
          _ -> error $ "failed to parse an expression " ++ (show d)

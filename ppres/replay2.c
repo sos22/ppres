@@ -965,7 +965,7 @@ validate_event(const struct record_header *rec,
 				typ *wanted = (typ *)mp;		\
 				replay_assert_eq(			\
 					reason_data(			\
-						expr_mem ## sz (	\
+						expr_load(sz,		\
 							expr_const(mrr->ptr), \
 							expr_imported(*seen)), \
 						expr_const(*wanted)),	\
@@ -981,12 +981,14 @@ validate_event(const struct record_header *rec,
 		case 16: {
 				unsigned long *_args = (unsigned long *)args[2];
 				unsigned long *_buf = (unsigned long *)mp;
-				replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr),
+				replay_assert_eq(reason_data(expr_load(8,
+								       expr_const(mrr->ptr),
 								       expr_imported(_args[1])),
 							     expr_const(_buf[0])),
 						 _args[0],
 						 _buf[0]);
-				replay_assert_eq(reason_data(expr_mem8(expr_const(mrr->ptr+8),
+				replay_assert_eq(reason_data(expr_load(8,
+								       expr_const(mrr->ptr+8),
 								       expr_imported(_args[1])),
 							     expr_const(_buf[1])),
 						 _args[1],

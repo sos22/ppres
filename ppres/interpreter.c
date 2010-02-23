@@ -115,12 +115,15 @@ read_reg(struct interpret_state *state, unsigned offset, unsigned long *v)
 static void
 interpret_create_mem_lookaside(unsigned long ptr,
 			       unsigned size,
-			       struct abstract_interpret_value data)
+			       struct abstract_interpret_value data,
+			       Bool is_stack)
 {
 	struct interpret_mem_lookaside *iml;
 	iml = VG_(malloc)("iml", sizeof(*iml));
 	iml->ptr = ptr;
 	iml->aiv = data;
+	if (!is_stack)
+		iml->aiv.origin = expr_store(iml->aiv.origin);
 	iml->size = size;
 	iml->next = head_interpret_mem_lookaside;
 	head_interpret_mem_lookaside = iml;
@@ -179,7 +182,7 @@ interpreter_do_load(struct expression_result *er,
 					       8, addr.v + 8);
 		if (!is_stack)
 			er->hi.origin =
-				expr_mem(8,
+				expr_load(8,
 					 expr_add(addr.origin, expr_const(8)),
 					 er->hi.origin);
 		er->hi.v = ((unsigned long *)buf)[1];
@@ -191,7 +194,7 @@ interpreter_do_load(struct expression_result *er,
 	er->lo.origin = find_origin_expression(head_interpret_mem_lookaside,
 					       size, addr.v);
 	if (!is_stack)
-		er->lo.origin = expr_mem(size, addr.origin, er->lo.origin);
+		er->lo.origin = expr_load(size, addr.origin, er->lo.origin);
 }
 
 static void
@@ -1078,12 +1081,14 @@ do_helper_store_cswitch(unsigned size,
 			unsigned long rip)
 {
 	unsigned long buf[2];
+	Bool is_stack;
 
+	is_stack = IS_STACK((void *)addr.v, rsp.v);
 	if (size == 16) {
-		interpret_create_mem_lookaside(addr.v, 8, data.lo);
-		interpret_create_mem_lookaside(addr.v+8, 8, data.hi);
+		interpret_create_mem_lookaside(addr.v, 8, data.lo, is_stack);
+		interpret_create_mem_lookaside(addr.v+8, 8, data.hi, is_stack);
 	} else {
-		interpret_create_mem_lookaside(addr.v, size, data.lo);
+		interpret_create_mem_lookaside(addr.v, size, data.lo, is_stack);
 	}
 
 	buf[0] = data.lo.v;
@@ -1107,6 +1112,7 @@ do_helper_cas_cswitch(struct interpret_state *is,
 	struct expression_result seen;
 	struct expression_result new;
 	const struct expression *pred;
+	Bool is_stack;
 
 	seen = do_helper_load_cswitch(is, size, addr, rsp, rip);
 	pred = expr_eq(seen.lo.origin, expected.lo.origin);
@@ -1138,11 +1144,12 @@ do_helper_cas_cswitch(struct interpret_state *is,
 		else
 			new.hi.origin = NULL;
 
+		is_stack = IS_STACK((void *)addr.v, rsp.v);
 		if (size == 16) {
-			interpret_create_mem_lookaside(addr.v, 8, new.lo);
-			interpret_create_mem_lookaside(addr.v+8, 8, new.hi);
+			interpret_create_mem_lookaside(addr.v, 8, new.lo, is_stack);
+			interpret_create_mem_lookaside(addr.v+8, 8, new.hi, is_stack);
 		} else {
-			interpret_create_mem_lookaside(addr.v, size, new.lo);
+			interpret_create_mem_lookaside(addr.v, size, new.lo, is_stack);
 		}
 	}
 
