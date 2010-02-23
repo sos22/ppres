@@ -1,14 +1,14 @@
 module Worker(killWorker, traceWorker,
               takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
-              vgIntermediateWorker, nextThreadWorker, setThreadWorker)
+              vgIntermediateWorker, nextThreadWorker, setThreadWorker,
+              getRegistersWorker)
     where
 
 import Data.Word
 import Network.Socket
 import Control.Monad.State
 import Data.IORef
-
 import System.IO.Unsafe
 
 import Types
@@ -68,6 +68,9 @@ nextThreadPacket = ControlPacket 0x1240 []
 
 setThreadPacket :: ThreadId -> ControlPacket
 setThreadPacket tid = ControlPacket 0x1241 [fromInteger tid]
+
+getRegistersPacket :: ControlPacket
+getRegistersPacket = ControlPacket 0x1242 []
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -235,7 +238,17 @@ parseRegister 16 = REG_CC_OP
 parseRegister 17 = REG_CC_DEP1
 parseRegister 18 = REG_CC_DEP2
 parseRegister 19 = REG_CC_NDEP
+parseRegister 20 = REG_DFLAG
+parseRegister 21 = REG_RIP
+parseRegister 22 = REG_IDFLAG
+parseRegister 23 = REG_FS_ZERO
+parseRegister 24 = REG_SSE_ROUND
 parseRegister r = error $ "bad register encoding " ++ (show r)
+
+consumeRegisterBinding :: ConsumerMonad ResponseData (RegisterName, Word64)
+consumeRegisterBinding =
+    do (ResponseDataAncillary 16 [name, val]) <- consume
+       return (parseRegister name, val)
 
 isBinop :: Word64 -> Bool
 isBinop x = x >= 4 && x <= 19
@@ -310,3 +323,8 @@ setThreadWorker :: Worker -> ThreadId -> IO ()
 setThreadWorker worker tid =
     do sendWorkerCommand worker $ setThreadPacket tid
        return ()
+
+getRegistersWorker :: Worker -> IO RegisterFile
+getRegistersWorker worker =
+    do (ResponsePacket True params) <- sendWorkerCommand worker getRegistersPacket
+       return $ RegisterFile $ evalConsumer params $ consumeMany consumeRegisterBinding

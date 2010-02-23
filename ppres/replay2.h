@@ -15,6 +15,7 @@
 #define WORKER_VG_INTERMEDIATE 0x123f
 #define WORKER_GET_THREAD 0x1240
 #define WORKER_SET_THREAD 0x1241
+#define WORKER_GET_REGISTERS 0x1242
 
 struct command_header {
 	unsigned command;
@@ -45,6 +46,7 @@ struct response_message {
 #define ANCILLARY_THREAD_STATE 13
 #define ANCILLARY_REPLAY_FINISHED 14
 #define ANCILLARY_NEXT_THREAD 15
+#define ANCILLARY_REG_BINDING 16
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
@@ -89,8 +91,9 @@ struct response_string {
 /* Rather than 16 128 bit registers, we pretend there are 32 64 bit
  * ones. */
 #define REG_XMM0 25
+#define REG_XMM_LAST (REG_XMM0 + 32)
 
-#define REG_LAST (REG_XMM0 + 32)
+#define REG_LAST REG_XMM_LAST
 
 
 #define EXPR_CONST 0

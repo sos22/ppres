@@ -417,6 +417,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_THREAD_STATE:
 	case WORKER_REPLAY_STATE:
 	case WORKER_GET_THREAD:
+	case WORKER_GET_REGISTERS:
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
@@ -746,6 +747,30 @@ do_thread_state_command(void)
 	send_okay();
 }
 
+static void
+do_get_registers_command(void)
+{
+	unsigned x;
+	ThreadState *ts;
+	unsigned long val;
+
+	ts = VG_(get_ThreadState)(current_thread->id);
+	for (x = 0; x <= REG_LAST; x++) {
+		if (x >= REG_XMM0 && x <= REG_XMM_LAST) {
+			/* Driver doesn't know about XMM
+			 * registers; skip them. */
+			continue;
+		}
+		if (want_to_interpret) {
+			val = current_thread->interpret_state.registers[x].v;
+		} else {
+			val = (&ts->arch.vex.guest_RAX)[x];
+		}
+		send_ancillary(ANCILLARY_REG_BINDING, x, val);
+	}
+	send_okay();
+}
+
 static char *
 my_vasprintf(const char *fmt, va_list args)
 {
@@ -872,6 +897,9 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 				current_thread = rt;
 				send_okay();
 			}
+			break;
+		case WORKER_GET_REGISTERS:
+			do_get_registers_command();
 			break;
 		default:
 			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
@@ -1375,6 +1403,9 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			current_thread = rt;
 			send_okay();
 		}
+		break;
+	case WORKER_GET_REGISTERS:
+		do_get_registers_command();
 		break;
 	default:
 		VG_(tool_panic)((Char *)"Bad worker command");

@@ -125,7 +125,14 @@ data RegisterName = REG_RAX
                   | REG_CC_DEP1
                   | REG_CC_DEP2
                   | REG_CC_NDEP
+                  | REG_DFLAG
+                  | REG_RIP
+                  | REG_IDFLAG
+                  | REG_FS_ZERO
+                  | REG_SSE_ROUND
                     deriving (Show, Read)
+
+newtype RegisterFile = RegisterFile [(RegisterName, Word64)] deriving Show
 
 data Binop = BinopCombine
            | BinopSub

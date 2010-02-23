@@ -7,7 +7,7 @@ module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    trace, traceAddress,
                    threadState, replayState, controlTrace,
                    fetchMemory, vgIntermediate, nextThread,
-                   setThread, controlTraceTo) where
+                   setThread, controlTraceTo, getRegisters) where
 
 import Data.Word
 import Control.Monad.State
@@ -218,18 +218,18 @@ traceAddress :: History -> Word64 -> Topped ReplayCoord -> (History, [TraceRecor
 traceAddress start addr to =
     traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr to
 
-queryCmd :: History -> (Worker -> IO a) -> a
-queryCmd hist w =
+queryCmd :: (Worker -> IO a) -> History -> a
+queryCmd w hist =
     unsafePerformIO $ do worker <- getWorker hist
                          res <- w worker
                          killWorker worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
-threadState hist = queryCmd hist threadStateWorker
+threadState = queryCmd threadStateWorker
 
 replayState :: History -> ReplayState
-replayState hist = queryCmd hist replayStateWorker
+replayState = queryCmd replayStateWorker
 
 controlTrace :: History -> Topped ReplayCoord -> [Expression]
 controlTrace hist cntr =
@@ -237,15 +237,14 @@ controlTrace hist cntr =
 
 fetchMemory :: History -> Word64 -> Word64 -> Maybe [Word8]
 fetchMemory hist addr size =
-    queryCmd hist $ \worker -> fetchMemoryWorker worker addr size
+    queryCmd (\worker -> fetchMemoryWorker worker addr size) hist
 
 vgIntermediate :: History -> Word64 -> Maybe String
 vgIntermediate hist addr =
-    queryCmd hist $ \worker -> vgIntermediateWorker worker addr
+    queryCmd (\worker -> vgIntermediateWorker worker addr) hist
 
 nextThread :: History -> ThreadId
-nextThread hist =
-    dt ("nextThread " ++ (show hist)) $ queryCmd hist nextThreadWorker
+nextThread = queryCmd nextThreadWorker
 
 setThread :: History -> ThreadId -> History
 setThread hist tid = appendHistory hist $ HistorySetThread tid
@@ -254,5 +253,9 @@ controlTraceTo :: History -> History -> Either String [Expression]
 controlTraceTo start end =
     unsafePerformIO $ do worker <- getWorker start
                          r <- controlTraceToWorker worker start end
-                         killWorker worker
+                         rs <- replayStateWorker worker
+                         dt ("final replay state " ++ (show rs)) $ killWorker worker
                          return r
+
+getRegisters :: History -> RegisterFile
+getRegisters = queryCmd getRegistersWorker

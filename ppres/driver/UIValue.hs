@@ -23,6 +23,8 @@ data UIValue = UIValueNull
              | UIValueInteger Integer
              | UIValueReplayCoord ReplayCoord
              | UIValueThreadState ThreadState
+             | UIValueRegisterName RegisterName
+             | UIValueWord Word64
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -45,6 +47,8 @@ instance Show UIValue where
     show (UIValueInteger r) = "0x" ++ (showHex r "")
     show (UIValueReplayCoord tr) = "{" ++ (show tr) ++ "}"
     show (UIValueThreadState ts) = show ts
+    show (UIValueRegisterName x) = show x
+    show (UIValueWord x) = "WORD 0x" ++ (showHex x "")
 
 first :: (a -> b) -> (a, c) -> (b, c)
 first f (x, y) = (f x, y)
@@ -159,3 +163,17 @@ instance AvailInUI ThreadState where
     toUI = UIValueThreadState
     fromUI (UIValueThreadState i) = Right i
     fromUI e = coerceError "thread state" e
+
+instance AvailInUI RegisterFile where
+    toUI (RegisterFile x) = toUI x
+    fromUI = fmap RegisterFile . fromUI
+
+instance AvailInUI RegisterName where
+    toUI = UIValueRegisterName
+    fromUI (UIValueRegisterName x) = Right x
+    fromUI e = coerceError "register name" e
+
+instance AvailInUI Word64 where
+    toUI = UIValueWord
+    fromUI (UIValueWord x) = Right x
+    fromUI e = coerceError "word" e

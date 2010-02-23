@@ -40,6 +40,7 @@ data UIExpression = UIDummyFunction
                   | UIVGIntermediate UIExpression Word64
                   | UIEnum UIExpression
                   | UILiteral UIValue
+                  | UIRegs UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -84,6 +85,7 @@ expressionParser =
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
                oneExprArgParser "thread_state" UIThreadState,
+               oneExprArgParser "regs" UIRegs,
                do keyword "run"
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
@@ -212,6 +214,7 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> traceAddress s addr to
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
+      UIRegs s -> withSnapshot ws s getRegisters
       UISetThread snap tid ->
           withSnapshot ws snap $ \s -> setThread s tid
       UIReplayState name -> withSnapshot ws name $ \s -> replayState s
