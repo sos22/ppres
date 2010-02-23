@@ -362,6 +362,10 @@ expr_mem(unsigned size, const struct expression *ptr, const struct expression *v
 	e = _new_expression(EXPR_MEM);
 	e->u.mem.size = size;
 	e->u.mem.ptr_e = ptr;
+	/* Special case: a four byte load of 0xffffffff & x is just x */
+	if (size == 4 && val->type == EXPR_AND && val->u.binop.arg1->type == EXPR_CONST &&
+	    val->u.binop.arg1->u.cnst.val == 0xffffffff)
+		val = val->u.binop.arg2;
 	e->u.mem.val = val;
 	e->u.mem.when = now;
 	return e;
@@ -460,6 +464,10 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 	   to return 0 or 1. */
 	if (op == EXPR_AND && e1->type == EXPR_CONST && e1->u.cnst.val == 1 &&
 	    op_logical(e2->type))
+		return e2;
+	/* Another special case: 0xffffffff & mem4 is just mem4. */
+	if (op == EXPR_AND && e1->type == EXPR_CONST && e1->u.cnst.val == 0xffffffff &&
+	    e2->type == EXPR_MEM && e2->u.mem.size == 4)
 		return e2;
 
 	if (binop_lident_0(op) &&
