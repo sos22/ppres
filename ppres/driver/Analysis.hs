@@ -1,5 +1,12 @@
 module Analysis(findRacingAccesses, findControlFlowRaces, 
+
+                {- I don't actually use these at the moment, but will
+                   do soon, and I want to make sure they at least keep
+                   compiling without getting lots of stupid compiler
+                   errors. -}
                 evalExpressionInSnapshot, evalExpressionWithStore,
+                enumerateHistories',
+
                 enumerateHistories) where
 
 import Types
@@ -384,7 +391,6 @@ enumerateNextEpoch start =
       ReplayStateFailed _ _ _ _ -> []
       ReplayStateOkay start_coord ->
           let next_coord = Finite ReplayCoord { rc_access = rc_access start_coord + 5000}
-              trivHistory = run start next_coord
 
               tweakedSchedules = breadthFirstExplore singleAccessAdvances start
 
@@ -406,16 +412,6 @@ enumerateNextEpoch start =
 
               res = filterSchedules newSchedules
           in res
-
-enumerateAllEpochs :: [History] -> Maybe History
-enumerateAllEpochs [] = Nothing
-enumerateAllEpochs [x] =
-    case replayState x of
-      ReplayStateFinished _ -> Just x
-      _ -> enumerateAllEpochs $ enumerateNextEpoch x
-enumerateAllEpochs (thisHist:otherHists) =
-    dt ("enum big " ++ (show thisHist)) $
-    enumerateAllEpochs $ (enumerateNextEpoch thisHist) ++ otherHists
 
 {- Enumerate big-step advances we can make in the history.  This
    means, basically, running the log as far as we can in
