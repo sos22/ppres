@@ -7,7 +7,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 evalExpressionInSnapshot, evalExpressionWithStore,
                 enumerateHistories',
 
-                enumerateHistories) where
+                enumerateHistories, getRacingExpressions) where
 
 import Types
 import WorkerCache
@@ -459,3 +459,24 @@ enumerateHistories start = case filter (\x -> case replayState x of
                              [] -> Nothing
                              (x:_) -> Just x
 
+
+{- For our current purposes, a racing expression is one in which a
+   load in one thread is satisfied by a store in a different one. -}
+isRacingExpression :: Expression -> Bool
+isRacingExpression (ExpressionRegister _ _) = False
+isRacingExpression (ExpressionConst _) = False
+isRacingExpression (ExpressionLoad load_tid _ _ addr val) =
+    (case val of
+       ExpressionStore store_tid _ _ -> load_tid /= store_tid
+       ExpressionImported _ -> False
+       _ -> error "the value of a load should always be an import or a store") ||
+              (isRacingExpression addr) ||
+              (isRacingExpression val)
+isRacingExpression (ExpressionStore _ _ e) = isRacingExpression e
+isRacingExpression (ExpressionImported _) = False
+isRacingExpression (ExpressionBinop _ a b) =
+    isRacingExpression a || isRacingExpression b
+isRacingExpression (ExpressionNot x) = isRacingExpression x
+
+getRacingExpressions :: [Expression] -> [Expression]
+getRacingExpressions = filter isRacingExpression

@@ -41,6 +41,7 @@ data UIExpression = UIDummyFunction
                   | UIEnum UIExpression
                   | UILiteral UIValue
                   | UIRegs UIExpression
+                  | UIRaceExpressions UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -86,6 +87,7 @@ expressionParser =
                liftM (const UIDir) $ keyword "dir",
                oneExprArgParser "thread_state" UIThreadState,
                oneExprArgParser "regs" UIRegs,
+               oneExprArgParser "races" UIRaceExpressions,
                do keyword "run"
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
@@ -179,11 +181,11 @@ getCommand =
                         getCommand
          Right v -> return v
 
-withSnapshot :: AvailInUI a => WorldState -> UIExpression -> (History -> a) -> UIValue
-withSnapshot ws expr f =
-    case evalExpression ws expr of
-      UIValueSnapshot s' -> toUI $ f s'
-      s -> UIValueError $ "Needed a snapshot, got " ++ (show s)
+inUI :: (AvailInUI a, AvailInUI b) => (a -> b) -> UIValue -> UIValue
+inUI f x = toUI $ fmap f $ fromUI x
+
+withSnapshot :: (AvailInUI a, AvailInUI b) => WorldState -> UIExpression -> (b -> a) -> UIValue
+withSnapshot ws expr f = inUI f $ evalExpression ws expr
 
 evalExpression :: WorldState -> UIExpression -> UIValue
 evalExpression ws f =
@@ -215,6 +217,7 @@ evalExpression ws f =
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
       UIRegs s -> withSnapshot ws s getRegisters
+      UIRaceExpressions s -> withSnapshot ws s getRacingExpressions
       UISetThread snap tid ->
           withSnapshot ws snap $ \s -> setThread s tid
       UIReplayState name -> withSnapshot ws name $ \s -> replayState s
