@@ -23,6 +23,7 @@
 #include "../coregrind/pub_core_threadstate.h"
 
 #include "replay2.h"
+#include "ppres.h"
 
 extern void VG_(init_vex)(void);
 extern void vexSetAllocModeTEMP_and_clear ( void );
@@ -161,7 +162,8 @@ static void
 interpreter_do_load(struct expression_result *er,
 		    unsigned size,
 		    struct abstract_interpret_value addr,
-		    unsigned long rip)
+		    unsigned long rip,
+		    Bool is_stack)
 {
 	unsigned char buf[16];
 
@@ -173,23 +175,23 @@ interpreter_do_load(struct expression_result *er,
 	if (size > 8) {
 		tl_assert(size == 16);
 		er->hi.origin =
-			expr_mem(8,
-				 expr_add(addr.origin, expr_const(8)),
-				 find_origin_expression(head_interpret_mem_lookaside,
-							8,
-							addr.v + 8));
+			find_origin_expression(head_interpret_mem_lookaside,
+					       8, addr.v + 8);
+		if (!is_stack)
+			er->hi.origin =
+				expr_mem(8,
+					 expr_add(addr.origin, expr_const(8)),
+					 er->hi.origin);
 		er->hi.v = ((unsigned long *)buf)[1];
 		size = 8;
 	} else {
 		er->hi.origin = NULL;
 	}
 	er->lo.v = ((unsigned long *)buf)[0];
-	er->lo.origin =
-		expr_mem(size,
-			 addr.origin,
-			 find_origin_expression(head_interpret_mem_lookaside,
-						size,
-						addr.v));
+	er->lo.origin = find_origin_expression(head_interpret_mem_lookaside,
+					       size, addr.v);
+	if (!is_stack)
+		er->lo.origin = expr_mem(size, addr.origin, er->lo.origin);
 }
 
 static void
@@ -1058,7 +1060,7 @@ do_helper_load_cswitch(struct interpret_state *is,
 	struct expression_result res;
 	unsigned char dummy_buf[16];
 
-	interpreter_do_load(&res, size, addr, rip);
+	interpreter_do_load(&res, size, addr, rip, IS_STACK((void *)addr.v, rsp.v));
 
 	ref_expression_result(is, &res);
 	load_event((const void *)addr.v, size, dummy_buf, rsp.v,
