@@ -46,25 +46,6 @@ extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt pro
 
 static void run_to(struct record_consumer *logfile, replay_coord_t to);
 
-struct client_event_record {
-	enum { EVENT_nothing = 0xf001,
-	       EVENT_footstep,
-	       EVENT_syscall,
-	       EVENT_rdtsc,
-	       EVENT_load,
-	       EVENT_store,
-	       EVENT_client_request,
-	       EVENT_blocking,
-	       EVENT_unblocked,
-	       EVENT_signal } type;
-	unsigned nr_args;
-
-	/* Careful: this is on the stack of the thread which generated
-	   the event, so it becomes invalid as soon as that thread
-	   gets scheduled. */
-	const unsigned long *args;
-};
-
 struct failure_reason {
 	unsigned reason;
 	unsigned tid;
@@ -78,7 +59,7 @@ use_footsteps;
 static Bool
 use_memory;
 
-static struct client_event_record *
+struct client_event_record *
 client_event;
 
 static struct coroutine
@@ -226,7 +207,7 @@ safe_memcpy_sighandler(Int signo, Addr addr)
 		__builtin_longjmp(safe_memcpy_jmpbuf, 1);
 }
 
-static Bool
+Bool
 safe_memcpy(void *dest, const void *src, unsigned size)
 {
 	vki_sigset_t sigmask;
@@ -515,7 +496,7 @@ run_thread(struct client_event_record *cer)
 
 /* Something happened in the client which requires the monitor to do
    something. */
-static void
+void
 _client_event(void)
 {
 	tl_assert(VG_(in_generated_code));
@@ -528,14 +509,6 @@ _client_event(void)
 	tl_assert(VG_(running_tid) == current_thread->id);
 	VG_(in_generated_code) = True;
 }
-#define event(_code, ...)					  \
-do {                                                              \
-	unsigned long args[] = {__VA_ARGS__};			  \
-	client_event->type = (_code);                             \
-	client_event->nr_args = sizeof(args) / sizeof(args[0]);   \
-	client_event->args = args;                                \
-	_client_event();                                          \
-} while (0)
 
 /* The various events.  These are the bits which run in client
    context. */

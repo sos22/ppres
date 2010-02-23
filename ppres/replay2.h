@@ -246,9 +246,31 @@ struct control_command {
 	} u;
 };
 
+enum event_type { EVENT_nothing = 0xf001,
+		  EVENT_footstep,
+		  EVENT_syscall,
+		  EVENT_rdtsc,
+		  EVENT_load,
+		  EVENT_store,
+		  EVENT_client_request,
+		  EVENT_blocking,
+		  EVENT_unblocked,
+		  EVENT_signal };
+
+struct client_event_record {
+	enum event_type type;
+	unsigned nr_args;
+
+	/* Careful: this is on the stack of the thread which generated
+	   the event, so it becomes invalid as soon as that thread
+	   gets scheduled. */
+	const unsigned long *args;
+};
+
 extern struct replay_thread *head_thread;
 extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
+extern struct client_event_record *client_event;
 extern struct record_consumer logfile;
 extern replay_coord_t now;
 extern Bool want_to_interpret;
@@ -262,6 +284,7 @@ void my_sleep(unsigned x);
 int socketpair(int domain, int type, int protocol, int *fds);
 void safeish_write(int fd, const void *buffer, size_t buffer_size);
 void safeish_read(int fd, void *buffer, size_t buffer_size);
+Bool safe_memcpy(void *dest, const void *src, unsigned size);
 
 struct msghdr;
 size_t recvmsg(int sockfd, struct msghdr *msg, int flags);
@@ -332,6 +355,17 @@ do {						           \
 	_send_ancillary((_code),			   \
 			sizeof(args)/sizeof(args[0]),	   \
 			args);				   \
+} while (0)
+
+
+void _client_event(void);
+#define event(_code, ...)					  \
+do {                                                              \
+	unsigned long args[] = {__VA_ARGS__};			  \
+	client_event->type = (_code);                             \
+	client_event->nr_args = sizeof(args) / sizeof(args[0]);   \
+	client_event->args = args;                                \
+	_client_event();                                          \
 } while (0)
 
 

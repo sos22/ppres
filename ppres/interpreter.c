@@ -109,6 +109,8 @@ read_reg(struct interpret_state *state, unsigned offset, unsigned long *v)
 	return aiv->origin;
 }
 
+/* Note that this doesn't actually issue the store: we rely on our
+   caller to do that via store_event(). */
 static void
 interpret_create_mem_lookaside(unsigned long ptr,
 			       unsigned size,
@@ -121,8 +123,6 @@ interpret_create_mem_lookaside(unsigned long ptr,
 	iml->size = size;
 	iml->next = head_interpret_mem_lookaside;
 	head_interpret_mem_lookaside = iml;
-
-	VG_(memcpy)((void *)ptr, &data.v, size);
 }
 
 static const struct expression *
@@ -160,9 +160,16 @@ find_origin_expression(struct interpret_mem_lookaside *iml,
 static void
 interpreter_do_load(struct expression_result *er,
 		    unsigned size,
-		    struct abstract_interpret_value addr)
+		    struct abstract_interpret_value addr,
+		    unsigned long rip)
 {
+	unsigned char buf[16];
+
 	VG_(memset)(er, 0, sizeof(*er));
+
+	while (!safe_memcpy(buf, (const void *)addr.v, size)) {
+		event(EVENT_signal, rip, 11, 4, (UWord)addr.v);
+	}
 	if (size > 8) {
 		tl_assert(size == 16);
 		er->hi.origin =
@@ -171,12 +178,12 @@ interpreter_do_load(struct expression_result *er,
 				 find_origin_expression(head_interpret_mem_lookaside,
 							8,
 							addr.v + 8));
-		VG_(memcpy)(&er->hi.v, (const void *)addr.v + 8, 8);
+		er->hi.v = ((unsigned long *)buf)[1];
 		size = 8;
 	} else {
 		er->hi.origin = NULL;
 	}
-	VG_(memcpy)(&er->lo.v, (const void *)addr.v, size);
+	er->lo.v = ((unsigned long *)buf)[0];
 	er->lo.origin =
 		expr_mem(size,
 			 addr.origin,
@@ -1045,12 +1052,13 @@ static struct expression_result
 do_helper_load_cswitch(struct interpret_state *is,
 		       unsigned size,
 		       struct abstract_interpret_value addr,
-		       struct abstract_interpret_value rsp)
+		       struct abstract_interpret_value rsp,
+		       unsigned long rip)
 {
 	struct expression_result res;
 	unsigned char dummy_buf[16];
 
-	interpreter_do_load(&res, size, addr);
+	interpreter_do_load(&res, size, addr, rip);
 
 	ref_expression_result(is, &res);
 	load_event((const void *)addr.v, size, dummy_buf, rsp.v,
@@ -1091,13 +1099,14 @@ do_helper_cas_cswitch(struct interpret_state *is,
 		      struct abstract_interpret_value addr,
 		      struct expression_result expected,
 		      struct expression_result data,
-		      struct abstract_interpret_value rsp)
+		      struct abstract_interpret_value rsp,
+		      unsigned long rip)
 {
 	struct expression_result seen;
 	struct expression_result new;
 	const struct expression *pred;
 
-	seen = do_helper_load_cswitch(is, size, addr, rsp);
+	seen = do_helper_load_cswitch(is, size, addr, rsp, rip);
 	pred = expr_eq(seen.lo.origin, expected.lo.origin);
 	if (seen.hi.origin)
 		pred = expr_and(pred,
@@ -1176,19 +1185,19 @@ do_dirty_call_cswitch(struct interpret_state *is,
 			       args[5].lo.v);
 	} else if (!strcmp(details->cee->name, "helper_load_8")) {
 		is->temporaries[details->tmp] =
-			do_helper_load_cswitch(is, 1, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 1, args[0].lo, args[1].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_load_16")) {
 		is->temporaries[details->tmp] =
-			do_helper_load_cswitch(is, 2, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 2, args[0].lo, args[1].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_load_32")) {
 		is->temporaries[details->tmp] =
-			do_helper_load_cswitch(is, 4, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 4, args[0].lo, args[1].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_load_64")) {
 		is->temporaries[details->tmp] =
-			do_helper_load_cswitch(is, 8, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 8, args[0].lo, args[1].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_load_128")) {
 		is->temporaries[details->tmp] =
-			do_helper_load_cswitch(is, 16, args[0].lo, args[1].lo);
+			do_helper_load_cswitch(is, 16, args[0].lo, args[1].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_store_8")) {
 		do_helper_store_cswitch(1, args[0].lo, args[1], args[2].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_store_16")) {
@@ -1203,19 +1212,19 @@ do_dirty_call_cswitch(struct interpret_state *is,
 	} else if (!strcmp(details->cee->name, "helper_cas_8")) {
 		is->temporaries[details->tmp] =
 			do_helper_cas_cswitch(is, 1, args[0].lo, args[1], args[2],
-					      args[3].lo);
+					      args[3].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_cas_16")) {
 		is->temporaries[details->tmp] =
 			do_helper_cas_cswitch(is, 2, args[0].lo, args[1], args[2],
-					      args[3].lo);
+					      args[3].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_cas_32")) {
 		is->temporaries[details->tmp] =
 			do_helper_cas_cswitch(is, 4, args[0].lo, args[1], args[2],
-					      args[3].lo);
+					      args[3].lo, rip);
 	} else if (!strcmp(details->cee->name, "helper_cas_64")) {
 		is->temporaries[details->tmp] =
 			do_helper_cas_cswitch(is, 8, args[0].lo, args[1], args[2],
-					      args[3].lo);
+					      args[3].lo, rip);
 	} else {
 		VG_(printf)("Unknown dirty call %s\n", details->cee->name);
 		if (details->needsBBP) {
