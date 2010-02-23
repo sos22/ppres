@@ -151,8 +151,8 @@ data Binop = BinopCombine
 
 data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
-                | ExpressionLoad Int ReplayCoord Expression Expression
-                | ExpressionStore ReplayCoord Expression
+                | ExpressionLoad ThreadId Int ReplayCoord Expression Expression
+                | ExpressionStore ThreadId ReplayCoord Expression
                 | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression deriving (Read)
@@ -165,8 +165,8 @@ showW64 w = if w > 100
 instance Show Expression where
     show (ExpressionRegister rname val) = shows rname $ ':' : (showW64 val)
     show (ExpressionConst val) = showW64 val
-    show (ExpressionLoad sz when addr val) = "load" ++ (show sz) ++ "@(" ++ (show when) ++ ")[" ++ (show addr) ++ "]:(" ++ (show val) ++ ")"
-    show (ExpressionStore when val) = "store@(" ++ (show when) ++ "):(" ++ (show val) ++ ")"
+    show (ExpressionLoad tid sz when addr val) = "load" ++ (show sz) ++ "@(" ++ (show tid) ++ ":" ++ (show when) ++ ")[" ++ (show addr) ++ "]:(" ++ (show val) ++ ")"
+    show (ExpressionStore tid when val) = "store@(" ++ (show tid) ++ ":" ++ (show when) ++ "):(" ++ (show val) ++ ")"
     show (ExpressionImported val) = "IMPORT:" ++ (showW64 val)
     show (ExpressionBinop op l r) = (show op) ++ " (" ++ (show l) ++ ") (" ++ (show r) ++ ")"
     show (ExpressionNot e) = "~(" ++ (show e) ++ ")"

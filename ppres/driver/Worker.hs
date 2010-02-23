@@ -279,12 +279,12 @@ parseExpression =
        case params of
          [0, val] -> return $ ExpressionConst val
          [1, reg, val] -> return $ ExpressionRegister (parseRegister reg) val
-         [2, sz, acc] ->
+         [2, sz, acc, tid] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionLoad (fromIntegral sz) (ReplayCoord $ fromIntegral acc) ptr val
-         [3, acc] -> do val <- parseExpression
-                        return $ ExpressionStore (ReplayCoord $ fromIntegral acc) val
+                return $ ExpressionLoad (fromIntegral tid) (fromIntegral sz) (ReplayCoord $ fromIntegral acc) ptr val
+         [3, acc, tid] -> do val <- parseExpression
+                             return $ ExpressionStore (fromIntegral tid) (ReplayCoord $ fromIntegral acc) val
          [4, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression

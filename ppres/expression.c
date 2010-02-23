@@ -371,6 +371,7 @@ expr_load(unsigned size, const struct expression *ptr, const struct expression *
 		val = val->u.binop.arg2;
 	e->u.load.val = val;
 	e->u.load.when = now;
+	e->u.load.tid = current_thread->id;
 	return e;
 }
 
@@ -381,6 +382,7 @@ expr_store(const struct expression *val)
 	e = _new_expression(EXPR_STORE);
 	e->u.store.when = now;
 	e->u.store.val = val;
+	e->u.store.tid = current_thread->id;
 	return e;
 }
 
@@ -541,12 +543,12 @@ send_expression(const struct expression *e)
 			expr(e->u.reg.name, e->u.reg.val);
 			break;
 		case EXPR_LOAD:
-			expr(e->u.load.size, e->u.load.when.access_nr);
+			expr(e->u.load.size, e->u.load.when.access_nr, e->u.load.tid);
 			send_expression(e->u.load.ptr_e);
 			send_expression(e->u.load.val);
 			break;
 		case EXPR_STORE:
-			expr(e->u.store.when.access_nr);
+			expr(e->u.store.when.access_nr, e->u.store.tid);
 			send_expression(e->u.store.val);
 			break;
 		case EXPR_IMPORTED:

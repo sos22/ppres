@@ -158,11 +158,21 @@ struct expression {
 		struct {
 			replay_coord_t when;
 			unsigned size;
+			ThreadId tid; /* This is, strictly speaking,
+					 redundant, because it's
+					 implied by @when, but it's a
+					 pain to derive it later and
+					 very easy to record when we
+					 make the expression, so stash
+					 it here. */
+
 			const struct expression *ptr_e;
 			const struct expression *val;
 		} load;
 		struct {
 			replay_coord_t when;
+			ThreadId tid; /* Redundant, but see comments
+					 for load. */
 			const struct expression *val;
 		} store;
 		struct {
