@@ -45,24 +45,10 @@ initialise_is_for_vex_state(struct interpret_state *is,
 			    const VexGuestAMD64State *state)
 {
 	unsigned x;
+	tl_assert(!is->live);
 	for (x = 0; x <= REG_LAST; x++)
 		init_register(&is->registers[x], x, (&state->guest_RAX)[x]);
-}
-
-void
-initialise_interpreter_state(void)
-{
-	struct replay_thread *rt;
-	ThreadState *ts;
-
-	tl_assert(head_interpret_mem_lookaside == NULL);
-	for (rt = head_thread; rt; rt = rt->next) {
-		if (rt->dead)
-			continue;
-		ts = VG_(get_ThreadState)(rt->id);
-		initialise_is_for_vex_state(&rt->interpret_state,
-					    &ts->arch.vex);
-	}
+	is->live = True;
 }
 
 static unsigned long
@@ -77,24 +63,17 @@ commit_is_to_vex_state(struct interpret_state *is,
 		       VexGuestArchState *state)
 {
 	unsigned x;
+	tl_assert(is->live);
 	for (x = 0; x <= REG_LAST; x++)
 		(&state->guest_RAX)[x] = commit_register(&is->registers[x]);
+	is->live = False;
 }
 
 void
-commit_interpreter_state(void)
+flush_mem_list(void)
 {
-	struct replay_thread *rt;
-	ThreadState *ts;
 	struct interpret_mem_lookaside *iml, *next;
 
-	for (rt = head_thread; rt; rt = rt->next) {
-		if (rt->dead)
-			continue;
-		ts = VG_(get_ThreadState)(rt->id);
-		commit_is_to_vex_state(&rt->interpret_state,
-				       &ts->arch.vex);
-	}
 	/* Actual memory is already correct, so this just needs to
 	   release all the slots. */
 	for (iml = head_interpret_mem_lookaside;
@@ -1239,8 +1218,6 @@ do_dirty_call_cswitch(struct interpret_state *is,
 					      args[3].lo);
 	} else {
 		VG_(printf)("Unknown dirty call %s\n", details->cee->name);
-		commit_interpreter_state();
-
 		if (details->needsBBP) {
 			res = ((unsigned long (*)(VexGuestAMD64State *,
 						  unsigned long,
@@ -1252,6 +1229,7 @@ do_dirty_call_cswitch(struct interpret_state *is,
 				(state, args[0].lo.v, args[1].lo.v, args[2].lo.v, args[3].lo.v,
 				 args[4].lo.v, args[5].lo.v);
 		} else {
+			commit_is_to_vex_state(is, state);
 			res = ((unsigned long (*)(unsigned long,
 						  unsigned long,
 						  unsigned long,
@@ -1260,9 +1238,12 @@ do_dirty_call_cswitch(struct interpret_state *is,
 						  unsigned long))(details->cee->addr))
 				(args[0].lo.v, args[1].lo.v, args[2].lo.v, args[3].lo.v,
 				 args[4].lo.v, args[5].lo.v);
+			initialise_is_for_vex_state(is, state);
 		}
 
-		initialise_interpreter_state();
+		/* Dirty call could have arbitrarily modified memory.
+		   Flag everything as having been imported. */
+		flush_mem_list();
 
 		if (details->tmp != IRTemp_INVALID) {
 			is->temporaries[details->tmp].lo.v = res;
@@ -1287,14 +1268,13 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 	IRStmt *stmt;
 	unsigned stmt_nr;
 
-	addr = istate->registers[REG_RIP].v;
-	if (addr == 0) {
-		/* Hackity hackity hack: at the start of day, RIP in
-		   the interpreter state is wrong.  Fix it up a
-		   bit. */
-		initialise_is_for_vex_state(istate, state);
-		addr = state->guest_RIP;
+	if (!istate->live) {
+		ThreadState *ts;
+		ts = VG_(get_ThreadState)(current_thread->id);
+		initialise_is_for_vex_state(istate, &ts->arch.vex);
 	}
+	addr = istate->registers[REG_RIP].v;
+	tl_assert(addr != 0);
 
 	/* This is all ripped from VG_(translate) and
 	 * LibVEX_Translate(). */
@@ -1354,6 +1334,8 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		case Ist_NoOp:
 			break;
 		case Ist_IMark:
+			VG_(printf)("Interpret thread %d at %llx\n", current_thread->id,
+				    stmt->Ist.IMark.addr);
 			break;
 		case Ist_AbiHint:
 			break;
@@ -1460,9 +1442,10 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 	   expressions not stored in the interpreter state or to
 	   memory might get garbage collected. */
 	if (irsb->jumpkind == Ijk_Sys_syscall) {
-		commit_interpreter_state();
+		commit_is_to_vex_state(istate, state);
+		flush_mem_list();
 		syscall_event(state);
-		initialise_interpreter_state();
+		initialise_is_for_vex_state(istate, state);
 	}
 
 	if (irsb->jumpkind == Ijk_ClientReq) {
@@ -1488,6 +1471,13 @@ finished_block:
 	state->guest_RIP = istate->registers[REG_RIP].v;
 
 	vexUnregisterGCRoot(&irsb);
+
+	if (!want_to_interpret) {
+		/* We're about to switch from interpret mode to JIT
+		 * mode.  Make sure the VEX state is correct. */
+		commit_is_to_vex_state(istate, state);
+		flush_mem_list();
+	}
 
 	return VG_TRC_BORING;
 }

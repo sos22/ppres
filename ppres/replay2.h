@@ -181,6 +181,7 @@ struct expression_result {
 };
 
 struct interpret_state {
+	Bool live;
 	unsigned nr_temporaries;
 	struct expression_result *temporaries;
 	struct abstract_interpret_value registers[REG_LAST+1];
@@ -250,6 +251,7 @@ extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
 extern struct record_consumer logfile;
 extern replay_coord_t now;
+extern Bool want_to_interpret;
 
 int ui_loop(void);
 int do_snapshot(int parent_fd);
@@ -299,8 +301,6 @@ BINOP_EXPR(b);
 void gc_expressions(void);
 
 UInt interpret_log_control_flow(VexGuestAMD64State *state);
-void initialise_interpreter_state(void);
-void commit_interpreter_state(void);
 void disassemble_addr(unsigned long addr);
 IRSB *instrument_func(VgCallbackClosure *closure,
 		      IRSB *sb_in,

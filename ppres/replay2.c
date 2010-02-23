@@ -102,7 +102,7 @@ head_thread;
 struct interpret_mem_lookaside *
 head_interpret_mem_lookaside;
 
-static Bool
+Bool
 want_to_interpret;
 
 struct record_consumer
@@ -1360,10 +1360,8 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		break;
 	case WORKER_CONTROL_TRACE:
 		want_to_interpret = True;
-		initialise_interpreter_state();
 		run_to(logfile, cmd->u.control_trace.when);
 		want_to_interpret = False;
-		commit_interpreter_state();
 		send_okay();
 		break;
 	case WORKER_SNAPSHOT:
