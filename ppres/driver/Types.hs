@@ -156,7 +156,20 @@ data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionMem Int ReplayCoord Expression Expression
                 | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
-                | ExpressionNot Expression deriving (Show, Read)
+                | ExpressionNot Expression deriving (Read)
+
+showW64 :: Word64 -> String
+showW64 w = if w > 100
+            then "0x" ++ (showHex w "")
+            else show w
+
+instance Show Expression where
+    show (ExpressionRegister rname val) = shows rname $ ':' : (showW64 val)
+    show (ExpressionConst val) = showW64 val
+    show (ExpressionMem sz when addr val) = "mem" ++ (show sz) ++ "@(" ++ (show when) ++ ")[" ++ (show addr) ++ "]:(" ++ (show val) ++ ")"
+    show (ExpressionImported val) = "IMPORT:" ++ (showW64 val)
+    show (ExpressionBinop op l r) = (show op) ++ " (" ++ (show l) ++ ") (" ++ (show r) ++ ")"
+    show (ExpressionNot e) = "~(" ++ (show e) ++ ")"
 
 data ReplayFailureReason = FailureReasonControl 
                          | FailureReasonData Expression Expression deriving (Show, Read)
