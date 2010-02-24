@@ -36,6 +36,8 @@ instance Read ReplayCoord where
         do (access,trail3) <- reads x
            return (ReplayCoord access, trail3)
                               
+newtype CriticalSection = CriticalSection [ReplayCoord]
+
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
                                   trc_foot_rcx :: Word64,
@@ -156,6 +158,28 @@ data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression deriving (Read)
+
+data ExpressionFolder a = ExpressionFolder { ef_reg :: RegisterName -> Word64 -> a,
+                                             ef_const :: Word64 -> a,
+                                             ef_load :: ThreadId -> Int -> ReplayCoord -> a -> a -> a,
+                                             ef_store :: ThreadId -> ReplayCoord -> a -> a,
+                                             ef_imported :: Word64 -> a,
+                                             ef_binop :: Binop -> a -> a -> a,
+                                             ef_not :: a -> a }
+
+foldrExpression :: ExpressionFolder a -> Expression -> a
+foldrExpression folder expr =
+    case expr of
+      ExpressionRegister n v -> ef_reg folder n v
+      ExpressionConst v -> ef_const folder v
+      ExpressionLoad tid sz when addr val ->
+          ef_load folder tid sz when (foldrExpression folder addr) (foldrExpression folder val)
+      ExpressionStore tid when val ->
+          ef_store folder tid when $ foldrExpression folder val
+      ExpressionImported v -> ef_imported folder v
+      ExpressionBinop op l r ->
+          ef_binop folder op (foldrExpression folder l) (foldrExpression folder r)
+      ExpressionNot e -> ef_not folder $ foldrExpression folder e
 
 showW64 :: Word64 -> String
 showW64 w = if w > 100

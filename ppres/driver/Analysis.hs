@@ -7,7 +7,8 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 evalExpressionInSnapshot, evalExpressionWithStore,
                 enumerateHistories',
 
-                enumerateHistories, getRacingExpressions) where
+                enumerateHistories, getRacingExpressions,
+                criticalSections) where
 
 import Types
 import WorkerCache
@@ -480,3 +481,32 @@ isRacingExpression (ExpressionNot x) = isRacingExpression x
 
 getRacingExpressions :: [Expression] -> [Expression]
 getRacingExpressions = filter isRacingExpression
+
+
+{- Go through and find all of the memory accesses in an expression,
+   and then partition them into a bunch of critical sections.  A
+   critical section, for our purposes, is a set of memory accesses
+   which has to be executed atomically.  ``Atomic'' in this context is
+   defined relative to all of the other critical sections in the list
+   (so other accesses can be interleaved with these ones). -}
+{- For now, we just create a critical section for every thread, and
+   put all of its memory accesses into that section.  This is quite
+   pessimistic, but easy to implement, and should at least work in
+   most of the common cases. -}
+criticalSections :: Expression -> [CriticalSection]
+criticalSections expr =
+    let accesses = foldrExpression
+                   (ExpressionFolder
+                    { ef_reg = const $ const [],
+                      ef_const = const [],
+                      ef_load = \tid _ when addr val -> (tid,when):(addr ++ val),
+                      ef_store = \tid when val -> (tid,when):val,
+                      ef_imported = const [],
+                      ef_binop = \_ a b -> a ++ b,
+                      ef_not = id })
+                   expr
+        threads = nub $ map fst accesses
+        csForThread t = CriticalSection [acc | (thr, acc) <- accesses, t == thr]
+    in map csForThread threads
+
+        

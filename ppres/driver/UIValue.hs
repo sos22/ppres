@@ -177,3 +177,7 @@ instance AvailInUI Word64 where
     toUI = UIValueWord
     fromUI (UIValueWord x) = Right x
     fromUI e = coerceError "word" e
+
+instance AvailInUI CriticalSection where
+    toUI (CriticalSection x) = toUI x
+    fromUI = fmap CriticalSection . fromUI

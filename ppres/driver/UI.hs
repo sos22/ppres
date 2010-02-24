@@ -42,6 +42,7 @@ data UIExpression = UIDummyFunction
                   | UILiteral UIValue
                   | UIRegs UIExpression
                   | UIRaceExpressions UIExpression
+                  | UICritSections UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -88,6 +89,7 @@ expressionParser =
                oneExprArgParser "thread_state" UIThreadState,
                oneExprArgParser "regs" UIRegs,
                oneExprArgParser "races" UIRaceExpressions,
+               oneExprArgParser "critsections" UICritSections,
                do keyword "run"
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
@@ -217,6 +219,7 @@ evalExpression ws f =
       UIThreadState name ->
           withSnapshot ws name $ \s -> threadState s
       UIRegs s -> withSnapshot ws s getRegisters
+      UICritSections s -> withSnapshot ws s criticalSections
       UIRaceExpressions s -> withSnapshot ws s getRacingExpressions
       UISetThread snap tid ->
           withSnapshot ws snap $ \s -> setThread s tid
