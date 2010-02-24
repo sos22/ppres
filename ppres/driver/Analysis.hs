@@ -8,7 +8,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 enumerateHistories',
 
                 enumerateHistories, getRacingExpressions,
-                criticalSections) where
+                criticalSections, mkFixupLibrary) where
 
 import Types
 import WorkerCache
@@ -506,7 +506,43 @@ criticalSections expr =
                       ef_not = id })
                    expr
         threads = nub $ map fst accesses
-        csForThread t = CriticalSection [acc | (thr, acc) <- accesses, t == thr]
+        csForThread t = CriticalSection t [acc | (thr, acc) <- accesses, t == thr]
     in map csForThread threads
 
+{- Look at a critical section and a history and figure out which RIPs
+   should have been in the section.  All of the accesses in the CS
+   have to be in the same thread for this to be correct. -}
+getCriticalRips :: History -> CriticalSection -> [Word64]
+getCriticalRips hist (CriticalSection interestingThread accesses) =
+    let accesses' = sort accesses
+        fstAccess = head accesses'
         
+        accesses'' = tail $
+                     filter
+                     (\a -> nextThread (deError $ truncateHistory' hist $ Finite a) == interestingThread)
+                     accesses'
+
+        ripsInAccess :: ReplayCoord -> [Word64]
+        ripsInAccess start@(ReplayCoord acc) =
+            case trace (deError $ truncateHistory' hist $ Finite start) (Finite $ ReplayCoord $ acc + 1) of
+              Left err -> error $ "ripsBetween: " ++ err
+              Right (_, t) -> [rip | (TraceRecord (TraceFootstep rip _ _ _) _) <- t]
+
+        {- We want to include the instruction which issued the first
+           access.  Accesses terminate blocks, and the access shows up
+           after the footstep in the log, so the footsteps won't
+           include it, and so we need to grab it manually. -}
+        fstRip = case getRipAtAccess hist fstAccess of
+                   Left err -> error $ "ripsBetween2: " ++ err
+                   Right v -> v
+    in fstRip:(concatMap ripsInAccess accesses'')
+
+mkFixup :: History -> CriticalSection -> (String, String)
+mkFixup hist cs =
+    dt ("crit rips -> " ++ (show $ getCriticalRips hist cs)) $
+    ("", "")
+
+mkFixupLibrary :: History -> [CriticalSection] -> String
+mkFixupLibrary hist crit_sects =
+    dt (foldr (++) "" $ map (flip (++) "\n" . show . mkFixup hist) crit_sects)
+    ""

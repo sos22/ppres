@@ -43,6 +43,7 @@ data UIExpression = UIDummyFunction
                   | UIRegs UIExpression
                   | UIRaceExpressions UIExpression
                   | UICritSections UIExpression
+                  | UIFix UIExpression UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -90,6 +91,7 @@ expressionParser =
                oneExprArgParser "regs" UIRegs,
                oneExprArgParser "races" UIRaceExpressions,
                oneExprArgParser "critsections" UICritSections,
+               twoExprArgParser "fix" UIFix,
                do keyword "run"
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
@@ -220,6 +222,9 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> threadState s
       UIRegs s -> withSnapshot ws s getRegisters
       UICritSections s -> withSnapshot ws s criticalSections
+      UIFix s c -> toUI $ do s' <- fromUI $ evalExpression ws s
+                             c' <- fromUI $ evalExpression ws c
+                             return $ mkFixupLibrary s' c'
       UIRaceExpressions s -> withSnapshot ws s getRacingExpressions
       UISetThread snap tid ->
           withSnapshot ws snap $ \s -> setThread s tid

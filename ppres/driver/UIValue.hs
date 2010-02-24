@@ -179,5 +179,6 @@ instance AvailInUI Word64 where
     fromUI e = coerceError "word" e
 
 instance AvailInUI CriticalSection where
-    toUI (CriticalSection x) = toUI x
-    fromUI = fmap CriticalSection . fromUI
+    toUI (CriticalSection t x) = toUI (t, x)
+    fromUI x = do (t, v) <- fromUI x
+                  return $ CriticalSection (fromInteger t) v

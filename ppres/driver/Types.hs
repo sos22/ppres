@@ -36,7 +36,7 @@ instance Read ReplayCoord where
         do (access,trail3) <- reads x
            return (ReplayCoord access, trail3)
                               
-newtype CriticalSection = CriticalSection [ReplayCoord]
+data CriticalSection = CriticalSection ThreadId [ReplayCoord]
 
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
@@ -130,9 +130,14 @@ data RegisterName = REG_RAX
                   | REG_IDFLAG
                   | REG_FS_ZERO
                   | REG_SSE_ROUND
-                    deriving (Show, Read)
+                    deriving (Show, Read, Eq)
 
 newtype RegisterFile = RegisterFile [(RegisterName, Word64)] deriving Show
+
+getRegister :: RegisterFile -> RegisterName -> Either String Word64
+getRegister (RegisterFile rf) rn = case lookup rn rf of
+                                     Nothing -> Left $ "huh? register file didn't have " ++ (show rn)
+                                     Just x -> Right x
 
 data Binop = BinopCombine
            | BinopSub

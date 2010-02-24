@@ -7,7 +7,8 @@ module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    trace, traceAddress,
                    threadState, replayState, controlTrace,
                    fetchMemory, vgIntermediate, nextThread,
-                   setThread, controlTraceTo, getRegisters) where
+                   setThread, controlTraceTo, getRegisters,
+                   getRipAtAccess) where
 
 import Data.Word
 import Control.Monad.State
@@ -254,9 +255,15 @@ controlTraceTo :: History -> History -> Either String [Expression]
 controlTraceTo start end =
     unsafePerformIO $ do worker <- getWorker start
                          r <- controlTraceToWorker worker start end
-                         rs <- replayStateWorker worker
-                         dt ("final replay state " ++ (show rs)) $ killWorker worker
+                         killWorker worker
                          return r
 
 getRegisters :: History -> RegisterFile
 getRegisters = queryCmd getRegistersWorker
+
+getRipAtAccess :: History -> ReplayCoord -> Either String Word64
+getRipAtAccess hist (ReplayCoord whn) =
+    do hist' <- truncateHistory hist $ Finite $ ReplayCoord $ whn + 1
+       getRegister (getRegisters hist') REG_RIP
+
+       

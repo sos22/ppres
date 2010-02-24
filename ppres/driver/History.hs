@@ -1,6 +1,6 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History, HistoryEntry(..),
-               mkHistory, histLastCoord, controlTraceToWorker) where
+               mkHistory, histLastCoord, controlTraceToWorker, truncateHistory') where
 
 import Control.Monad
 
@@ -166,6 +166,19 @@ truncateHistory (History _ _ hs) cntr =
         worker _ = Left $ "truncate bad history: " ++ (show hs) ++ " to " ++ (show cntr)
     in liftM mkHistory (worker $ dlToList hs)
 
+{- Like truncateHistory, but make sure we stay in the same thread.
+   Bit of a hack. -}
+truncateHistory' :: History -> Topped ReplayCoord -> Either String History
+truncateHistory' (History _ _ hs) cntr =
+    let worker [HistoryRun Infinity] = Right [HistoryRun cntr]
+        worker ((HistoryRun c):hs') =
+            if c < cntr then liftM ((:) $ HistoryRun c) $ worker hs'
+            else case hs' of
+                   ((HistorySetThread t):_) | cntr == c -> Right [HistoryRun cntr, HistorySetThread t]
+                   _ -> Right [HistoryRun cntr]
+        worker (h:hs') = liftM ((:) h) $ worker hs'
+        worker _ = Left $ "truncate bad history: " ++ (show hs) ++ " to " ++ (show cntr)
+    in liftM mkHistory (worker $ dlToList hs)
 
 instance Forcable HistoryEntry where
     force (HistoryRun t) = force t
