@@ -15,6 +15,7 @@ import WorkerCache
 import History
 import ReplayState()
 import Timing
+import Util
 
 import Data.Bits
 import Data.Word
@@ -112,17 +113,16 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
 
 traceThread :: History -> ThreadId -> [TraceRecord]
 traceThread start thr =
-    dt ("trace thread " ++ (show thr) ++ " in " ++ (show start)) $
     case histCoord start of
       Infinity -> []
       Finite cur_record ->
           let new_record = ReplayCoord { rc_access = rc_access cur_record + 50000 }
-          in snd $ trace (appendHistory start $ HistorySetThread thr) $ Finite new_record
+          in snd $ deError $ trace (deError $ appendHistory start $ HistorySetThread thr) $ Finite new_record
 
 runMemoryThread :: History -> ThreadId -> AccessNr -> (History, [TraceRecord])
 runMemoryThread start tid acc =
     let targetCoord = ReplayCoord acc
-    in trace (appendHistory start (HistorySetThread tid)) $ Finite targetCoord
+    in deError $ trace (deError $ appendHistory start (HistorySetThread tid)) $ Finite targetCoord
 
 fetchMemory8 :: History -> Word64 -> Maybe Word64
 fetchMemory8 hist addr =
@@ -395,7 +395,7 @@ enumerateNextEpoch start =
 
               tweakedSchedules = breadthFirstExplore singleAccessAdvances start
 
-              newSchedules = [run x next_coord | x <- tweakedSchedules]
+              newSchedules = [deError $ run x next_coord | x <- tweakedSchedules]
 
               {- We filter the returned schedules so as we remove all
                  definitely-failed ones and get out quickly if we hit
@@ -424,17 +424,17 @@ enumerateHistoriesBigStep start trailer =
       ReplayStateFinished _ -> enumStateFinished start
       ReplayStateFailed _ _ _ _ -> trailer
       ReplayStateOkay start_epoch ->
-          case replayState $ run start Infinity of
+          case replayState $ deError $ run start Infinity of
             ReplayStateFinished _ ->
                 {- We're done; no point exploring any further -}
-                enumStateFinished $ run start Infinity
+                enumStateFinished $ deError $ run start Infinity
             ReplayStateOkay _ -> error "replay got lost somewhere?"
             ReplayStateFailed _ _ fail_epoch _ ->
                 tlog ("failed at " ++ (show fail_epoch)) $
                 let epochs = map ReplayCoord [(rc_access start_epoch)..(rc_access fail_epoch)]
                     ss_starts = [if e == start_epoch
                                  then start 
-                                 else run start (Finite e) | e <- epochs]
+                                 else deError $ run start (Finite e) | e <- epochs]
                 in foldl (flip enumerateHistoriesSmallStep) trailer ss_starts
 
 {- Exhaustively explore all future schedulings available from hist and

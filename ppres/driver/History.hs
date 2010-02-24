@@ -117,10 +117,11 @@ fixupWorkerForHist budget w current desired =
                     if cost > budget
                     then return $ (cost, Just so_far)
                     else do cost' <- doHistoryEntry w x
-                            worker xs (cost + cost') (appendHistory so_far x)
+                            let (Right r) = appendHistory so_far x
+                            worker xs (cost + cost') r
       _ -> error $ (show current) ++ " is not a prefix of " ++ (show desired) ++ " (historyPrefixOf " ++ (show $ historyPrefixOf current desired) ++ ")"
 
-appendHistory :: History -> HistoryEntry -> History
+appendHistory :: History -> HistoryEntry -> Either String History
 appendHistory (History old_last_epoch old_nr_records dlh) he =
     let h = dlToList dlh
         revh = reverse h
@@ -128,29 +129,31 @@ appendHistory (History old_last_epoch old_nr_records dlh) he =
         lastThread ((HistoryRun _):_) = Nothing
         lastThread ((HistorySetThread x):_) = Just x
         (hl:hrest) = revh
-        (new_last_epoch, new_nr_records, h') =
-            case (hl, he) of
-               (HistoryRun x, HistoryRun y) ->
-                   if x == y
-                   then (old_last_epoch, old_nr_records, h)
-                   else if x < y
-                        then (y, old_nr_records, reverse $ (HistoryRun y):hrest)
-                        else error "appendHistory tried to go backwards in time!"
-               (HistorySetThread _, HistorySetThread lt) ->
-                   if Just lt == lastThread hrest
-                   then (old_last_epoch, old_nr_records - 1, reverse hrest)
-                   else (old_last_epoch, old_nr_records, reverse $ he:hrest)
-               (_, HistorySetThread lt) ->
-                   if Just lt == lastThread revh
-                   then (old_last_epoch, old_nr_records, h)
-                   else (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
-               (_, HistoryRun y) ->
-                   (y, old_nr_records + 1, reverse $ he:revh)
-        res =
-            case h of
-              [] -> mkHistory [he]
-              _ -> History new_last_epoch new_nr_records $ listToDl h'
-    in sanityCheckHistory res
+    in case h of
+         [] -> Right $ mkHistory [he]
+         _ ->
+             do (new_last_epoch, new_nr_records, h') <-
+                    case (hl, he) of
+                      (HistoryRun x, HistoryRun y) ->
+                          if x == y
+                          then Right (old_last_epoch, old_nr_records, h)
+                          else if x < y
+                               then Right (y, old_nr_records, reverse $ (HistoryRun y):hrest)
+                               else Left "appendHistory tried to go backwards in time!"
+                      (HistorySetThread _, HistorySetThread lt) ->
+                          Right $ 
+                                if Just lt == lastThread hrest
+                                then (old_last_epoch, old_nr_records - 1, reverse hrest)
+                                else (old_last_epoch, old_nr_records, reverse $ he:hrest)
+                      (_, HistorySetThread lt) ->
+                          Right $
+                                if Just lt == lastThread revh
+                                then (old_last_epoch, old_nr_records, h)
+                                else (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
+                      (_, HistoryRun y) ->
+                          Right (y, old_nr_records + 1, reverse $ he:revh)
+                let res = History new_last_epoch new_nr_records $ listToDl h'
+                return $ sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped ReplayCoord -> Either String History

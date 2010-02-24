@@ -19,6 +19,7 @@ import System.IO.Unsafe
 import Types
 import Worker
 import History
+import Util
 
 --import qualified Debug.Trace
 dt :: String -> a -> a
@@ -198,23 +199,23 @@ getWorker target =
 
 
 
-traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> (History, a)
+traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> Either String (History, a)
 traceCmd he start w =
-    let newHist = appendHistory start he
-    in unsafePerformIO $ do worker <- getWorker start
-                            r <- w worker
-                            killWorker worker
-                            return (newHist, r)
+    do newHist <- appendHistory start he
+       return $ unsafePerformIO $ do worker <- getWorker start
+                                     r <- w worker
+                                     killWorker worker
+                                     return (newHist, r)
 
-run :: History -> Topped ReplayCoord -> History
+run :: History -> Topped ReplayCoord -> Either String History
 run start cntr = appendHistory start $ HistoryRun cntr
 
-trace :: History -> Topped ReplayCoord -> (History, [TraceRecord])
+trace :: History -> Topped ReplayCoord -> Either String (History, [TraceRecord])
 trace start cntr =
     dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
-traceAddress :: History -> Word64 -> Topped ReplayCoord -> (History, [TraceRecord])
+traceAddress :: History -> Word64 -> Topped ReplayCoord -> Either String (History, [TraceRecord])
 traceAddress start addr to =
     traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr to
 
@@ -231,9 +232,9 @@ threadState = queryCmd threadStateWorker
 replayState :: History -> ReplayState
 replayState = queryCmd replayStateWorker
 
-controlTrace :: History -> Topped ReplayCoord -> [Expression]
+controlTrace :: History -> Topped ReplayCoord -> Either String [Expression]
 controlTrace hist cntr =
-    dt ("controlTrace " ++ (show hist) ++ " " ++ (show cntr)) $ snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
+    fmap snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
 
 fetchMemory :: History -> Word64 -> Word64 -> Maybe [Word8]
 fetchMemory hist addr size =
@@ -247,7 +248,7 @@ nextThread :: History -> ThreadId
 nextThread = queryCmd nextThreadWorker
 
 setThread :: History -> ThreadId -> History
-setThread hist tid = appendHistory hist $ HistorySetThread tid
+setThread hist tid = deError $ appendHistory hist $ HistorySetThread tid
 
 controlTraceTo :: History -> History -> Either String [Expression]
 controlTraceTo start end =
