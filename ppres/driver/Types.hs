@@ -5,6 +5,7 @@ import Data.Word
 import Network.Socket
 import Numeric
 import Data.IORef
+import Control.Monad.Fix
 
 import Util
 
@@ -216,7 +217,14 @@ instance Monad (Either a) where
     return x = Right x
     (Right x) >>= f = f x
     (Left x) >>= _ = Left x
-    
+   
+instance MonadFix (Either a) where
+    mfix f = let y = f x
+                 x = case y of
+                       Left _ -> error "badness in mfix Either"
+                       Right z -> z
+             in y
+                       
 data Topped x = Infinity
               | Finite !x deriving Eq
 

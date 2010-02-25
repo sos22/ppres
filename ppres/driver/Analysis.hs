@@ -1,3 +1,4 @@
+{-# LANGUAGE RecursiveDo #-}
 module Analysis(findRacingAccesses, findControlFlowRaces, 
 
                 {- I don't actually use these at the moment, but will
@@ -539,10 +540,7 @@ getCriticalRips hist (CriticalSection interestingThread accesses) =
     in fstRip:(concatMap ripsInAccess accesses'')
 
 data PatchFragment = PatchFragment { pf_literal :: [Word8],
-                                     pf_fixups :: [PatchFixup],
-                                     pf_for_address :: Word64 } deriving Show
-emptyPatchFragment :: Word64 -> PatchFragment
-emptyPatchFragment = PatchFragment [] []
+                                     pf_fixups :: [PatchFixup] } deriving Show
 
 data InstructionPrefixes = InstructionPrefixes { ip_rexw :: Bool,
                                                  ip_rexr :: Bool,
@@ -620,7 +618,8 @@ bitSlice val start end = (val `shiftR` start) .&. ((1 `shiftL` (end - start + 1)
 
 {- A patch fixup record means that the 4-byte value at offset pf_offset in the
    string should be modified to be pf_target - (pf_offset + pf_addend + address_of_string) -}
-data PatchFixup = PatchFixup { pf_offset :: Word64, pf_target :: Word64,
+data PatchFixup = PatchFixup { pf_offset :: Word64,
+                               pf_target :: Either String Word64,
                                pf_addend :: Word64 } deriving Show
 
 offsetFixup :: Word64 -> PatchFixup -> PatchFixup
@@ -670,13 +669,13 @@ parseModrm snapshot _prefixes addr immediateBytes opcodeLen =
                       in do dispBytes <- bytes snapshot (addr + 2) dispSize
                             return (addr + 2 + dispSize, modrm:sib:dispBytes,
                                     if ripRelative
-                                    then [PatchFixup (opcodeLen + 2) (addr + 2 + immediateBytes + dispSize + byteListToInteger dispBytes) (immediateBytes + dispSize)]
+                                    then [PatchFixup (opcodeLen + 2) (Right $ addr + 2 + immediateBytes + dispSize + byteListToInteger dispBytes) (immediateBytes + dispSize)]
                                     else [],
                                     regfield)
         else do dispBytes <- bytes snapshot (addr + 1) modrmDispSize
                 return (addr + 1 + modrmDispSize, modrm:dispBytes,
                         if ripRelative
-                        then [PatchFixup (opcodeLen + 1) (addr + 1 + immediateBytes + modrmDispSize + byteListToInteger dispBytes) (immediateBytes + modrmDispSize)]
+                        then [PatchFixup (opcodeLen + 1) (Right $ addr + 1 + immediateBytes + modrmDispSize + byteListToInteger dispBytes) (immediateBytes + modrmDispSize)]
                         else [],
                         regfield)
 
@@ -684,30 +683,33 @@ parseModrm snapshot _prefixes addr immediateBytes opcodeLen =
 prefixPatchFragment :: PatchFragment -> PatchFragment -> PatchFragment
 prefixPatchFragment fstFrag sndFrag =
     PatchFragment { pf_literal = pf_literal fstFrag ++ pf_literal sndFrag,
-                    pf_fixups = pf_fixups fstFrag ++ (map (offsetFixup $ fromIntegral $ length $ pf_literal fstFrag) $ pf_fixups sndFrag),
-                    pf_for_address = pf_for_address fstFrag }
+                    pf_fixups = pf_fixups fstFrag ++ (map (offsetFixup $ fromIntegral $ length $ pf_literal fstFrag) $ pf_fixups sndFrag) }
 
-ripListToPatchFragment :: History -> [Word64] -> Either String PatchFragment
-ripListToPatchFragment _ [] = Right $ emptyPatchFragment 0
-ripListToPatchFragment snapshot (rip:rips) =
-    do rest_pf <- ripListToPatchFragment snapshot rips
-       (after_prefix_rip, prefixes, prefix_string) <- stripPrefixes snapshot rip
+ripListToPatchFragment :: History -> [Word64] -> PatchFragment -> Either String (PatchFragment, Word64)
+ripListToPatchFragment _ [] _ = error "ripListToPatchFragment on empty"
+ripListToPatchFragment snapshot (rip:rips) end =
+    do (after_prefix_rip, prefixes, prefix_string) <- stripPrefixes snapshot rip
        hbyte <- byte snapshot after_prefix_rip
        let opcodeLen = after_prefix_rip + 1 - rip
-           justModrm :: Either String PatchFragment
+           justModrm :: Either String (PatchFragment, Word64)
            justModrm =
-               do (_, modrm_bytes, modrm_fixups, _) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 0 opcodeLen
-                  return $ prefixPatchFragment (PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes,
-                                                                pf_fixups = modrm_fixups,
-                                                                pf_for_address = rip }) rest_pf
+               do (nrip, modrm_bytes, modrm_fixups, _) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 0 opcodeLen
+                  let myPF = PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes,
+                                             pf_fixups = modrm_fixups}
+                   in case rips of
+                       [] -> return (prefixPatchFragment myPF end, nrip)
+                       _ -> do (restPf, finalRip) <- ripListToPatchFragment snapshot rips end
+                               return (prefixPatchFragment myPF restPf, finalRip)
        case hbyte of
          0x83 -> do (after_modrm_rip, modrm_bytes, modrm_fixups, extension) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 1 opcodeLen
                     case extension of
                       0 -> do imm8 <- byte snapshot after_modrm_rip
-                              return $ prefixPatchFragment (PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes ++ [imm8],
-                                                                            pf_fixups = modrm_fixups,
-                                                                            pf_for_address = rip})
-                                                           rest_pf
+                              let myPF = PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes ++ [imm8],
+                                                         pf_fixups = modrm_fixups}
+                               in case rips of
+                                    [] -> return (prefixPatchFragment myPF end, after_modrm_rip)
+                                    _ -> do (restPf, finalRip) <- ripListToPatchFragment snapshot rips end
+                                            return (prefixPatchFragment myPF restPf, finalRip)
                       _ -> Left $ "unknown instruction 0x83 extension at " ++ (showHex rip "")
          0x89 -> justModrm
          0x8b -> justModrm
@@ -719,18 +721,33 @@ byteListToCString bl = '"':(concatMap word8ToCChar bl) ++ "\""
 
 fixupToC :: String -> PatchFixup -> String
 fixupToC pattern_ident pf =
-    pattern_ident ++ "[" ++ (show $ pf_offset pf) ++ "] = 0x" ++ (showHex (pf_target pf) "") ++ " - (" ++ (show $ pf_offset pf) ++ " + " ++ (show $ pf_addend pf) ++ " + (unsigned long)" ++ pattern_ident ++ ");\n"
+    let targ = case pf_target pf of
+                 Left s -> "(unsigned long)" ++ s
+                 Right i -> "0x" ++ (showHex i "")
+    in pattern_ident ++ "[" ++ (show $ pf_offset pf) ++ "] = " ++ targ ++ " - (" ++ (show $ pf_offset pf) ++ " + " ++ (show $ pf_addend pf) ++ " + (unsigned long)" ++ pattern_ident ++ ");\n"
+
+callSymbolFragment :: String -> PatchFragment
+callSymbolFragment symb = PatchFragment { pf_literal = [0x48, 0x81, 0xec, 0x80, 0x00, 0x00, 0x00, {- subq $128, %rsp -> get out of the red zone -}
+                                                        0xe8, 0x00, 0x00, 0x00, 0x00, {- call disp32 -}
+                                                        0x48, 0x81, 0xc4, 0x80, 0x00, 0x00, 0x00 {- addq $128, %rsp -}],
+                                          pf_fixups = [PatchFixup { pf_offset = 8, pf_target = Left symb, pf_addend = 4 }]}
+
+jmpAddressFragment :: Word64 -> PatchFragment
+jmpAddressFragment targ = PatchFragment { pf_literal = [0xe9, 0x00, 0x00, 0x00, 0x00 {- jmp disp32 -}],
+                                          pf_fixups = [PatchFixup { pf_offset = 1, pf_target = Right targ, pf_addend = 4 }]}
 
 mkFixup :: History -> CriticalSection -> [String] -> Either String (String, String, [String])
 mkFixup hist cs (pattern_ident:identifiers) =
-    do patch_frag <- ripListToPatchFragment hist $ getCriticalRips hist cs
-       let pattern = byteListToCString $ pf_literal patch_frag
+    let crit_rips = getCriticalRips hist cs in
+    mdo
+       (patch_frag, nextRip) <- ripListToPatchFragment hist crit_rips $ prefixPatchFragment (callSymbolFragment "do_unlock") (jmpAddressFragment nextRip)
+       let patch_frag' = prefixPatchFragment (callSymbolFragment "do_lock") patch_frag
+           pattern = byteListToCString $ pf_literal patch_frag'
            global_part = "static unsigned char *" ++ pattern_ident ++ " = " ++ pattern ++ ";\n" ++
                          "static unsigned char *" ++ pattern_ident ++ " __attribute__ ((\"read_write_exec\"));\n" ++
-                         "REGISTER_FIXUP(0x" ++ (showHex (pf_for_address patch_frag) "") ++ ", " ++ pattern_ident ++ ");\n"
-           local_part = foldr (++) "" $ map (fixupToC pattern_ident) $ pf_fixups patch_frag
-       return $  dt ("patch fragments -> " ++ (show patch_frag)) $
-                  (local_part, global_part, identifiers)
+                         "REGISTER_FIXUP(0x" ++ (showHex (head crit_rips) "") ++ ", " ++ pattern_ident ++ ");\n"
+           local_part = foldr (++) "" $ map (fixupToC pattern_ident) $ pf_fixups patch_frag'
+       return $  (local_part, global_part, identifiers)
 
 mkFixups :: History -> [CriticalSection] -> [String] -> Either String [(String, String)]
 mkFixups _ [] _ = Right []
