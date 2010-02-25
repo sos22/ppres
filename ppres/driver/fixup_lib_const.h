@@ -9,6 +9,7 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <err.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -102,6 +103,8 @@ build_fixup(struct fixup_table_entry *ff)
 	printf("Fixup for %lx at %p\n", ff->orig, ff->patch);
 }
 
+static pthread_mutex_t thelock;
+
 /* Turn on all the fixups. */
 static void
 activate_fixups(void)
@@ -110,6 +113,8 @@ activate_fixups(void)
 	struct fixup_table_entry *ff;
 	unsigned dr_nr;
 	pid_t child;
+
+	pthread_mutex_init(&thelock, NULL);
 
 	for (ff = &first_fixup; ff < &last_fixup; ff++)
 		build_fixup(ff);
@@ -180,9 +185,11 @@ void do_unlock_c(void) __attribute__((visibility ("hidden")));
 void
 do_lock_c(void)
 {
+	pthread_mutex_lock(&thelock);
 }
 
 void
 do_unlock_c(void)
 {
+	pthread_mutex_unlock(&thelock);
 }
