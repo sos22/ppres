@@ -20,6 +20,7 @@ import Util
 import Data.Bits
 import Data.Word
 import Data.List
+import Numeric
 
 import qualified Debug.Trace
 
@@ -126,8 +127,8 @@ runMemoryThread start tid acc =
 
 fetchMemory8 :: History -> Word64 -> Maybe Word64
 fetchMemory8 hist addr =
-    do bytes <- fetchMemory hist addr 8
-       return $ fromInteger $ foldr (\a b -> b * 256 + a) 0 $ map toInteger bytes
+    do xs <- fetchMemory hist addr 8
+       return $ fromInteger $ foldr (\a b -> b * 256 + a) 0 $ map toInteger xs
 
 evalExpressionInSnapshot :: Expression -> History -> [(Word64, Word64)] -> Maybe Word64
 evalExpressionInSnapshot (ExpressionRegister _ n) _ _ = Just n
@@ -537,9 +538,178 @@ getCriticalRips hist (CriticalSection interestingThread accesses) =
                    Right v -> v
     in fstRip:(concatMap ripsInAccess accesses'')
 
+data PatchFragment = PatchFragment { pf_literal :: [Word8],
+                                     pf_fixups :: [PatchFixup] } deriving Show
+emptyPatchFragment :: PatchFragment
+emptyPatchFragment = PatchFragment [] []
+
+data InstructionPrefixes = InstructionPrefixes { ip_rexw :: Bool,
+                                                 ip_rexr :: Bool,
+                                                 ip_rexx :: Bool,
+                                                 ip_rexb :: Bool,
+                                                 ip_lock :: Bool,
+                                                 ip_repne :: Bool,
+                                                 ip_repe :: Bool,
+                                                 ip_cs :: Bool,
+                                                 ip_ss :: Bool,
+                                                 ip_ds :: Bool,
+                                                 ip_es :: Bool,
+                                                 ip_fs :: Bool,
+                                                 ip_gs :: Bool,
+                                                 ip_opsize :: Bool,
+                                                 ip_addrsize :: Bool }
+
+noInstrPrefixes :: InstructionPrefixes
+noInstrPrefixes =
+    InstructionPrefixes False False False False False False False
+                        False False False False False False
+                        False False
+
+bytes :: History -> Word64 -> Word64 -> Either String [Word8]
+bytes snapshot addr size =
+    case fetchMemory snapshot addr size of
+      Nothing -> Left $ "error fetching from " ++ (showHex addr "")
+      Just x -> Right x
+
+byte :: History -> Word64 -> Either String Word8
+byte snapshot addr =
+    do r <- bytes snapshot addr 1
+       case r of
+         [v] -> return v
+         _ -> error "Huh? multiple bytes when we only asked for one"
+
+stripPrefixes :: History -> Word64 -> Either String (Word64, InstructionPrefixes, [Word8])
+stripPrefixes snapshot rip =
+    do b <- byte snapshot rip
+       case b of
+         0x26 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_es = True }, b:more_bytes)
+         0x2e -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_cs = True }, b:more_bytes)
+         0x36 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_ss = True }, b:more_bytes)
+         0x3e -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_ds = True }, b:more_bytes)
+         0x64 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_fs = True }, b:more_bytes)
+         0x65 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_gs = True }, b:more_bytes)
+         0x66 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_opsize = True }, b:more_bytes)
+         0x67 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_addrsize = True }, b:more_bytes)
+         0xF0 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_lock = True }, b:more_bytes)
+         0xf2 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_repne = True }, b:more_bytes)
+         0xf3 -> do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                    return (more_rip,more_prefixes { ip_repe = True }, b:more_bytes)
+         _ -> if b >= 0x40 && b < 0x50
+              then do (more_rip,more_prefixes,more_bytes) <- stripPrefixes snapshot (rip + 1)
+                      return (more_rip,
+                              more_prefixes { ip_rexw = b `testBit` 3,
+                                              ip_rexr = b `testBit` 2,
+                                              ip_rexx = b `testBit` 1,
+                                              ip_rexb = b `testBit` 0 },
+                              b:more_bytes)
+              else return (rip, noInstrPrefixes, [])
+
+bitSlice :: Bits a => a -> Int -> Int -> a
+bitSlice val start end = (val `shiftR` start) .&. ((1 `shiftL` (end - start + 1)) - 1)
+
+data PatchFixup = PatchFixup { pf_offset :: Word64, pf_target :: Word64 } deriving Show
+
+offsetFixup :: Word64 -> PatchFixup -> PatchFixup
+offsetFixup o p = p { pf_offset = o + pf_offset p }
+
+byteListToInteger :: [Word8] -> Word64
+byteListToInteger = foldr (\a b -> a + b * 256) 0 . map fromIntegral
+
+{- Parse up a modrm sequence enough to discover:
+
+   -- its length, including SIB and displacement if present.
+   -- any fixups which might be necessary when we move it due to rip-relative addressing
+ -}
+parseModrm :: History -> InstructionPrefixes -> Word64 -> Word64 -> Word64 -> Either String (Word64, [Word8], [PatchFixup], Word8)
+parseModrm snapshot _prefixes addr immediateBytes opcodeLen =
+    do modrm <- byte snapshot addr
+       let modfield = bitSlice modrm 6 7
+           regfield = bitSlice modrm 3 5
+           rmfield = bitSlice modrm 0 2
+           useSib = rmfield == 4 && modfield /= 3
+           modrmDispSize = case modfield of
+                             0 -> if rmfield == 5
+                                  then 4
+                                  else 0
+                             1 -> 1
+                             2 -> 4
+                             3 -> 0
+                             _ -> error "bitSlice not working"
+           ripRelative = rmfield == 5 && modfield == 0
+       if useSib
+        then do sib <- byte snapshot $ addr + 1
+                let _sibScale = bitSlice sib 6 7
+                    _sibIndex = bitSlice sib 3 5
+                    sibBase = bitSlice sib 0 2
+                    sibDispSize = if sibBase == 5
+                                  then case modfield of
+                                         0 -> 4
+                                         1 -> 1
+                                         2 -> 4
+                                         _ -> error "bitSlice not working"
+                                  else 0
+                if dt ("have sib " ++ (showHex sib "")) $ sibDispSize /= 0 && modrmDispSize /= 0 && sibDispSize /= modrmDispSize
+                 then Left $ "bad modrm decode at " ++ (showHex addr "") ++ ": modrm disp size doesn't match SIB disp size"
+                 else let dispSize = if sibDispSize /= 0
+                                     then sibDispSize
+                                     else modrmDispSize
+                      in do dispBytes <- bytes snapshot (addr + 2) dispSize
+                            return (addr + 2 + dispSize, modrm:sib:dispBytes,
+                                    if ripRelative
+                                    then [PatchFixup (opcodeLen + 2) (addr + 2 + immediateBytes + dispSize + byteListToInteger dispBytes)]
+                                    else [],
+                                    regfield)
+        else do dispBytes <- bytes snapshot (addr + 1) modrmDispSize
+                return (addr + 1 + modrmDispSize, modrm:dispBytes,
+                        if ripRelative
+                        then [PatchFixup (opcodeLen + 1) (addr + 1 + immediateBytes + modrmDispSize + byteListToInteger dispBytes)]
+                        else [],
+                        regfield)
+
+{- Concatenate two patch fragments -}
+prefixPatchFragment :: PatchFragment -> PatchFragment -> PatchFragment
+prefixPatchFragment fstFrag sndFrag =
+    PatchFragment { pf_literal = pf_literal fstFrag ++ pf_literal sndFrag,
+                    pf_fixups = pf_fixups fstFrag ++ (map (offsetFixup $ fromIntegral $ length $ pf_literal fstFrag) $ pf_fixups sndFrag) }
+
+ripListToPatchFragment :: History -> [Word64] -> Either String PatchFragment
+ripListToPatchFragment _ [] = Right emptyPatchFragment
+ripListToPatchFragment snapshot (rip:rips) =
+    do rest_pf <- ripListToPatchFragment snapshot rips
+       (after_prefix_rip, prefixes, prefix_string) <- stripPrefixes snapshot rip
+       hbyte <- byte snapshot after_prefix_rip
+       let opcodeLen = after_prefix_rip + 1 - rip
+           justModrm :: Either String PatchFragment
+           justModrm =
+               do (_, modrm_bytes, modrm_fixups, _) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 0 opcodeLen
+                  return $ prefixPatchFragment (PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes,
+                                                                pf_fixups = modrm_fixups }) rest_pf
+       case hbyte of
+         0x83 -> do (after_modrm_rip, modrm_bytes, modrm_fixups, extension) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 1 opcodeLen
+                    case extension of
+                      0 -> do imm8 <- byte snapshot after_modrm_rip
+                              return $ prefixPatchFragment (PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes ++ [imm8],
+                                                                            pf_fixups = modrm_fixups })
+                                                           rest_pf
+                      _ -> Left $ "unknown instruction 0x83 extension at " ++ (showHex rip "")
+         0x89 -> justModrm
+         0x8b -> justModrm
+         _ -> Left $ "unknown instruction at " ++ (showHex rip "")
+
 mkFixup :: History -> CriticalSection -> (String, String)
 mkFixup hist cs =
     dt ("crit rips -> " ++ (show $ getCriticalRips hist cs)) $
+    dt ("patch fragments -> " ++ (show $ ripListToPatchFragment hist $ getCriticalRips hist cs)) $
     ("", "")
 
 mkFixupLibrary :: History -> [CriticalSection] -> String
