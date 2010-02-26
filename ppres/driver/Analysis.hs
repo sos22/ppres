@@ -172,10 +172,10 @@ findNeighbouringHistories start =
          (ReplayStateFinished _, _) -> []
          (_, []) -> [] {- No runnable threads -> we are dead. -}
          (ReplayStateOkay (ReplayCoord now), [t]) | t == nThread ->
-               {- Only one runnable thread -> run it until it
-                  generates some event which might cause other threads
-                  to become runnable.  That pretty much means a system
-                  call. -}
+             {- Only one runnable thread -> run it until it
+                generates some event which might cause other threads
+                to become runnable.  That pretty much means a system
+                call. -}
              let giveUpCoord = Finite $ ReplayCoord $ now + 100
                  trc = snd $ deError $ trace start giveUpCoord
                  syscalls = filter isSyscall trc
@@ -188,6 +188,10 @@ findNeighbouringHistories start =
                                 ((ReplayCoord x):_) -> Finite $ ReplayCoord $ x + 1
              in dt ("run single-threaded to " ++ (show runToCoord))
                     [deError $ start `appendHistory` (HistoryRun $ runToCoord)]
+         (ReplayStateOkay (ReplayCoord now), [t]) | t /= nThread ->
+             {- Forced context switch: only one thread is runnable,
+                and it's not the current thread. -}
+             [deError $ start `appendHistory` (HistorySetThread t)]
          (ReplayStateOkay (ReplayCoord now), _) ->
              dt ("run multi-threaded from " ++ (show now) ++ ", " ++ (show threads'))
              [deError $ do sThread <- if tid == nThread
