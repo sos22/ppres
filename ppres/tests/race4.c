@@ -87,6 +87,7 @@ unwind_forcedunwind(void)
 }
 
 static pthread_barrier_t barrier;
+static unsigned cntr;
 
 static void *
 thread_start(void *ignore)
@@ -102,7 +103,6 @@ int
 main()
 {
 	pthread_t thread;
-	unsigned cntr;
 
 	pthread_barrier_init(&barrier, NULL, 2);
 	pthread_create(&thread, NULL, thread_start, NULL);
