@@ -160,7 +160,7 @@ histCoord hist = case histLastCoord hist of
 
 live_threads :: History -> [ThreadId]
 live_threads hist =
-    [a | (a, b) <- threadState hist, not (ts_dead b || ts_blocked b)]
+    [a | (a, b) <- threadState hist, not (ts_dead b)]
 
 findNeighbouringHistories :: History -> [History]
 findNeighbouringHistories start =
@@ -171,7 +171,7 @@ findNeighbouringHistories start =
          (ReplayStateFailed _ _ _ _, _) -> []
          (ReplayStateFinished _, _) -> []
          (_, []) -> [] {- No runnable threads -> we are dead. -}
-         (ReplayStateOkay (ReplayCoord now), [_]) ->
+         (ReplayStateOkay (ReplayCoord now), [t]) | t == nThread ->
                {- Only one runnable thread -> run it until it
                   generates some event which might cause other threads
                   to become runnable.  That pretty much means a system
@@ -186,8 +186,10 @@ findNeighbouringHistories start =
                  runToCoord = case syscallLocs of
                                 [] -> giveUpCoord
                                 ((ReplayCoord x):_) -> Finite $ ReplayCoord $ x + 1
-             in [deError $ start `appendHistory` (HistoryRun $ runToCoord)]
+             in dt ("run single-threaded to " ++ (show runToCoord))
+                    [deError $ start `appendHistory` (HistoryRun $ runToCoord)]
          (ReplayStateOkay (ReplayCoord now), _) ->
+             dt ("run multi-threaded from " ++ (show now) ++ ", " ++ (show threads'))
              [deError $ do sThread <- if tid == nThread
                                       then return start
                                       else start `appendHistory` (HistorySetThread tid)
@@ -200,7 +202,7 @@ data ExploreState a = ExploreState { es_white :: [a],
 pickNextItem :: Show a => ExploreState a -> Maybe (a, ExploreState a)
 pickNextItem state = case es_grey state of
                        [] -> Nothing
-                       (a:as) -> dt ("explore " ++ (show a)) $ Just (a, state { es_grey = as })
+                       (a:as) -> dt ("explore " ++ (show a)) $ Just (a, state { es_grey = as, es_white = a:(es_white state) })
 
 discoverItem :: Eq a => a -> ExploreState a -> ExploreState a
 discoverItem item state =

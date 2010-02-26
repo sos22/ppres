@@ -520,9 +520,11 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
 	if (!current_thread->in_monitor) {
 		current_thread->last_rip = rip;
 		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
-		if (use_footsteps)
+		if (use_footsteps) {
+			now.access_nr++;
 			event(EVENT_footstep, rip, rdx, rcx, rax, xmm3a,
 			      xmm0a);
+		}
 	}
 	check_fpu_control();
 }
@@ -549,13 +551,16 @@ syscall_event(VexGuestAMD64State *state)
 
 				load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 				if (expected == observed) {
+					now.access_nr++;
 					event(EVENT_blocking);
 					now.access_nr++;
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 					/* Hmm... */
-					if (state->guest_RAX != -EWOULDBLOCK)
+					if (state->guest_RAX != -EWOULDBLOCK) {
+						now.access_nr++;
 						event(EVENT_unblocked);
+					}
 					check_fpu_control();
 					return;
 				}
@@ -582,6 +587,7 @@ rdtsc_event(void)
 		return (((ULong)edx) << 32) | ((ULong)eax);
 	} else {
 		TRACE(RDTSC);
+		now.access_nr++;
 		event(EVENT_rdtsc);
 		check_fpu_control();
 		return current_thread->rdtsc_result;
@@ -690,6 +696,7 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 				ALWAYS_TRACE(CALLED);
 			send_string((const char *)arg_block[1]);
 		}
+		now.access_nr++;
 		event(EVENT_client_request, arg_block[0], arg_block[1]);
 		VG_(in_generated_code) = False;
 	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
@@ -922,6 +929,7 @@ validate_event(const struct record_header *rec,
 	const void *payload = rec + 1;
 	const unsigned long *args = event->args;
 
+	replay_assert_eq(reason_control(), rec->tid, current_thread->id);
 	switch (event->type) {
 	case EVENT_footstep: {
 		const struct footstep_record *fr = payload;
@@ -1278,7 +1286,7 @@ next_record(void)
 		rec = get_current_record(&logfile);
 	}
 
-	current_thread = get_thread_by_id(rec->tid);
+//	current_thread = get_thread_by_id(rec->tid);
 	tl_assert(current_thread != NULL);
 }
 
@@ -1422,7 +1430,7 @@ init(void)
 {
 	control_process_socket = ui_loop();
 
-	head_thread = VG_(malloc)("head thread", sizeof(*head_thread));
+	current_thread = head_thread = VG_(malloc)("head thread", sizeof(*head_thread));
 	VG_(memset)(head_thread, 0, sizeof(*head_thread));
 	head_thread->id = 1;
 	initialise_coroutine(&head_thread->coroutine, "head thread");

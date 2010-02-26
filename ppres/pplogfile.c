@@ -86,7 +86,7 @@ main(int argc, char *argv[])
 	if (!f)
 		err(1, "opening %s", argv[1]);
 	record_nr = 0;
-	epoch = 1;
+	epoch = 0;
 	while (1) {
 		payload = read_record(f, &h);
 		if (!payload) {
@@ -118,6 +118,7 @@ main(int argc, char *argv[])
 			       sr->syscall_nr, sr->syscall_res._val,
 			       sr->syscall_res._isError,
 			       sr->arg1, sr->arg2, sr->arg3);
+			epoch++;
 			break;
 		}
 		case RECORD_memory: {
@@ -130,6 +131,7 @@ main(int argc, char *argv[])
 		case RECORD_rdtsc: {
 			struct rdtsc_record *rr = payload;
 			printf("rdtsc: %lx\n", rr->stashed_tsc);
+			epoch++;
 			break;
 		}
 		case RECORD_mem_read: {
@@ -154,15 +156,18 @@ main(int argc, char *argv[])
 		}
 		case RECORD_thread_blocking: {
 			printf("thread blocking\n");
+			epoch++;
 			break;
 		}
 		case RECORD_thread_unblocked: {
 			printf("thread unblocked.\n");
+			epoch++;
 			break;
 		}
 		case RECORD_client: {
 			struct client_req_record *crr = payload;
 			printf("client request %lx\n", crr->flavour);
+			epoch++;
 			break;
 		}
 		case RECORD_signal: {
