@@ -50,3 +50,7 @@ pplogfile: pplogfile.c ppres.h
 	gcc pplogfile.c -o pplogfile -Wall -g
 
 .PHONY: driver/UI
+
+clean:
+	rm -f *.o *~ *.so pplogfile ppres_record ppres_replay2 races schedule core ppres_replay driver/*.o driver/*.hi driver/*~ driver/UI
+
