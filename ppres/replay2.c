@@ -550,6 +550,7 @@ syscall_event(VexGuestAMD64State *state)
 				load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 				if (expected == observed) {
 					event(EVENT_blocking);
+					now.access_nr++;
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 					/* Hmm... */
@@ -560,6 +561,7 @@ syscall_event(VexGuestAMD64State *state)
 				}
 			}
 		}
+		now.access_nr++;
 		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	}

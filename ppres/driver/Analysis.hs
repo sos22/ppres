@@ -167,10 +167,27 @@ findNeighbouringHistories start =
     let threads = live_threads start
         nThread = nextThread start
         threads' = nThread:(filter ((/=) nThread) threads)
-    in case replayState start of
-         ReplayStateFailed _ _ _ _ -> []
-         ReplayStateFinished _ -> []
-         ReplayStateOkay (ReplayCoord now) ->
+    in case (replayState start, threads) of
+         (ReplayStateFailed _ _ _ _, _) -> []
+         (ReplayStateFinished _, _) -> []
+         (_, []) -> [] {- No runnable threads -> we are dead. -}
+         (ReplayStateOkay (ReplayCoord now), [_]) ->
+               {- Only one runnable thread -> run it until it
+                  generates some event which might cause other threads
+                  to become runnable.  That pretty much means a system
+                  call. -}
+             let giveUpCoord = Finite $ ReplayCoord $ now + 100
+                 trc = snd $ deError $ trace start giveUpCoord
+                 syscalls = filter isSyscall trc
+                            where isSyscall x = case trc_trc x of
+                                                  TraceSyscall _ -> True
+                                                  _ -> False
+                 syscallLocs = map trc_loc syscalls
+                 runToCoord = case syscallLocs of
+                                [] -> giveUpCoord
+                                ((ReplayCoord x):_) -> Finite $ ReplayCoord $ x + 1
+             in [deError $ start `appendHistory` (HistoryRun $ runToCoord)]
+         (ReplayStateOkay (ReplayCoord now), _) ->
              [deError $ do sThread <- if tid == nThread
                                       then return start
                                       else start `appendHistory` (HistorySetThread tid)
