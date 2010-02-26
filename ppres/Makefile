@@ -6,7 +6,7 @@ VG_OBJS=../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a
 
 DEP_OBJS=$(RECORD_OBJS) $(REPLAY_OBJS) catch_pthread.o pplogfile.o
 
-VG_LDFLAGS=-Wall -fno-stack-protector -o ppres_record -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds -lgcc
+VG_LDFLAGS=-Wall -fno-stack-protector -static -Wl,-defsym,valt_load_address=0x38000000 -nodefaultlibs -nostartfiles -u _start -Wl,-T,../valt_load_address_amd64_linux.lds -lgcc
 AUDIT_LDFLAGS=-fPIC -nostdlib -shared -Wl,-u -Wl,la_version
 AUDIT_CFLAGS=-Wall -I/usr/local/include -I../include -shared -c -fPIC
 
@@ -24,10 +24,10 @@ include .depend
 	gcc -M -MT $@ -MT $(basename $<).o -MT Makefile $(CFLAGS) $< > $@
 
 ppres_record: $(RECORD_OBJS) $(VG_OBJS)
-	gcc  $(VG_LDFLAGS) $^
+	gcc  $(VG_LDFLAGS) $^ -o $@
 
 ppres_replay2: $(REPLAY_OBJS) $(VG_OBJS)
-	gcc  $(VG_LDFLAGS) $^
+	gcc  $(VG_LDFLAGS) $^ -o $@
 
 %.o: %.c
 	gcc $(CFLAGS) -c $<
