@@ -586,6 +586,16 @@ rdtsc_event(void)
 	}
 }
 
+static void
+signal_event(ThreadId tid, Int signal, Bool alt_stack,
+	     UWord err, UWord virtaddr, UWord rip)
+{
+	Bool in_gen = VG_(in_generated_code);
+	VG_(in_generated_code) = True;
+	event(EVENT_signal, rip, signal, err, virtaddr);
+	VG_(in_generated_code) = in_gen;
+}
+
 void
 load_event(const void *ptr, unsigned size, void *read_bytes,
 	   unsigned long rsp, unsigned long rip)
@@ -1550,6 +1560,7 @@ pre_clo_init(void)
 	VG_(details_description)((signed char *)"Replayer for PPRES");
 	VG_(basic_tool_funcs)(init, instrument_func, fini);
 	VG_(needs_client_requests)(client_request_event);
+	VG_(track_pre_deliver_signal)(signal_event);
 	VG_(needs_command_line_options)(process_cmd_line,
 					print_usage,
 					print_debug);
