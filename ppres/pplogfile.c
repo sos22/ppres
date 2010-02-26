@@ -114,7 +114,6 @@ main(int argc, char *argv[])
 		}
 		case RECORD_syscall: {
 			struct syscall_record *sr = payload;
-			epoch++;
 			printf("syscall: %d, res %ld (error %d), arg1 %lx, arg2 %lx, arg3 %lx\n",
 			       sr->syscall_nr, sr->syscall_res._val,
 			       sr->syscall_res._isError,
@@ -131,7 +130,6 @@ main(int argc, char *argv[])
 		case RECORD_rdtsc: {
 			struct rdtsc_record *rr = payload;
 			printf("rdtsc: %lx\n", rr->stashed_tsc);
-			epoch++;
 			break;
 		}
 		case RECORD_mem_read: {
@@ -139,6 +137,7 @@ main(int argc, char *argv[])
 			printf("mem read: 0x%lx", mrr->ptr);
 			dump_bytes(mrr + 1, h.size - sizeof(h) - sizeof(*mrr));
 			printf("\n");
+			epoch++;
 			break;
 		}
 		case RECORD_mem_write: {
@@ -146,6 +145,7 @@ main(int argc, char *argv[])
 			printf("mem write: 0x%lx", mwr->ptr);
 			dump_bytes(mwr + 1, h.size - sizeof(h) - sizeof(*mwr));
 			printf("\n");
+			epoch++;
 			break;
 		}
 		case RECORD_new_thread: {
@@ -153,24 +153,20 @@ main(int argc, char *argv[])
 			break;
 		}
 		case RECORD_thread_blocking: {
-			epoch++;
 			printf("thread blocking\n");
 			break;
 		}
 		case RECORD_thread_unblocked: {
-			epoch++;
 			printf("thread unblocked.\n");
 			break;
 		}
 		case RECORD_client: {
 			struct client_req_record *crr = payload;
-			epoch++;
 			printf("client request %lx\n", crr->flavour);
 			break;
 		}
 		case RECORD_signal: {
 			struct signal_record *sr = payload;
-			epoch++;
 			printf("signal %d at rip %lx, err %lx, addr %lx\n",
 			       sr->signo, sr->rip, sr->err, sr->virtaddr);
 			break;
