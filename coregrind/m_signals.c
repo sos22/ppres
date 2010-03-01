@@ -2418,7 +2418,7 @@ void sync_signalhandler ( Int sigNo,
 static void sigvgkill_handler(int signo, vki_siginfo_t *si,
                                          struct vki_ucontext *uc)
 {
-   ThreadId     tid = VG_(running_tid);
+   ThreadId     tid = VG_(lwpid_to_vgtid)(VG_(gettid)());
    ThreadStatus at_signal = VG_(threads)[tid].status;
 
    if (VG_(clo_trace_signals))
