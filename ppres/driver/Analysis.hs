@@ -310,19 +310,32 @@ exhaustiveExplore start advance =
                   in exploreState next_state
     in es_white $ exploreState startState
 
+exploreTo :: (Eq a, Show a) => a -> (a -> [a]) -> (a -> Bool) -> Maybe a
+exploreTo start advance pred =
+    let startState = ExploreState [] [start]
+        exploreState state =
+            case pickNextItem state of
+              Nothing -> Nothing
+              Just (n_item, n_state) ->
+                  let new_greys = advance n_item
+                      next_state = foldr discoverItem n_state new_greys
+                  in if pred n_item
+                     then Just n_item
+                     else exploreState next_state
+    in exploreState startState
+
+{-
 allReachableHistories :: History -> [History]
 allReachableHistories s = exhaustiveExplore s findNeighbouringHistories
-
-allSucceedingHistories :: History -> [History]
-allSucceedingHistories = filter succeeds . allReachableHistories
-                         where succeeds x = case replayState x of
-                                              ReplayStateFinished _ -> True
-                                              _ -> False
+-}
 
 enumerateHistories :: History -> Maybe History
-enumerateHistories start = case allSucceedingHistories start of
-                             [] -> Nothing
-                             (x:_) -> Just x
+enumerateHistories start =
+    exploreTo start findNeighbouringHistories succeeds
+    where succeeds x = case replayState x of
+                         ReplayStateFinished _ -> True
+                         _ -> False
+
 
 --enumerateHistories start = enumerateAllEpochs [start]
 {-
