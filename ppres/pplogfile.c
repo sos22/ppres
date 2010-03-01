@@ -156,12 +156,10 @@ main(int argc, char *argv[])
 		}
 		case RECORD_thread_blocking: {
 			printf("thread blocking\n");
-			epoch++;
 			break;
 		}
 		case RECORD_thread_unblocked: {
 			printf("thread unblocked.\n");
-			epoch++;
 			break;
 		}
 		case RECORD_client: {

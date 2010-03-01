@@ -552,15 +552,8 @@ syscall_event(VexGuestAMD64State *state)
 				load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 				if (expected == observed) {
 					now.access_nr++;
-					event(EVENT_blocking);
-					now.access_nr++;
 					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
-					/* Hmm... */
-					if (state->guest_RAX != -EWOULDBLOCK) {
-						now.access_nr++;
-						event(EVENT_unblocked);
-					}
 					check_fpu_control();
 					return;
 				}
@@ -600,6 +593,7 @@ signal_event(ThreadId tid, Int signal, Bool alt_stack,
 {
 	Bool in_gen = VG_(in_generated_code);
 	VG_(in_generated_code) = True;
+	TRACE(SIGNAL, rip, signal, err, virtaddr);
 	event(EVENT_signal, rip, signal, err, virtaddr);
 	VG_(in_generated_code) = in_gen;
 }
@@ -1067,14 +1061,6 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_control(), args[0], crr->flavour);
 		return;
 	}
-	case EVENT_blocking: {
-		replay_assert_eq(reason_control(), rec->cls, RECORD_thread_blocking);
-		return;
-	}
-	case EVENT_unblocked: {
-		replay_assert_eq(reason_control(), rec->cls, RECORD_thread_unblocked);
-		return;
-	}
 	case EVENT_signal: {
 		const struct signal_record *sr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_signal);
@@ -1277,6 +1263,8 @@ next_record(void)
 	if (!rec)
 		return;
 	while (rec->cls == RECORD_new_thread ||
+	       rec->cls == RECORD_thread_blocking ||
+	       rec->cls == RECORD_thread_unblocked ||
 	       (!use_footsteps &&
 		rec->cls == RECORD_footstep) ||
 	       (!use_memory &&

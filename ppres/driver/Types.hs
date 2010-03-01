@@ -57,6 +57,10 @@ data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                 | TraceCalled { trc_called :: String }
                 | TraceEnterMonitor
                 | TraceExitMonitor
+                | TraceSignal { trc_rip :: Word64,
+                                trc_signr :: Int,
+                                trc_err :: Word64,
+                                trc_va :: Word64 }
 
 instance Show TraceEntry where
     show (TraceFootstep rip _ _ _ ) = "footstep " ++ (showHex rip "")
@@ -72,6 +76,7 @@ instance Show TraceEntry where
     show (TraceCalled c) = "called " ++ c
     show TraceEnterMonitor = "enter_monitor"
     show TraceExitMonitor = "exit_monitor"
+    show (TraceSignal rip sig _ va) = "signal " ++ (show sig) ++ "@" ++ (showHex va "") ++ ", rip = " ++ (showHex rip "")
 
 instance Read TraceEntry where
     readsPrec _ x =

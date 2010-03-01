@@ -135,6 +135,8 @@ expressionParser =
                   addr <- parseInteger
                   return $ UIVGIntermediate hist (fromInteger addr),
                do keyword "History"
+                  parseTopped $ parseAccessNr {- Don't actually care about these, but need to get them out of the way. -}
+                  parseInteger
                   e <- between (P.reservedOp command_lexer "[") (P.reservedOp command_lexer "]") $ parseHistoryEntry `sepBy` (P.reservedOp command_lexer ",")
                   return $ UILiteral $ UIValueSnapshot $ mkHistory e,
                twoExprArgParser "pair" UIPair,

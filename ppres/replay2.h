@@ -47,6 +47,7 @@ struct response_message {
 #define ANCILLARY_REPLAY_FINISHED 14
 #define ANCILLARY_NEXT_THREAD 15
 #define ANCILLARY_REG_BINDING 16
+#define ANCILLARY_TRACE_SIGNAL 17
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
@@ -268,8 +269,6 @@ enum event_type { EVENT_nothing = 0xf001,
 		  EVENT_load,
 		  EVENT_store,
 		  EVENT_client_request,
-		  EVENT_blocking,
-		  EVENT_unblocked,
 		  EVENT_signal };
 
 struct client_event_record {

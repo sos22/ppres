@@ -121,6 +121,10 @@ ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
                       _ -> error "mangled trace", tail rs)
               8 -> (TraceEnterMonitor, rs)
               9 -> (TraceExitMonitor, rs)
+              17 -> (TraceSignal { trc_rip = other_args!!0,
+                                   trc_signr = fromIntegral $ other_args!!1,
+                                   trc_err = other_args!!2,
+                                   trc_va = other_args!!3 }, rs)
               _ -> error $ "bad trace ancillary code " ++ (show code)
     in (TraceRecord { trc_trc = entry, trc_loc = loc }):(ancillaryDataToTrace rest)
          
