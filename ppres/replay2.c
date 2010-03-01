@@ -475,7 +475,7 @@ run_thread(struct client_event_record *cer)
 	client_event = cer;
 	VG_(running_tid) = current_thread->id;
 
-	if (want_to_interpret && !current_thread->in_monitor) {
+	if (want_to_interpret) {
 		VG_(interpret) = interpret_log_control_flow;
 	} else {
 		VG_(interpret) = NULL;
@@ -592,6 +592,11 @@ signal_event(ThreadId tid, Int signal, Bool alt_stack,
 	     UWord err, UWord virtaddr, UWord rip)
 {
 	Bool in_gen = VG_(in_generated_code);
+
+	load_fpu_control(); /* Signal delivery has a habit of screwing
+			     * with FPU control flags.  Put them
+			     * back. */
+
 	VG_(in_generated_code) = True;
 	TRACE(SIGNAL, rip, signal, err, virtaddr);
 	event(EVENT_signal, rip, signal, err, virtaddr);
@@ -697,13 +702,9 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		if ((arg_block[0] & 0xffff) == 0) {
 			TRACE(ENTER_MONITOR);
 			current_thread->in_monitor = True;
-			if (want_to_interpret)
-				VG_(interpret) = NULL;
 		} else {
 			TRACE(EXIT_MONITOR);
 			current_thread->in_monitor = False;
-			if (want_to_interpret)
-				VG_(interpret) = interpret_log_control_flow;
 		}
 	}
 	check_fpu_control();
