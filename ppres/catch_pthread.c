@@ -7,7 +7,8 @@ audit_this_function(const char *name)
 {
 	if (!strcmp(name, "pthread_mutex_lock") ||
 	    !strcmp(name, "pthread_mutex_unlock") ||
-	    !strcmp(name, "pthread_create"))
+	    !strcmp(name, "pthread_create") ||
+	    !strcmp(name, "pthread_barrier_wait"))
 		return 1;
 	else
 		return 0;
