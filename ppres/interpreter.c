@@ -1292,7 +1292,6 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		initialise_is_for_vex_state(istate, &ts->arch.vex);
 	}
 	addr = istate->registers[REG_RIP].v;
-	tl_assert(addr != 0);
 
 	/* This is all ripped from VG_(translate) and
 	 * LibVEX_Translate(). */
