@@ -1,7 +1,7 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History, HistoryEntry(..),
                mkHistory, histLastCoord, controlTraceToWorker,
-               traceToWorker) where
+               traceToWorker, runThread) where
 
 import Control.Monad
 
@@ -16,6 +16,11 @@ data HistoryEntry = HistoryRun !(Topped AccessNr)
    the number of entries in the history.  This means we can do a quick
    out in historyPrefixOf in many useful cases. -}
 data History = History (Topped AccessNr) Int (DList HistoryEntry) deriving (Show, Eq, Read)
+
+runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
+runThread hist tid acc =
+    do h <- appendHistory hist $ HistorySetThread tid
+       appendHistory h $ HistoryRun acc
 
 histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x

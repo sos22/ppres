@@ -150,13 +150,13 @@ findNeighbouringHistories start =
          (ReplayStateFailed _ _ _ _, _) -> []
          (ReplayStateFinished _, _) -> tlog ("success " ++ (show start)) []
          (_, []) -> [] {- No runnable threads -> we are dead. -}
-         (ReplayStateOkay now, [t]) | t == nThread ->
+         (ReplayStateOkay now, [t]) ->
              {- Only one runnable thread -> run it until it
                 generates some event which might cause other threads
                 to become runnable.  That pretty much means a system
                 call. -}
              let giveUpCoord = Finite $ now + 100
-                 trc = deError $ traceTo start (deError $ start `appendHistory` (HistoryRun giveUpCoord))
+                 trc = deError $ traceTo start (deError $ runThread start t giveUpCoord)
                  syscalls = filter isSyscall trc
                             where isSyscall x = case trc_trc x of
                                                   TraceSyscall _ -> True
@@ -166,12 +166,8 @@ findNeighbouringHistories start =
                                 [] -> giveUpCoord
                                 (x:_) -> Finite $ x + 1
              in dt ("run single-threaded to " ++ (show runToCoord))
-                    [deError $ start `appendHistory` (HistoryRun $ runToCoord)]
+                    [deError $ runThread start t runToCoord]
 
-         (ReplayStateOkay _, [t]) | t /= nThread ->
-             {- Forced context switch: only one thread is runnable,
-                and it's not the current thread. -}
-             [deError $ start `appendHistory` (HistorySetThread t)]
          (ReplayStateOkay now, _) ->
 
              {- We have several threads to choose from.  The simplest
@@ -189,9 +185,8 @@ findNeighbouringHistories start =
                 interesting. -}
              let trace_for_thread horizon t =
                      let (postTraceHist, collectedTrace) =
-                             deError $ do s <- appendHistory start $ HistorySetThread t
-                                          e <- appendHistory s $ HistoryRun $ Finite horizon
-                                          trc <- traceTo s e
+                             deError $ do e <- runThread start t (Finite horizon)
+                                          trc <- traceTo start e
                                           return (e, trc)
                          (haveSyscall, stoppedTrace) = stop_at_syscall collectedTrace
                          filteredTrace = filter (isInteresting . trc_trc) stoppedTrace
@@ -260,11 +255,8 @@ findNeighbouringHistories start =
                  targets = real_targets (now + 1000)
                            -- [(t, ReplayCoord $ now + 1) | t <- threads']
              in
-               [deError $ do sThread <- if tid == nThread
-                                        then return start
-                                        else start `appendHistory` (HistorySetThread tid)
-                             sThread `appendHistory` (HistoryRun $ Finite $ targ) |
-                (tid, targ) <- targets]
+               [deError $ runThread start tid $ Finite targ
+                | (tid, targ) <- targets]
 
 data ExploreState a = ExploreState { es_white :: [a],
                                      es_grey :: [a] }
