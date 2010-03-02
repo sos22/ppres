@@ -47,19 +47,21 @@ keyword x = do v <- P.identifier command_lexer
 tchoice :: [Parser a] -> Parser a
 tchoice = choice . (map Text.Parsec.try)
 
+trivParsec :: Read a => Parser a
+trivParsec = do inp <- getInput
+                case reads inp of
+                  [] -> fail "no parse"
+                  [(x,rest)] -> do setInput rest
+                                   return x
+                  _ -> fail "ambiguous parse"
+                    
 expressionParser :: Parser UIExpression
 expressionParser =
     let 
         parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
         parseAccessNr = keyword "AccessNr" >> parseInteger
         parseReplayCoord = liftM AccessNr parseAccessNr
-        parseThreadId = keyword "ThreadId" >> liftM ThreadId parseInteger
         parseInteger = P.integer command_lexer
-        parseHistoryEntry = tchoice [do keyword "HistoryRun"
-                                        liftM HistoryRun $ parseTopped parseReplayCoord,
-                                     do keyword "HistorySetThread"
-                                        tid <- parseThreadId
-                                        return $ HistorySetThread tid]
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
@@ -67,11 +69,8 @@ expressionParser =
                   hist <- expressionParser
                   n <- parseTopped parseReplayCoord
                   return $ UITruncHist hist n,
-               do keyword "History"
-                  parseTopped $ parseAccessNr {- Don't actually care about these, but need to get them out of the way. -}
-                  parseInteger
-                  e <- between (P.reservedOp command_lexer "[") (P.reservedOp command_lexer "]") $ parseHistoryEntry `sepBy` (P.reservedOp command_lexer ",")
-                  return $ UILiteral $ UIValueSnapshot $ mkHistory e,
+               do h <- trivParsec
+                  return $ UILiteral $ UIValueSnapshot $ h,
                do keyword "f"
                   f <- expressionParser
                   a <- expressionParser
