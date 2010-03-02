@@ -430,6 +430,8 @@ expr_binop(const struct expression *e1, const struct expression *e2, unsigned op
 			return expr_const(e1->u.cnst.val ^ e2->u.cnst.val);
 		case EXPR_EQ:
 			return expr_const(e1->u.cnst.val == e2->u.cnst.val);
+		case EXPR_SHRL:
+			return expr_const(e1->u.cnst.val >> e2->u.cnst.val);
 		default:
 			break;
 		}
