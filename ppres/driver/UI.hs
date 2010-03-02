@@ -200,20 +200,11 @@ defootstep = filter (not . isFootstep . trc_trc)
              where isFootstep (TraceFootstep _ _ _ _) = True
                    isFootstep _ = False
 
-uiIndex :: UIValue -> UIValue -> UIValue
+uiIndex :: [UIValue] -> Int -> UIValue
 uiIndex lst idx =
-    {- Can't use normal fromUI on lst, because don't want to convert
-       the members of the list. -}
-    case fromUI idx of
-      Left e -> UIValueError e
-      Right idx' ->
-          let idx'' = fromInteger idx'
-          in case lst of
-               (UIValueList lst') ->
-                   if idx'' >= length lst'
-                   then UIValueError $ "index " ++ (show idx') ++ " greater than length of list " ++ (show $ length lst')
-                   else lst'!!idx''
-               e -> UIValueError $ "wanted a list, got " ++ (show e)
+    if idx >= length lst
+    then UIValueError $ "index " ++ (show idx) ++ " greater than length of list " ++ (show $ length lst)
+    else lst!!idx
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =

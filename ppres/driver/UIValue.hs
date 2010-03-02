@@ -216,3 +216,11 @@ instance AvailInUI UIValue where
                  UIValueError e -> Left e
                  _ -> Right x
 
+instance AvailInUI Int where
+    toUI = UIValueInteger . toInteger
+    fromUI (UIValueInteger v) =
+        if v < toInteger (minBound :: Int) ||
+           v > toInteger (maxBound :: Int)
+        then Left $ (show v) ++ " is out of range for an Int"
+        else Right $ fromInteger v
+    fromUI e = coerceError "Int" e
