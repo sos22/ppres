@@ -229,7 +229,8 @@ initialWorldState fd =
                                             ("fetchmem", mkUIFunction3 fetchMemory),
                                             ("map", mkUIFunction2 (map :: (UIValue->UIValue) -> [UIValue] -> [UIValue])),
                                             ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)])),
-                                            ("setthread", mkUIFunction2 setThread)
+                                            ("setthread", mkUIFunction2 setThread),
+                                            ("lastcommunication", mkUIFunction3 lastCommunication)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

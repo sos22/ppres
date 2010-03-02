@@ -233,3 +233,7 @@ instance AvailInUI ThreadId where
     toUI = UIValueThreadId
     fromUI (UIValueThreadId tid) = Right tid
     fromUI e = coerceError "ThreadId" e
+
+instance AvailInUI AccessNr where
+    toUI = toUI . ReplayCoord
+    fromUI = fmap rc_access . fromUI

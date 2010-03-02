@@ -8,7 +8,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 evalExpressionInSnapshot, evalExpressionWithStore,
 
                 enumerateHistories, getRacingExpressions,
-                criticalSections, mkFixupLibrary) where
+                criticalSections, mkFixupLibrary, lastCommunication) where
 
 import Types
 import WorkerCache
@@ -657,3 +657,84 @@ mkFixupLibrary :: History -> [CriticalSection] -> Either String String
 mkFixupLibrary hist crit_sects =
     do fixups <- mkFixups hist crit_sects ["id_" ++ (show x) | x <- [(0::Integer)..]]
        return $ "#include \"fixup_lib_const.h\"\n" ++ (concat fixups)
+
+{- Given a history and a pair of threads, A and B, work backwards
+   through the history and discover the last point at which A might
+   have influenced B.  A potential influence is defined to be wherever
+   A issues a store which is later read by B.  This is supposed to be
+   called if you discover that thread B has crashed, and you suspect
+   it did so because A did something to some shared location, and you
+   want to narrow down the range of A's potential critical section. -}
+{- Note that we care about the access being the last store in A, not
+   the last read in B.  There might be a later read in B which is
+   satisfied by an earlier store in A, and that's okay.  If thread B
+   consumes a store multiple times before the end of the trace, we
+   return the *last* consumption. -}
+{- The return value is a pair of (access in A, access in B). -}
+{- The implementation involves truncating the history to a horizon,
+   tracing from that horizon forwards, and then walking the horizon
+   backwards until we find something interesting. -}
+lastCommunication :: History -> ThreadId -> ThreadId -> Either String (Maybe (AccessNr, AccessNr))
+lastCommunication hist threadA threadB =
+    let endOfHistory = case replayState hist of
+                         ReplayStateOkay x -> x
+                         ReplayStateFinished x -> x
+                         ReplayStateFailed _ _ x _ -> x
+
+        {- Get a memory trace for the two threads by running the
+           history from horizon right to the end.  The trace includes
+           every store by A and every load by B. -}
+        traceFromHorizon :: AccessNr -> Either String [TraceRecord]
+        traceFromHorizon horizon =
+            let isInteresting trc =
+                    if trc_tid trc == threadA
+                    then case trc_trc trc of
+                           TraceStore _ _ _ _ -> True
+                           _ -> False
+                    else if trc_tid trc == threadB
+                         then case trc_trc trc of
+                                TraceLoad _ _ _ _ -> True
+                                _ -> False
+                         else False
+            in do start <- truncateHistory hist $ Finite $ ReplayCoord horizon
+                  trc <- traceTo start hist
+                  return $ filter isInteresting trc
+        
+        {- Find the last thing in the list which satisfies a
+           predicate, or Nothing if there is no such thing. -}
+        findLast :: (a -> Bool) -> [a] -> Maybe a
+        findLast _ [] = Nothing
+        findLast f (a:as) = case findLast f as of
+                              Nothing -> if f a
+                                         then Just a
+                                         else Nothing
+                              x -> x
+
+        findCommunicatingPairs :: [TraceRecord] -> [(AccessNr, AccessNr)]
+        findCommunicatingPairs [] = []
+        findCommunicatingPairs (trc:trcs) =
+            let rest = findCommunicatingPairs trcs
+                isConflictingLoad ptr (TraceLoad _ _ ptr' _) = ptr == ptr'
+                isConflictingLoad _ _ = False
+            in case trc_trc trc of
+                 TraceStore _ _ ptr _ ->
+                     case findLast (isConflictingLoad ptr . trc_trc) trcs of
+                       Nothing -> rest
+                       Just conflictingLoad ->
+                           (rc_access $ trc_loc trc, rc_access $ trc_loc conflictingLoad):rest
+                 _ -> rest
+              
+        pairsAtHorizon :: AccessNr -> Either String [(AccessNr, AccessNr)]
+        pairsAtHorizon = fmap findCommunicatingPairs . traceFromHorizon
+
+        worker :: AccessNr -> Either String (Maybe (AccessNr, AccessNr))
+        worker horizon =
+            dt ("working at horizon " ++ (show horizon)) $
+            do pairs <- pairsAtHorizon horizon
+               case pairs of
+                 [] -> if horizon < 10
+                       then return Nothing
+                       else worker $ horizon - 10
+                 _ -> return $ Just $ last pairs
+
+    in worker $ rc_access endOfHistory
