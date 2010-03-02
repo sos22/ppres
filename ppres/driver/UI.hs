@@ -22,12 +22,8 @@ import History
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
 data UIExpression = UIDummyFunction
-                  | UIRun UIExpression (Topped AccessNr)
-                  | UITrace UIExpression (Topped AccessNr)
-                  | UITraceAddress UIExpression UIExpression (Topped AccessNr)
                   | UIDir
                   | UIVarName VariableName
-                  | UIControlTrace UIExpression (Topped AccessNr)
                   | UITruncHist UIExpression (Topped AccessNr)
                   | UILiteral UIValue
                   | UIFunApp UIExpression UIExpression
@@ -67,23 +63,6 @@ expressionParser =
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
-               do keyword "run"
-                  snap <- expressionParser
-                  cntr <- parseTopped parseReplayCoord
-                  return $ UIRun snap cntr,
-               do keyword "trace"
-                  snap <- expressionParser
-                  cntr <- parseTopped parseReplayCoord
-                  return $ UITrace snap cntr,
-               do keyword "control_trace"
-                  snap <- expressionParser
-                  cntr <- parseTopped parseReplayCoord
-                  return $ UIControlTrace snap cntr,
-               do keyword "tracem"
-                  snap <- expressionParser
-                  addr <- expressionParser
-                  to <- parseTopped parseReplayCoord
-                  return $ UITraceAddress snap addr to,
                do keyword "trunc"
                   hist <- expressionParser
                   n <- parseTopped parseReplayCoord
@@ -157,15 +136,6 @@ evalExpression ws f =
           withSnapshot ws hist $ \s -> truncateHistory s n
       UIDir ->
           uiValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
-      UIRun name cntr ->
-          withSnapshot ws name $ \s -> run s cntr
-      UITrace name cntr ->
-          withSnapshot ws name $ \s -> trace s cntr
-      UITraceAddress name addr to ->
-          toUI $ do addr' <- fromUI $ evalExpression ws addr
-                    s <- fromUI $ evalExpression ws name
-                    return $ traceAddress s addr' to
-      UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
       UILiteral x -> x
       UIFunApp ff a ->
           evalExpression ws ff `uiApply` evalExpression ws a
@@ -229,7 +199,6 @@ initialWorldState fd =
                                             ("fetchmem", mkUIFunction3 fetchMemory),
                                             ("map", mkUIFunction2 (map :: (UIValue->UIValue) -> [UIValue] -> [UIValue])),
                                             ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)])),
-                                            ("setthread", mkUIFunction2 setThread),
                                             ("lastcommunication", mkUIFunction3 lastCommunication)
                                            ] }
 

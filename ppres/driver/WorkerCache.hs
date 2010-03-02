@@ -3,11 +3,11 @@
    functional API is expressed entirely in terms of Histories, and we
    are responsible for mapping them into Workers as and when
    necessary. -}
-module WorkerCache(initWorkerCache, destroyWorkerCache, run,
-                   trace, traceAddress,
-                   threadState, replayState, controlTrace,
+module WorkerCache(initWorkerCache, destroyWorkerCache, 
+                   trace, 
+                   threadState, replayState, 
                    fetchMemory, vgIntermediate, nextThread,
-                   setThread, controlTraceTo, getRegisters,
+                   controlTraceTo, getRegisters,
                    getRipAtAccess, traceTo) where
 
 import Data.Word
@@ -20,7 +20,6 @@ import System.IO.Unsafe
 import Types
 import Worker
 import History
-import Util
 
 --import qualified Debug.Trace
 dt :: String -> a -> a
@@ -208,17 +207,10 @@ traceCmd he start w =
                                      killWorker worker
                                      return (newHist, r)
 
-run :: History -> Topped AccessNr -> Either String History
-run start cntr = appendHistory start $ HistoryRun cntr
-
 trace :: History -> Topped AccessNr -> Either String (History, [TraceRecord])
 trace start cntr =
     dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
-
-traceAddress :: History -> Word64 -> Topped AccessNr -> Either String (History, [TraceRecord])
-traceAddress start addr to =
-    traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr to
 
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
@@ -233,10 +225,6 @@ threadState = queryCmd threadStateWorker
 replayState :: History -> ReplayState
 replayState = queryCmd replayStateWorker
 
-controlTrace :: History -> Topped AccessNr -> Either String [Expression]
-controlTrace hist cntr =
-    fmap snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
-
 fetchMemory :: History -> Word64 -> Word64 -> Maybe [Word8]
 fetchMemory hist addr size =
     queryCmd (\worker -> fetchMemoryWorker worker addr size) hist
@@ -247,9 +235,6 @@ vgIntermediate hist addr =
 
 nextThread :: History -> ThreadId
 nextThread = queryCmd nextThreadWorker
-
-setThread :: History -> ThreadId -> History
-setThread hist tid = deError $ appendHistory hist $ HistorySetThread tid
 
 controlTraceTo :: History -> History -> Either String [Expression]
 controlTraceTo start end =

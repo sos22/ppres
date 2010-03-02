@@ -1,5 +1,5 @@
 module Worker(killWorker, traceWorker,
-              takeSnapshot, runWorker, traceAddressWorker, threadStateWorker,
+              takeSnapshot, runWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker,
               getRegistersWorker)
@@ -44,9 +44,6 @@ runPacket x = ControlPacket 0x1236 $ fromAN x
 
 tracePacket :: Topped AccessNr -> ControlPacket
 tracePacket x = ControlPacket 0x1237 $ fromAN x
-
-traceAddressPacket :: Word64 -> Topped AccessNr -> ControlPacket
-traceAddressPacket addr to = ControlPacket 0x123a $ addr:(fromAN to)
 
 threadStatePacket :: ControlPacket
 threadStatePacket = ControlPacket 0x123b []
@@ -137,9 +134,6 @@ traceCmd worker pkt =
 
 traceWorker :: Worker -> Topped AccessNr -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
-
-traceAddressWorker :: Worker -> Word64 -> Topped AccessNr -> IO [TraceRecord]
-traceAddressWorker worker addr to = traceCmd worker $ traceAddressPacket addr to
 
 takeSnapshot :: Worker -> IO (Maybe Worker)
 takeSnapshot worker =
