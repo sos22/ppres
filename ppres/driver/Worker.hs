@@ -67,7 +67,7 @@ nextThreadPacket :: ControlPacket
 nextThreadPacket = ControlPacket 0x1240 []
 
 setThreadPacket :: ThreadId -> ControlPacket
-setThreadPacket tid = ControlPacket 0x1241 [fromInteger tid]
+setThreadPacket (ThreadId tid) = ControlPacket 0x1241 [fromInteger tid]
 
 getRegistersPacket :: ControlPacket
 getRegistersPacket = ControlPacket 0x1242 []
@@ -153,7 +153,7 @@ threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
         parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_blocked, last_access, last_rip]) <- consume
-                       return (fromIntegral $ tid,
+                       return (ThreadId $ fromIntegral tid,
                                ThreadState (is_dead /= 0)
                                            (is_blocked /= 0)
                                            (ReplayCoord (AccessNr $ fromIntegral last_access))
@@ -168,7 +168,7 @@ threadStateWorker worker =
 parseReplayState :: [ResponseData] -> ReplayState
 parseReplayState [ResponseDataAncillary 10 [access_nr]] = ReplayStateOkay $ ReplayCoord (AccessNr $ fromIntegral access_nr)
 parseReplayState (ResponseDataAncillary 11 [x, tid, access_nr]:(ResponseDataString s):items) =
-    ReplayStateFailed s (fromIntegral tid) (ReplayCoord (AccessNr $ fromIntegral access_nr)) $
+    ReplayStateFailed s (ThreadId $ fromIntegral tid) (ReplayCoord (AccessNr $ fromIntegral access_nr)) $
                       case x of
                         0 -> case items of
                                [] -> FailureReasonControl
@@ -286,9 +286,9 @@ parseExpression =
          [2, sz, acc, tid] ->
              do ptr <- parseExpression
                 val <- parseExpression
-                return $ ExpressionLoad (fromIntegral tid) (fromIntegral sz) (ReplayCoord $ fromIntegral acc) ptr val
+                return $ ExpressionLoad (ThreadId $ fromIntegral tid) (fromIntegral sz) (ReplayCoord $ fromIntegral acc) ptr val
          [3, acc, tid] -> do val <- parseExpression
-                             return $ ExpressionStore (fromIntegral tid) (ReplayCoord $ fromIntegral acc) val
+                             return $ ExpressionStore (ThreadId $ fromIntegral tid) (ReplayCoord $ fromIntegral acc) val
          [4, val] -> return $ ExpressionImported val
          [r] | isBinop r -> do a1 <- parseExpression
                                a2 <- parseExpression
@@ -322,7 +322,7 @@ vgIntermediateWorker worker addr =
 nextThreadWorker :: Worker -> IO ThreadId
 nextThreadWorker worker =
     do (ResponsePacket True [ResponseDataAncillary 15 [tid]]) <- sendWorkerCommand worker nextThreadPacket
-       return $ fromIntegral tid
+       return $ ThreadId $ fromIntegral tid
 
 setThreadWorker :: Worker -> ThreadId -> IO ()
 setThreadWorker worker tid =

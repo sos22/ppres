@@ -58,7 +58,7 @@ expressionParser =
         parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
         parseAccessNr = keyword "AccessNr" >> liftM AccessNr parseInteger
         parseReplayCoord = liftM ReplayCoord parseAccessNr
-        parseThreadId = parseInteger
+        parseThreadId = keyword "ThreadId" >> liftM ThreadId parseInteger
         parseInteger = P.integer command_lexer
         parseHistoryEntry = tchoice [do keyword "HistoryRun"
                                         liftM HistoryRun $ parseTopped parseReplayCoord,
@@ -102,6 +102,9 @@ expressionParser =
                   f <- expressionParser
                   a <- expressionParser
                   return $ UIFunApp f a,
+               do char '~'
+                  tid <- parseInteger
+                  return $ UILiteral $ UIValueThreadId $ ThreadId tid,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident,
                do v <- parseInteger

@@ -9,7 +9,7 @@ import Control.Monad.Fix
 
 import Util
 
-type ThreadId = Integer
+newtype ThreadId = ThreadId Integer deriving (Read, Show, Eq)
 type VariableName = String
 
 newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord, Read)
@@ -291,6 +291,9 @@ instance Forcable x => Forcable (Topped x) where
 
 instance Forcable AccessNr where
     force (AccessNr x) = force x
+
+instance Forcable ThreadId where
+    force (ThreadId x) = force x
 
 instance Forcable Integer where
     force = seq

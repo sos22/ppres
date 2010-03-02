@@ -27,6 +27,7 @@ data UIValue = UIValueNull
              | UIValueRegisterName RegisterName
              | UIValueWord Word64
              | UIValueFunction (UIValue -> UIValue)
+             | UIValueThreadId ThreadId
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -52,6 +53,7 @@ instance Show UIValue where
     show (UIValueRegisterName x) = show x
     show (UIValueWord x) = "WORD 0x" ++ (showHex x "")
     show (UIValueFunction _) = "FUNC"
+    show (UIValueThreadId (ThreadId t)) = "~" ++ (show t)
 
 instance Read UIValue where
     readsPrec _ ('(':')':x) = [(UIValueNull,x)]
@@ -74,7 +76,9 @@ instance Read UIValue where
              case trail1 of
                ']':trail2 -> return (UIValueList contents, trail2)
                _ -> []
-
+    readsPrec _ ('~':trail) =
+        do (v, trail2) <- reads trail
+           return (UIValueThreadId $ ThreadId v, trail2)
     readsPrec _ x = do (keyword, trail1) <- lex x
                        case keyword of
                          "ERR" -> return (UIValueError trail1, [])
@@ -203,7 +207,7 @@ instance AvailInUI Word64 where
 instance AvailInUI CriticalSection where
     toUI (CriticalSection t x) = toUI (t, x)
     fromUI x = do (t, v) <- fromUI x
-                  return $ CriticalSection (fromInteger t) v
+                  return $ CriticalSection t v
 
 instance AvailInUI (UIValue -> UIValue) where
     toUI = UIValueFunction
@@ -224,3 +228,8 @@ instance AvailInUI Int where
         then Left $ (show v) ++ " is out of range for an Int"
         else Right $ fromInteger v
     fromUI e = coerceError "Int" e
+
+instance AvailInUI ThreadId where
+    toUI = UIValueThreadId
+    fromUI (UIValueThreadId tid) = Right tid
+    fromUI e = coerceError "ThreadId" e

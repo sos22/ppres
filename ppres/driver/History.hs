@@ -126,7 +126,7 @@ appendHistory :: History -> HistoryEntry -> Either String History
 appendHistory (History old_last_epoch old_nr_records dlh) he =
     let h = dlToList dlh
         revh = reverse h
-        lastThread [] = Just 1
+        lastThread [] = Just $ ThreadId 1
         lastThread ((HistoryRun _):_) = Nothing
         lastThread ((HistorySetThread x):_) = Just x
         (hl:hrest) = revh
