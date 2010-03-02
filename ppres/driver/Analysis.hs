@@ -329,13 +329,14 @@ allReachableHistories :: History -> [History]
 allReachableHistories s = exhaustiveExplore s findNeighbouringHistories
 -}
 
-enumerateHistories :: History -> Maybe History
+enumerateHistories :: History -> [History]
 enumerateHistories start =
-    exploreTo start findNeighbouringHistories succeeds
+    exhaustiveExplore start findNeighbouringHistories
+{-
     where succeeds x = case replayState x of
                          ReplayStateFinished _ -> True
                          _ -> False
-
+-}
 
 --enumerateHistories start = enumerateAllEpochs [start]
 {-

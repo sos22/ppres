@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
-module UIValue(uiValueString, AvailInUI(..), mapUIValue, UIValue(..)) where
+module UIValue(uiValueString, AvailInUI(..), mapUIValue, UIValue(..), uiApply) where
 
 import Control.Monad.Instances()
 import Control.Monad
@@ -9,6 +9,7 @@ import Numeric
 import Types
 import ReplayState()
 import History
+import Util
 
 data UIValue = UIValueNull
              | UIValueSnapshot History
@@ -25,6 +26,7 @@ data UIValue = UIValueNull
              | UIValueThreadState ThreadState
              | UIValueRegisterName RegisterName
              | UIValueWord Word64
+             | UIValueFunction (UIValue -> UIValue)
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -49,9 +51,7 @@ instance Show UIValue where
     show (UIValueThreadState ts) = show ts
     show (UIValueRegisterName x) = show x
     show (UIValueWord x) = "WORD 0x" ++ (showHex x "")
-
-first :: (a -> b) -> (a, c) -> (b, c)
-first f (x, y) = (f x, y)
+    show (UIValueFunction _) = "FUNC"
 
 instance Read UIValue where
     readsPrec _ ('(':')':x) = [(UIValueNull,x)]
@@ -73,6 +73,7 @@ instance Read UIValue where
                                       return (UIValueByte v, trail2)
                          "History" -> do (v, trail2) <- reads x
                                          return (UIValueSnapshot v, trail2)
+                         "FUNC" -> [(UIValueError "can't parse functions", trail1)]
                          _ -> error $ "can't parse " ++ (show x)
 
 uiValueString :: String -> UIValue
@@ -88,6 +89,12 @@ coerceError wanted got = Left $ "Type error: wanted " ++ wanted ++ ", got " ++ (
 mapUIValue :: (AvailInUI a, AvailInUI b) => (a -> b) -> UIValue -> UIValue
 mapUIValue f b =
     toUI $ liftM f $ fromUI b
+
+uiApply :: UIValue -> UIValue -> UIValue
+uiApply f a =
+    case fromUI f of
+      Left e -> UIValueError e
+      Right f' -> f' a
 
 instance AvailInUI () where
     toUI () = UIValueNull
@@ -182,3 +189,15 @@ instance AvailInUI CriticalSection where
     toUI (CriticalSection t x) = toUI (t, x)
     fromUI x = do (t, v) <- fromUI x
                   return $ CriticalSection (fromInteger t) v
+
+instance AvailInUI (UIValue -> UIValue) where
+    toUI = UIValueFunction
+    fromUI (UIValueFunction f) = Right f
+    fromUI x = coerceError "function" x
+
+instance AvailInUI UIValue where
+    toUI = id
+    fromUI x = case x of
+                 UIValueError e -> Left e
+                 _ -> Right x
+

@@ -9,13 +9,18 @@ import Text.Parsec.Language (haskellDef)
 import IO
 import Data.Word
 import Control.Monad.State
+import Data.IORef
+import Foreign.C.Types
+import System.Exit
 
+import Socket
 import Types
-import WorldState
 import WorkerCache
 import UIValue
 import Analysis
 import History
+
+data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
 data UIExpression = UIDummyFunction
                   | UIRun UIExpression (Topped ReplayCoord)
@@ -24,26 +29,13 @@ data UIExpression = UIDummyFunction
                   | UISetThread UIExpression ThreadId
                   | UIDir
                   | UIVarName VariableName
-                  | UIPair UIExpression UIExpression
-                  | UIFirst UIExpression
-                  | UISecond UIExpression
-                  | UIThreadState UIExpression
-                  | UIRemoveFootsteps UIExpression
-                  | UIFindRacingAccesses UIExpression UIExpression
-                  | UIReplayState UIExpression
                   | UIControlTrace UIExpression (Topped ReplayCoord)
-                  | UIControlTraceTo UIExpression UIExpression
-                  | UIFindControlRaces UIExpression UIExpression
                   | UITruncHist UIExpression (Topped ReplayCoord)
                   | UIFetchMemory UIExpression Word64 Word64
                   | UIIndex UIExpression Int
                   | UIVGIntermediate UIExpression Word64
-                  | UIEnum UIExpression
                   | UILiteral UIValue
-                  | UIRegs UIExpression
-                  | UIRaceExpressions UIExpression
-                  | UICritSections UIExpression
-                  | UIFix UIExpression UIExpression
+                  | UIFunApp UIExpression UIExpression
                     deriving Show
 
 data UIAssignment = UIAssignment VariableName UIExpression
@@ -66,14 +58,7 @@ tchoice = choice . (map Text.Parsec.try)
 
 expressionParser :: Parser UIExpression
 expressionParser =
-    let oneExprArgParser name constructor =
-            do keyword name
-               liftM constructor $ expressionParser
-        twoExprArgParser name constructor =
-            do keyword name
-               a <- expressionParser
-               b <- expressionParser
-               return $ constructor a b
+    let 
         parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
         parseAccessNr = keyword "AccessNr" >> liftM AccessNr parseInteger
         parseReplayCoord = liftM ReplayCoord parseAccessNr
@@ -87,11 +72,6 @@ expressionParser =
     in
       tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
                liftM (const UIDir) $ keyword "dir",
-               oneExprArgParser "thread_state" UIThreadState,
-               oneExprArgParser "regs" UIRegs,
-               oneExprArgParser "races" UIRaceExpressions,
-               oneExprArgParser "critsections" UICritSections,
-               twoExprArgParser "fix" UIFix,
                do keyword "run"
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
@@ -104,10 +84,6 @@ expressionParser =
                   snap <- expressionParser
                   cntr <- parseTopped parseReplayCoord
                   return $ UIControlTrace snap cntr,
-               do keyword "ct2"
-                  start <- expressionParser
-                  end <- expressionParser
-                  return $ UIControlTraceTo start end,
                do keyword "tracem"
                   snap <- expressionParser
                   addr <- parseInteger
@@ -139,14 +115,10 @@ expressionParser =
                   parseInteger
                   e <- between (P.reservedOp command_lexer "[") (P.reservedOp command_lexer "]") $ parseHistoryEntry `sepBy` (P.reservedOp command_lexer ",")
                   return $ UILiteral $ UIValueSnapshot $ mkHistory e,
-               twoExprArgParser "pair" UIPair,
-               twoExprArgParser "findraces" UIFindRacingAccesses,
-               twoExprArgParser "findcontrolraces" UIFindControlRaces,
-               oneExprArgParser "first" UIFirst,
-               oneExprArgParser "second" UISecond,
-               oneExprArgParser "defootstep" UIRemoveFootsteps,
-               oneExprArgParser "replay_state" UIReplayState,
-               oneExprArgParser "enum" UIEnum,
+               do keyword "f"
+                  f <- expressionParser
+                  a <- expressionParser
+                  return $ UIFunApp f a,
                do ident <- P.identifier command_lexer
                   return $ UIVarName ident
             ]
@@ -198,18 +170,6 @@ evalExpression ws f =
     case f of
       UIDummyFunction -> UIValueNull
       UIVarName name -> lookupVariable ws name
-      UIPair a b ->
-          let a' = evalExpression ws a
-              b' = evalExpression ws b
-          in UIValuePair a' b'
-      UIFirst a ->
-          case evalExpression ws a of
-            UIValuePair a'' _ -> a''
-            _ -> UIValueError "needed a pair for first"
-      UISecond a ->
-          case evalExpression ws a of
-            UIValuePair _ a'' -> a''
-            _ -> UIValueError "needed a pair for second"
       UITruncHist hist n ->
           withSnapshot ws hist $ \s -> truncateHistory s n
       UIDir ->
@@ -220,35 +180,9 @@ evalExpression ws f =
           withSnapshot ws name $ \s -> trace s cntr
       UITraceAddress name addr to ->
           withSnapshot ws name $ \s -> traceAddress s addr to
-      UIThreadState name ->
-          withSnapshot ws name $ \s -> threadState s
-      UIRegs s -> withSnapshot ws s getRegisters
-      UICritSections s -> withSnapshot ws s criticalSections
-      UIFix s c -> toUI $ do s' <- fromUI $ evalExpression ws s
-                             c' <- fromUI $ evalExpression ws c
-                             return $ mkFixupLibrary s' c'
-      UIRaceExpressions s -> withSnapshot ws s getRacingExpressions
       UISetThread snap tid ->
           withSnapshot ws snap $ \s -> setThread s tid
-      UIReplayState name -> withSnapshot ws name $ \s -> replayState s
       UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
-      UIControlTraceTo start end ->
-          toUI $ do start' <- fromUI $ evalExpression ws start
-                    end' <- fromUI $ evalExpression ws end
-                    return $ controlTraceTo start' end'
-      UIFindRacingAccesses a b ->
-          toUI $ do a' <- fromUI $ evalExpression ws a
-                    b' <- fromUI $ evalExpression ws b
-                    return $ findRacingAccesses a' b'
-      UIFindControlRaces a b ->
-          toUI $ do a' <- fromUI $ evalExpression ws a
-                    b' <- fromUI $ evalExpression ws b
-                    return $ findControlFlowRaces a' b'
-      UIRemoveFootsteps e ->
-          toUI $ do es <- fromUI $ evalExpression ws e
-                    let isFootstep (TraceRecord (TraceFootstep _ _ _ _) _) = True
-                        isFootstep _ = False
-                    return [trc | trc <- es, not $ isFootstep trc ]
       UIFetchMemory hist addr size ->
           withSnapshot ws hist $ \s -> fetchMemory s addr size
       UIVGIntermediate hist addr ->
@@ -260,9 +194,66 @@ evalExpression ws f =
                 then UIValueError $ "index " ++ (show idx) ++ " greater than length of list " ++ (show $ length lst')
                 else lst'!!idx
             e -> UIValueError $ "wanted a list to index, got a " ++(show e)
-      UIEnum start ->
-          mapUIValue enumerateHistories $ evalExpression ws start
       UILiteral x -> x
+      UIFunApp ff a ->
+          evalExpression ws ff `uiApply` evalExpression ws a
+                    
+mkUIFunction :: (AvailInUI a, AvailInUI b) => (a -> b) -> UIValue
+mkUIFunction f =
+    UIValueFunction $ \a ->
+        case fromUI a of
+          Left e -> UIValueError e
+          Right x -> toUI $ f x
+
+mkUIFunction2 :: (AvailInUI a, AvailInUI b, AvailInUI c) => (a -> (b -> c)) -> UIValue
+mkUIFunction2 f =
+    UIValueFunction $ \a ->
+        case fromUI a of
+          Left e -> UIValueError e
+          Right a' -> mkUIFunction (f a')
+
+defootstep :: [TraceRecord] -> [TraceRecord]
+defootstep = filter (not . isFootstep . trc_trc)
+             where isFootstep (TraceFootstep _ _ _ _) = True
+                   isFootstep _ = False
+
+initialWorldState :: CInt -> IO WorldState
+initialWorldState fd =
+    do f <- fdToSocket fd
+       a <- newIORef True
+       let root_snap = Worker f a
+       initWorkerCache root_snap
+       return $ WorldState { ws_bindings = [("start", UIValueSnapshot emptyHistory),
+                                            ("first", mkUIFunction (fst :: (UIValue, UIValue) -> UIValue)),
+                                            ("second", mkUIFunction (snd :: (UIValue, UIValue) -> UIValue)),
+                                            ("thread_state", mkUIFunction threadState),
+                                            ("regs", mkUIFunction getRegisters),
+                                            ("races", mkUIFunction getRacingExpressions),
+                                            ("critsections", mkUIFunction criticalSections),
+                                            ("defootstep", mkUIFunction defootstep),
+                                            ("replay_state", mkUIFunction replayState),
+                                            ("enum", mkUIFunction enumerateHistories),
+                                            ("fix", mkUIFunction2 mkFixupLibrary),
+                                            ("pair", mkUIFunction2 ((,) :: UIValue -> UIValue -> (UIValue, UIValue))),
+                                            ("findraces", mkUIFunction2 findRacingAccesses),
+                                            ("findcontroltraces", mkUIFunction2 findControlFlowRaces),
+                                            ("ct2", mkUIFunction2 controlTraceTo)
+                                           ] }
+
+lookupVariable :: WorldState -> VariableName -> UIValue
+lookupVariable ws name =
+    case lookup name $ ws_bindings ws of
+      Nothing -> UIValueError $ name ++ " not found"
+      Just s' -> s'
+
+doAssignment :: WorldState -> VariableName -> UIValue -> WorldState
+doAssignment ws name val =
+    ws { ws_bindings = (name, val):
+         [b | b <- (ws_bindings ws), fst b /= name]}
+
+exitWorld :: IO ()
+exitWorld = do destroyWorkerCache
+               exitWith ExitSuccess
 
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
