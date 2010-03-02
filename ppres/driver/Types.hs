@@ -109,6 +109,7 @@ instance Read TraceEntry where
              _ -> []
 
 data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
+                                 trc_tid :: ThreadId,
                                  trc_loc :: ReplayCoord } deriving (Show, Read)
 
 data RegisterName = REG_RAX

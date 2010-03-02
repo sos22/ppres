@@ -36,8 +36,8 @@ dt = Debug.Trace.trace
 
 findRacingAccesses :: [TraceRecord] -> [TraceRecord] -> [(TraceRecord, TraceRecord)]
 findRacingAccesses a b =
-    let aLoads = [r | r@(TraceRecord (TraceLoad _ _ _ _) _) <- a]
-        bStores = [r | r@(TraceRecord (TraceStore _ _ _ _) _) <- b]
+    let aLoads = [r | r@(TraceRecord (TraceLoad _ _ _ _) _ _) <- a]
+        bStores = [r | r@(TraceRecord (TraceStore _ _ _ _) _ _) <- b]
         storesTo ptr = [r | r <- bStores, ptr == (trc_store_ptr $ trc_trc r)]
         res = [(load, store)
                |
@@ -60,7 +60,7 @@ findControlFlowRaces races expressions =
           expressionMentionsLoad _ (ExpressionImported _ ) = False
           expressionMentionsLoad e (ExpressionBinop _ x y) = expressionMentionsLoad e x || expressionMentionsLoad e y
           expressionMentionsLoad e (ExpressionNot x) = expressionMentionsLoad e x
-          expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) loc1)
+          expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) _ loc1)
                                      (ExpressionLoad _ _ loc2 _ _) = loc1 == loc2
           expressionMentionsLoad _ _ = error "confused"
 
@@ -412,7 +412,7 @@ getCriticalRips hist (CriticalSection interestingThread accesses) =
         ripsInAccess start@(ReplayCoord acc) =
             case trace (deError $ truncateHistory' hist $ Finite start) (Finite $ ReplayCoord $ acc + 1) of
               Left err -> error $ "ripsBetween: " ++ err
-              Right (_, t) -> [rip | (TraceRecord (TraceFootstep rip _ _ _) _) <- t]
+              Right (_, t) -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc t]
 
         {- We want to include the instruction which issued the first
            access.  Accesses terminate blocks, and the access shows up

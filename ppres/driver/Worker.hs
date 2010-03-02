@@ -92,9 +92,9 @@ ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
 ancillaryDataToTrace [] = []
 ancillaryDataToTrace ((ResponseDataString _):rs) = ancillaryDataToTrace rs
 ancillaryDataToTrace ((ResponseDataBytes _):rs) = ancillaryDataToTrace rs
-ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
-    let (loc', other_args) = splitAt 1 args
-        loc = ReplayCoord { rc_access = AccessNr $ fromIntegral $ loc'!!0 }
+ancillaryDataToTrace ((ResponseDataAncillary code (loc':tid':other_args)):rs) =
+    let loc = ReplayCoord { rc_access = AccessNr $ fromIntegral loc' }
+        tid = ThreadId $ fromIntegral tid'
         (entry, rest) =
             case code of
               1 -> (TraceFootstep { trc_foot_rip = fromIntegral $ other_args!!0,
@@ -126,7 +126,8 @@ ancillaryDataToTrace ((ResponseDataAncillary code args):rs) =
                                    trc_err = other_args!!2,
                                    trc_va = other_args!!3 }, rs)
               _ -> error $ "bad trace ancillary code " ++ (show code)
-    in (TraceRecord { trc_trc = entry, trc_loc = loc }):(ancillaryDataToTrace rest)
+    in (TraceRecord { trc_trc = entry, trc_tid = tid, trc_loc = loc }):(ancillaryDataToTrace rest)
+ancillaryDataToTrace x = error $ "bad trace ancillary data " ++ (show x)
          
 
 traceCmd :: Worker -> ControlPacket -> IO [TraceRecord]

@@ -441,6 +441,7 @@ get_control_command(struct control_command *cmd)
 #define _TRACE(code, args...)                             \
 	send_ancillary(ANCILLARY_TRACE_ ## code,	  \
 		       now.access_nr,			  \
+		       current_thread->id,		  \
 		       ## args)
 
 #define TRACE(code, args...)						\
