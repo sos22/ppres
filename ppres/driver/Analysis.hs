@@ -399,18 +399,13 @@ criticalSections expr =
 getCriticalRips :: History -> CriticalSection -> [Word64]
 getCriticalRips hist (CriticalSection interestingThread accesses) =
     let accesses' = sort accesses
-        fstAccess = head accesses'
-        
-        accesses'' = tail $
-                     filter
-                     (\a -> nextThread (deError $ truncateHistory' hist $ Finite a) == interestingThread)
-                     accesses'
+        (fstAccess:accesses'') = accesses'
 
         ripsInAccess :: AccessNr -> [Word64]
         ripsInAccess acc =
             case traceTo (deError $ truncateHistory hist $ Finite acc) (deError $ truncateHistory hist $ Finite $ acc + 1) of
               Left err -> error $ "ripsBetween: " ++ err
-              Right t -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc t]
+              Right t -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc $ filter ((==) interestingThread . trc_tid) t]
 
         {- We want to include the instruction which issued the first
            access.  Accesses terminate blocks, and the access shows up
