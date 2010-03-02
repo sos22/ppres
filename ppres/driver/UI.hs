@@ -25,7 +25,6 @@ data UIExpression = UIDummyFunction
                   | UIRun UIExpression (Topped ReplayCoord)
                   | UITrace UIExpression (Topped ReplayCoord)
                   | UITraceAddress UIExpression UIExpression (Topped ReplayCoord)
-                  | UISetThread UIExpression ThreadId
                   | UIDir
                   | UIVarName VariableName
                   | UIControlTrace UIExpression (Topped ReplayCoord)
@@ -85,10 +84,6 @@ expressionParser =
                   addr <- expressionParser
                   to <- parseTopped parseReplayCoord
                   return $ UITraceAddress snap addr to,
-               do keyword "setthread"
-                  snap <- expressionParser
-                  tid <- parseThreadId
-                  return $ UISetThread snap tid,
                do keyword "trunc"
                   hist <- expressionParser
                   n <- parseTopped parseReplayCoord
@@ -170,8 +165,6 @@ evalExpression ws f =
           toUI $ do addr' <- fromUI $ evalExpression ws addr
                     s <- fromUI $ evalExpression ws name
                     return $ traceAddress s addr' to
-      UISetThread snap tid ->
-          withSnapshot ws snap $ \s -> setThread s tid
       UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
       UILiteral x -> x
       UIFunApp ff a ->
@@ -235,7 +228,8 @@ initialWorldState fd =
                                             ("vginter", mkUIFunction2 vgIntermediate),
                                             ("fetchmem", mkUIFunction3 fetchMemory),
                                             ("map", mkUIFunction2 (map :: (UIValue->UIValue) -> [UIValue] -> [UIValue])),
-                                            ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)]))
+                                            ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)])),
+                                            ("setthread", mkUIFunction2 setThread)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
