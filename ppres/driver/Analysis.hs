@@ -156,7 +156,7 @@ findNeighbouringHistories start =
                 to become runnable.  That pretty much means a system
                 call. -}
              let giveUpCoord = Finite $ now + 100
-                 trc = snd $ deError $ trace start giveUpCoord
+                 trc = deError $ traceTo start (deError $ start `appendHistory` (HistoryRun giveUpCoord))
                  syscalls = filter isSyscall trc
                             where isSyscall x = case trc_trc x of
                                                   TraceSyscall _ -> True
@@ -188,7 +188,11 @@ findNeighbouringHistories start =
                 crosses a syscall boundary is by definition not
                 interesting. -}
              let trace_for_thread horizon t =
-                     let (postTraceHist, collectedTrace) = deError $ trace (deError $ start `appendHistory` (HistorySetThread t)) $ Finite horizon
+                     let (postTraceHist, collectedTrace) =
+                             deError $ do s <- appendHistory start $ HistorySetThread t
+                                          e <- appendHistory s $ HistoryRun $ Finite horizon
+                                          trc <- traceTo s e
+                                          return (e, trc)
                          (haveSyscall, stoppedTrace) = stop_at_syscall collectedTrace
                          filteredTrace = filter (isInteresting . trc_trc) stoppedTrace
                          isInteresting (TraceFootstep _ _ _ _) = False

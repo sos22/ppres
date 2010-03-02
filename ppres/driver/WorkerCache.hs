@@ -4,7 +4,6 @@
    are responsible for mapping them into Workers as and when
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, 
-                   trace,
                    threadState, replayState, 
                    fetchMemory, vgIntermediate, nextThread,
                    controlTraceTo, getRegisters,
@@ -198,19 +197,6 @@ getWorker target =
                    return final_worker
 
 
-
-traceCmd :: HistoryEntry -> History -> (Worker -> IO a) -> Either String (History, a)
-traceCmd he start w =
-    do newHist <- appendHistory start he
-       return $ unsafePerformIO $ do worker <- getWorker start
-                                     r <- w worker
-                                     killWorker worker
-                                     return (newHist, r)
-
-trace :: History -> Topped AccessNr -> Either String (History, [TraceRecord])
-trace start cntr =
-    dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
-    traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
