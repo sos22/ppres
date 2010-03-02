@@ -408,9 +408,9 @@ getCriticalRips hist (CriticalSection interestingThread accesses) =
 
         ripsInAccess :: AccessNr -> [Word64]
         ripsInAccess acc =
-            case trace (deError $ truncateHistory' hist $ Finite acc) (Finite $ acc + 1) of
+            case traceTo (deError $ truncateHistory hist $ Finite acc) (deError $ truncateHistory hist $ Finite $ acc + 1) of
               Left err -> error $ "ripsBetween: " ++ err
-              Right (_, t) -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc t]
+              Right t -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc t]
 
         {- We want to include the instruction which issued the first
            access.  Accesses terminate blocks, and the access shows up
