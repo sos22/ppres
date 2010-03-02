@@ -60,6 +60,21 @@ instance Read UIValue where
                              case trail1 of
                                '}':trail2 -> return (contents, trail2)
                                _ -> []
+    readsPrec _ ('[':t) =
+        let readListBody tt =
+                ([], tt):
+                       (do (item, trail2) <- reads tt
+                           case trail2 of
+                             '\n':trail3 ->
+                                 do (rest,trail4) <- readListBody trail3
+                                    return (item:rest,trail4)
+                             _ -> [])
+        in
+          do (contents, trail1) <- readListBody t
+             case trail1 of
+               ']':trail2 -> return (UIValueList contents, trail2)
+               _ -> []
+
     readsPrec _ x = do (keyword, trail1) <- lex x
                        case keyword of
                          "ERR" -> return (UIValueError trail1, [])
@@ -74,7 +89,7 @@ instance Read UIValue where
                          "History" -> do (v, trail2) <- reads x
                                          return (UIValueSnapshot v, trail2)
                          "FUNC" -> [(UIValueError "can't parse functions", trail1)]
-                         _ -> error $ "can't parse " ++ (show x)
+                         _ -> [(UIValueError $ "can't parse " ++ (show x), trail1)]
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
