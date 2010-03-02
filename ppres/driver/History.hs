@@ -1,6 +1,7 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History, HistoryEntry(..),
-               mkHistory, histLastCoord, controlTraceToWorker, truncateHistory') where
+               mkHistory, histLastCoord, controlTraceToWorker, truncateHistory',
+               traceToWorker) where
 
 import Control.Monad
 
@@ -203,3 +204,16 @@ controlTraceToWorker work start end =
     case stripSharedPrefix start end of
       ([], todo) -> liftM Right $ worker todo
       _ -> return $ Left $ (show start) ++ " is not a prefix of " ++ (show end)
+
+{- Ditto: should be in Worker.hs, but don't want to expose the innards
+   of History. -}
+traceToWorker :: Worker -> History -> History -> IO (Either String [TraceRecord])
+traceToWorker worker start end =
+    let work [] = return []
+        work ((HistorySetThread tid):rest) = setThreadWorker worker tid >> work rest
+        work ((HistoryRun cntr):rest) = do h <- traceWorker worker cntr
+                                           rest' <- work rest
+                                           return $ h ++ rest'
+    in case stripSharedPrefix start end of
+         ([], todo) -> liftM Right $ work todo
+         _ -> return $ Left $ shows start $ " is not a prefix of " ++ (show end)

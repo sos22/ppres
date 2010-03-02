@@ -227,6 +227,7 @@ initialWorldState fd =
                                             ("findraces", mkUIFunction2 findRacingAccesses),
                                             ("findcontroltraces", mkUIFunction2 findControlFlowRaces),
                                             ("ct2", mkUIFunction2 controlTraceTo),
+                                            ("t2", mkUIFunction2 traceTo),
                                             ("index", mkUIFunction2 uiIndex),
                                             ("vginter", mkUIFunction2 vgIntermediate),
                                             ("fetchmem", mkUIFunction3 fetchMemory),

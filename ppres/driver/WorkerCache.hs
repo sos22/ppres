@@ -8,7 +8,7 @@ module WorkerCache(initWorkerCache, destroyWorkerCache, run,
                    threadState, replayState, controlTrace,
                    fetchMemory, vgIntermediate, nextThread,
                    setThread, controlTraceTo, getRegisters,
-                   getRipAtAccess) where
+                   getRipAtAccess, traceTo) where
 
 import Data.Word
 import Control.Monad.State
@@ -253,10 +253,11 @@ setThread hist tid = deError $ appendHistory hist $ HistorySetThread tid
 
 controlTraceTo :: History -> History -> Either String [Expression]
 controlTraceTo start end =
-    unsafePerformIO $ do worker <- getWorker start
-                         r <- controlTraceToWorker worker start end
-                         killWorker worker
-                         return r
+    queryCmd (\worker -> controlTraceToWorker worker start end) start
+
+traceTo :: History -> History -> Either String [TraceRecord]
+traceTo start end = 
+    queryCmd (\worker -> traceToWorker worker start end) start
 
 getRegisters :: History -> RegisterFile
 getRegisters = queryCmd getRegistersWorker
