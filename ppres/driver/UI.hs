@@ -215,15 +215,6 @@ uiIndex lst idx =
                    else lst'!!idx''
                e -> UIValueError $ "wanted a list, got " ++ (show e)
 
-uiMap :: UIValue -> UIValue -> UIValue
-uiMap f lst =
-    case lst of
-      UIValueList l ->
-          case fromUI f of
-            Left e -> UIValueError e
-            Right f' -> UIValueList $ map f' l
-      _ -> UIValueError $ "wanted list for map, got " ++ (show lst)
-
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
@@ -248,7 +239,8 @@ initialWorldState fd =
                                             ("index", mkUIFunction2 uiIndex),
                                             ("vginter", mkUIFunction2 vgIntermediate),
                                             ("fetchmem", mkUIFunction3 fetchMemory),
-                                            ("map", mkUIFunction2 uiMap)
+                                            ("map", mkUIFunction2 (map :: (UIValue->UIValue) -> [UIValue] -> [UIValue])),
+                                            ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)]))
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
