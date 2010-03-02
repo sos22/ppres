@@ -7,7 +7,6 @@ import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (haskellDef)
 import IO
-import Data.Word
 import Control.Monad.State
 import Data.IORef
 import Foreign.C.Types
@@ -25,15 +24,12 @@ data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 data UIExpression = UIDummyFunction
                   | UIRun UIExpression (Topped ReplayCoord)
                   | UITrace UIExpression (Topped ReplayCoord)
-                  | UITraceAddress UIExpression Word64 (Topped ReplayCoord)
+                  | UITraceAddress UIExpression UIExpression (Topped ReplayCoord)
                   | UISetThread UIExpression ThreadId
                   | UIDir
                   | UIVarName VariableName
                   | UIControlTrace UIExpression (Topped ReplayCoord)
                   | UITruncHist UIExpression (Topped ReplayCoord)
-                  | UIFetchMemory UIExpression Word64 Word64
-                  | UIIndex UIExpression Int
-                  | UIVGIntermediate UIExpression Word64
                   | UILiteral UIValue
                   | UIFunApp UIExpression UIExpression
                     deriving Show
@@ -50,7 +46,7 @@ command_lexer = P.makeTokenParser haskellDef
 keyword :: String -> Parser String
 keyword x = do v <- P.identifier command_lexer
                if v == x then return v
-                else unexpected (v ++ ", wanted " ++ x)
+                else unexpected v
 
 {- try-choice.  Arbitrary choice with arbitrary lookahead. -}
 tchoice :: [Parser a] -> Parser a
@@ -86,9 +82,9 @@ expressionParser =
                   return $ UIControlTrace snap cntr,
                do keyword "tracem"
                   snap <- expressionParser
-                  addr <- parseInteger
+                  addr <- expressionParser
                   to <- parseTopped parseReplayCoord
-                  return $ UITraceAddress snap (fromInteger addr) to,
+                  return $ UITraceAddress snap addr to,
                do keyword "setthread"
                   snap <- expressionParser
                   tid <- parseThreadId
@@ -97,19 +93,6 @@ expressionParser =
                   hist <- expressionParser
                   n <- parseTopped parseReplayCoord
                   return $ UITruncHist hist n,
-               do keyword "index"
-                  hist <- expressionParser
-                  n <- parseInteger
-                  return $ UIIndex hist (fromInteger n),
-               do keyword "fetchmem"
-                  hist <- expressionParser
-                  addr <- parseInteger
-                  size <- parseInteger
-                  return $ UIFetchMemory hist (fromInteger addr) (fromInteger size),
-               do keyword "vginter"
-                  hist <- expressionParser
-                  addr <- parseInteger
-                  return $ UIVGIntermediate hist (fromInteger addr),
                do keyword "History"
                   parseTopped $ parseAccessNr {- Don't actually care about these, but need to get them out of the way. -}
                   parseInteger
@@ -120,7 +103,9 @@ expressionParser =
                   a <- expressionParser
                   return $ UIFunApp f a,
                do ident <- P.identifier command_lexer
-                  return $ UIVarName ident
+                  return $ UIVarName ident,
+               do v <- parseInteger
+                  return $ UILiteral $ UIValueInteger v
             ]
 
 assignmentParser :: Parser UIAssignment
@@ -179,21 +164,12 @@ evalExpression ws f =
       UITrace name cntr ->
           withSnapshot ws name $ \s -> trace s cntr
       UITraceAddress name addr to ->
-          withSnapshot ws name $ \s -> traceAddress s addr to
+          toUI $ do addr' <- fromUI $ evalExpression ws addr
+                    s <- fromUI $ evalExpression ws name
+                    return $ traceAddress s addr' to
       UISetThread snap tid ->
           withSnapshot ws snap $ \s -> setThread s tid
       UIControlTrace name cntr -> withSnapshot ws name $ \s -> controlTrace s cntr
-      UIFetchMemory hist addr size ->
-          withSnapshot ws hist $ \s -> fetchMemory s addr size
-      UIVGIntermediate hist addr ->
-          withSnapshot ws hist $ \s -> vgIntermediate s addr
-      UIIndex lst idx ->
-          case evalExpression ws lst of
-            UIValueList lst' ->
-                if idx >= length lst'
-                then UIValueError $ "index " ++ (show idx) ++ " greater than length of list " ++ (show $ length lst')
-                else lst'!!idx
-            e -> UIValueError $ "wanted a list to index, got a " ++(show e)
       UILiteral x -> x
       UIFunApp ff a ->
           evalExpression ws ff `uiApply` evalExpression ws a
@@ -212,10 +188,32 @@ mkUIFunction2 f =
           Left e -> UIValueError e
           Right a' -> mkUIFunction (f a')
 
+mkUIFunction3 :: (AvailInUI a, AvailInUI b, AvailInUI c, AvailInUI d) => (a -> (b -> (c -> d))) -> UIValue
+mkUIFunction3 f =
+    UIValueFunction $ \a ->
+        case fromUI a of
+          Left e -> UIValueError e
+          Right a' -> mkUIFunction2 (f a')
+
 defootstep :: [TraceRecord] -> [TraceRecord]
 defootstep = filter (not . isFootstep . trc_trc)
              where isFootstep (TraceFootstep _ _ _ _) = True
                    isFootstep _ = False
+
+uiIndex :: UIValue -> UIValue -> UIValue
+uiIndex lst idx =
+    {- Can't use normal fromUI on lst, because don't want to convert
+       the members of the list. -}
+    case fromUI idx of
+      Left e -> UIValueError e
+      Right idx' ->
+          let idx'' = fromInteger idx'
+          in case lst of
+               (UIValueList lst') ->
+                   if idx'' >= length lst'
+                   then UIValueError $ "index " ++ (show idx') ++ " greater than length of list " ++ (show $ length lst')
+                   else lst'!!idx''
+               e -> UIValueError $ "wanted a list, got " ++ (show e)
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
@@ -237,7 +235,10 @@ initialWorldState fd =
                                             ("pair", mkUIFunction2 ((,) :: UIValue -> UIValue -> (UIValue, UIValue))),
                                             ("findraces", mkUIFunction2 findRacingAccesses),
                                             ("findcontroltraces", mkUIFunction2 findControlFlowRaces),
-                                            ("ct2", mkUIFunction2 controlTraceTo)
+                                            ("ct2", mkUIFunction2 controlTraceTo),
+                                            ("index", mkUIFunction2 uiIndex),
+                                            ("vginter", mkUIFunction2 vgIntermediate),
+                                            ("fetchmem", mkUIFunction3 fetchMemory)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
