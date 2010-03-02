@@ -8,8 +8,7 @@ import Control.Monad
 import Types
 import Worker
 
-data HistoryEntry = HistoryRun !(Topped AccessNr)
-                  | HistorySetThread !ThreadId
+data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
@@ -19,8 +18,7 @@ data History = History (Topped AccessNr) Int (DList HistoryEntry) deriving (Show
 
 runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
 runThread hist tid acc =
-    do h <- appendHistory hist $ HistorySetThread tid
-       appendHistory h $ HistoryRun acc
+    appendHistory hist $ HistoryRun tid acc
 
 histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x
@@ -28,8 +26,7 @@ histLastCoord (History x _ _) = x
 last_coord :: [HistoryEntry] -> Topped AccessNr
 last_coord he = worker $ reverse he
                 where worker [] = Finite $ AccessNr 0
-                      worker ((HistoryRun x):_) = x
-                      worker (_:x) = worker x
+                      worker ((HistoryRun _ x):_) = x
 
 {- Either id, for valid histories, or undefined for invalid ones. -}
 sanityCheckHistory :: History -> History
@@ -49,8 +46,9 @@ replayCost a b =
     toInteger $ b - a
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
-doHistoryEntry w (HistoryRun cntr) =
-    do rs <- replayStateWorker w
+doHistoryEntry w (HistoryRun tid cntr) =
+    do setThreadWorker w tid
+       rs <- replayStateWorker w
        case rs of
          ReplayStateOkay e ->
              do runWorker w cntr
@@ -62,7 +60,6 @@ doHistoryEntry w (HistoryRun cntr) =
                   ReplayStateOkay e' -> return $ replayCost e e'
          ReplayStateFinished _ -> return 1
          ReplayStateFailed _ _ _ _ -> return 1
-doHistoryEntry w (HistorySetThread tid) = setThreadWorker w tid >> return 1
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
 stripSharedPrefix (History _ _ aa) (History _ _ bb) =
@@ -72,7 +69,7 @@ stripSharedPrefix (History _ _ aa) (History _ _ bb) =
           worker aas@(a:as) bbs@(b:bs) =
               if a == b then worker as bs
               else case (a, b) of
-                     (HistoryRun an, HistoryRun bn) ->
+                     (HistoryRun atid an, HistoryRun btid bn) | atid == btid ->
                          if an < bn
                          then worker as bbs
                          else worker aas bs
@@ -93,7 +90,7 @@ historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length
                 (Just (DListEntry _ as aa), Just (DListEntry _ bs bb)) ->
                     if aa == bb then worker as bs
                     else case (aa, bb) of
-                           (HistoryRun acntr, HistoryRun bcntr) ->
+                           (HistoryRun atid acntr, HistoryRun btid bcntr) | atid == btid ->
                                if acntr <= bcntr
                                then worker as bbs
                                else False
@@ -131,50 +128,34 @@ appendHistory :: History -> HistoryEntry -> Either String History
 appendHistory (History old_last_epoch old_nr_records dlh) he =
     let h = dlToList dlh
         revh = reverse h
-        lastThread [] = Just $ ThreadId 1
-        lastThread ((HistoryRun _):_) = Nothing
-        lastThread ((HistorySetThread x):_) = Just x
         (hl:hrest) = revh
     in case h of
          [] -> Right $ mkHistory [he]
          _ ->
              do (new_last_epoch, new_nr_records, h') <-
                     case (hl, he) of
-                      (HistoryRun x, HistoryRun y) ->
-                          if x == y
-                          then Right (old_last_epoch, old_nr_records, h)
-                          else if x < y
-                               then Right (y, old_nr_records, reverse $ (HistoryRun y):hrest)
-                               else Left "appendHistory tried to go backwards in time!"
-                      (HistorySetThread _, HistorySetThread lt) ->
-                          Right $ 
-                                if Just lt == lastThread hrest
-                                then (old_last_epoch, old_nr_records - 1, reverse hrest)
-                                else (old_last_epoch, old_nr_records, reverse $ he:hrest)
-                      (_, HistorySetThread lt) ->
-                          Right $
-                                if Just lt == lastThread revh
-                                then (old_last_epoch, old_nr_records, h)
-                                else (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
-                      (_, HistoryRun y) ->
-                          Right (y, old_nr_records + 1, reverse $ he:revh)
+                      (HistoryRun xtid x, HistoryRun ytid y)
+                          | x == y -> Right (old_last_epoch, old_nr_records, h) {- didn't advance -> no-op -}
+                          | y < x -> Left "appendHistory tried to go backwards in time!"
+                          | xtid == ytid ->
+                              Right (y, old_nr_records, reverse $ he:hrest)
+                          | otherwise ->
+                              Right (y, old_nr_records + 1, reverse $ he:revh)
                 let res = History new_last_epoch new_nr_records $ listToDl h'
                 return $ sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped AccessNr -> Either String History
 truncateHistory (History _ _ hs) cntr =
-    let worker [HistoryRun Infinity] = Right [HistoryRun cntr]
-        worker ((HistoryRun c):hs') =
-            if c < cntr then liftM ((:) $ HistoryRun c) $ worker hs'
-            else Right [HistoryRun cntr]
-        worker (h:hs') = liftM ((:) h) $ worker hs'
+    let worker [HistoryRun tid Infinity] = Right [HistoryRun tid cntr]
+        worker ((HistoryRun tid c):hs') =
+            if c < cntr then liftM ((:) $ HistoryRun tid c) $ worker hs'
+            else Right [HistoryRun tid cntr]
         worker _ = Left $ "truncate bad history: " ++ (show hs) ++ " to " ++ (show cntr)
     in liftM mkHistory (worker $ dlToList hs)
 
 instance Forcable HistoryEntry where
-    force (HistoryRun t) = force t
-    force (HistorySetThread t) = force t
+    force (HistoryRun tid t) = force tid . force t
 
 instance Forcable History where
     force (History a b h) = force a . force b . force h
@@ -187,10 +168,10 @@ instance Forcable History where
 controlTraceToWorker :: Worker -> History -> History -> IO (Either String [Expression])
 controlTraceToWorker work start end =
     let worker [] = return []
-        worker ((HistorySetThread tid):rest) = (setThreadWorker work tid) >> worker rest
-        worker ((HistoryRun cntr):rest) = do h <- controlTraceWorker work cntr
-                                             rest' <- worker rest
-                                             return $ h ++ rest'
+        worker ((HistoryRun tid cntr):rest) = do setThreadWorker work tid
+                                                 h <- controlTraceWorker work cntr
+                                                 rest' <- worker rest
+                                                 return $ h ++ rest'
     in
     case stripSharedPrefix start end of
       ([], todo) -> liftM Right $ worker todo
@@ -201,10 +182,11 @@ controlTraceToWorker work start end =
 traceToWorker :: Worker -> History -> History -> IO (Either String [TraceRecord])
 traceToWorker worker start end =
     let work [] = return []
-        work ((HistorySetThread tid):rest) = setThreadWorker worker tid >> work rest
-        work ((HistoryRun cntr):rest) = do h <- traceWorker worker cntr
-                                           rest' <- work rest
-                                           return $ h ++ rest'
+        work ((HistoryRun tid cntr):rest) =
+            do setThreadWorker worker tid
+               h <- traceWorker worker cntr
+               rest' <- work rest
+               return $ h ++ rest'
     in case stripSharedPrefix start end of
          ([], todo) -> liftM Right $ work todo
          _ -> return $ Left $ shows start $ " is not a prefix of " ++ (show end)
