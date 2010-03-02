@@ -22,13 +22,13 @@ import History
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
 data UIExpression = UIDummyFunction
-                  | UIRun UIExpression (Topped ReplayCoord)
-                  | UITrace UIExpression (Topped ReplayCoord)
-                  | UITraceAddress UIExpression UIExpression (Topped ReplayCoord)
+                  | UIRun UIExpression (Topped AccessNr)
+                  | UITrace UIExpression (Topped AccessNr)
+                  | UITraceAddress UIExpression UIExpression (Topped AccessNr)
                   | UIDir
                   | UIVarName VariableName
-                  | UIControlTrace UIExpression (Topped ReplayCoord)
-                  | UITruncHist UIExpression (Topped ReplayCoord)
+                  | UIControlTrace UIExpression (Topped AccessNr)
+                  | UITruncHist UIExpression (Topped AccessNr)
                   | UILiteral UIValue
                   | UIFunApp UIExpression UIExpression
                     deriving Show
@@ -55,8 +55,8 @@ expressionParser :: Parser UIExpression
 expressionParser =
     let 
         parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
-        parseAccessNr = keyword "AccessNr" >> liftM AccessNr parseInteger
-        parseReplayCoord = liftM ReplayCoord parseAccessNr
+        parseAccessNr = keyword "AccessNr" >> parseInteger
+        parseReplayCoord = liftM AccessNr parseAccessNr
         parseThreadId = keyword "ThreadId" >> liftM ThreadId parseInteger
         parseInteger = P.integer command_lexer
         parseHistoryEntry = tchoice [do keyword "HistoryRun"

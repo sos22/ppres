@@ -208,15 +208,15 @@ traceCmd he start w =
                                      killWorker worker
                                      return (newHist, r)
 
-run :: History -> Topped ReplayCoord -> Either String History
+run :: History -> Topped AccessNr -> Either String History
 run start cntr = appendHistory start $ HistoryRun cntr
 
-trace :: History -> Topped ReplayCoord -> Either String (History, [TraceRecord])
+trace :: History -> Topped AccessNr -> Either String (History, [TraceRecord])
 trace start cntr =
     dt ("trace " ++ (show start) ++ " " ++ (show cntr)) $
     traceCmd (HistoryRun cntr) start $ \worker -> traceWorker worker cntr
 
-traceAddress :: History -> Word64 -> Topped ReplayCoord -> Either String (History, [TraceRecord])
+traceAddress :: History -> Word64 -> Topped AccessNr -> Either String (History, [TraceRecord])
 traceAddress start addr to =
     traceCmd (HistoryRun Infinity) start $ \worker -> traceAddressWorker worker addr to
 
@@ -233,7 +233,7 @@ threadState = queryCmd threadStateWorker
 replayState :: History -> ReplayState
 replayState = queryCmd replayStateWorker
 
-controlTrace :: History -> Topped ReplayCoord -> Either String [Expression]
+controlTrace :: History -> Topped AccessNr -> Either String [Expression]
 controlTrace hist cntr =
     fmap snd $ traceCmd (HistoryRun Infinity) hist $ \worker -> controlTraceWorker worker cntr
 
@@ -262,9 +262,9 @@ traceTo start end =
 getRegisters :: History -> RegisterFile
 getRegisters = queryCmd getRegistersWorker
 
-getRipAtAccess :: History -> ReplayCoord -> Either String Word64
-getRipAtAccess hist (ReplayCoord whn) =
-    do hist' <- truncateHistory hist $ Finite $ ReplayCoord $ whn + 1
+getRipAtAccess :: History -> AccessNr -> Either String Word64
+getRipAtAccess hist whn =
+    do hist' <- truncateHistory hist $ Finite $ whn + 1
        getRegister (getRegisters hist') REG_RIP
 
        

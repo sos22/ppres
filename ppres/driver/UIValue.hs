@@ -22,7 +22,7 @@ data UIValue = UIValueNull
              | UIValueExpression Expression
              | UIValueByte Word8
              | UIValueInteger Integer
-             | UIValueReplayCoord ReplayCoord
+             | UIValueReplayCoord AccessNr
              | UIValueThreadState ThreadState
              | UIValueRegisterName RegisterName
              | UIValueWord Word64
@@ -175,11 +175,6 @@ instance AvailInUI Word8 where
     fromUI (UIValueByte b) = Right b
     fromUI e = coerceError "byte" e
 
-instance AvailInUI ReplayCoord where
-    toUI = UIValueReplayCoord
-    fromUI (UIValueReplayCoord l) = Right l
-    fromUI e = coerceError "trace location" e
-
 instance AvailInUI Integer where
     toUI = UIValueInteger
     fromUI (UIValueInteger i) = Right i
@@ -235,5 +230,6 @@ instance AvailInUI ThreadId where
     fromUI e = coerceError "ThreadId" e
 
 instance AvailInUI AccessNr where
-    toUI = toUI . ReplayCoord
-    fromUI = fmap rc_access . fromUI
+    toUI = UIValueReplayCoord
+    fromUI (UIValueReplayCoord e) = Right e
+    fromUI e = coerceError "ReplayCoord" e

@@ -117,13 +117,12 @@ traceThread start thr =
     case histCoord start of
       Infinity -> []
       Finite cur_record ->
-          let new_record = ReplayCoord { rc_access = rc_access cur_record + 50000 }
+          let new_record = cur_record + 50000
           in snd $ deError $ trace (deError $ appendHistory start $ HistorySetThread thr) $ Finite new_record
 
 runMemoryThread :: History -> ThreadId -> AccessNr -> (History, [TraceRecord])
 runMemoryThread start tid acc =
-    let targetCoord = ReplayCoord acc
-    in deError $ trace (deError $ appendHistory start (HistorySetThread tid)) $ Finite targetCoord
+    deError $ trace (deError $ appendHistory start (HistorySetThread tid)) $ Finite acc
 
 fetchMemory8 :: History -> Word64 -> Maybe Word64
 fetchMemory8 hist addr =
@@ -149,7 +148,7 @@ evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
 evalExpressionInSnapshot (ExpressionNot l) hist st =
     fmap complement $ evalExpressionInSnapshot l hist st
 
-histCoord :: History -> Topped ReplayCoord
+histCoord :: History -> Topped AccessNr
 histCoord hist = case histLastCoord hist of
                    Finite x -> Finite x
                    Infinity ->
@@ -171,12 +170,12 @@ findNeighbouringHistories start =
          (ReplayStateFailed _ _ _ _, _) -> []
          (ReplayStateFinished _, _) -> tlog ("success " ++ (show start)) []
          (_, []) -> [] {- No runnable threads -> we are dead. -}
-         (ReplayStateOkay (ReplayCoord now), [t]) | t == nThread ->
+         (ReplayStateOkay now, [t]) | t == nThread ->
              {- Only one runnable thread -> run it until it
                 generates some event which might cause other threads
                 to become runnable.  That pretty much means a system
                 call. -}
-             let giveUpCoord = Finite $ ReplayCoord $ now + 100
+             let giveUpCoord = Finite $ now + 100
                  trc = snd $ deError $ trace start giveUpCoord
                  syscalls = filter isSyscall trc
                             where isSyscall x = case trc_trc x of
@@ -185,15 +184,15 @@ findNeighbouringHistories start =
                  syscallLocs = map trc_loc syscalls
                  runToCoord = case syscallLocs of
                                 [] -> giveUpCoord
-                                ((ReplayCoord x):_) -> Finite $ ReplayCoord $ x + 1
+                                (x:_) -> Finite $ x + 1
              in dt ("run single-threaded to " ++ (show runToCoord))
                     [deError $ start `appendHistory` (HistoryRun $ runToCoord)]
 
-         (ReplayStateOkay (ReplayCoord _), [t]) | t /= nThread ->
+         (ReplayStateOkay _, [t]) | t /= nThread ->
              {- Forced context switch: only one thread is runnable,
                 and it's not the current thread. -}
              [deError $ start `appendHistory` (HistorySetThread t)]
-         (ReplayStateOkay (ReplayCoord now), _) ->
+         (ReplayStateOkay now, _) ->
 
              {- We have several threads to choose from.  The simplest
                 approach would be to pick a thread arbitrarily and run
@@ -209,7 +208,7 @@ findNeighbouringHistories start =
                 crosses a syscall boundary is by definition not
                 interesting. -}
              let trace_for_thread horizon t =
-                     let (postTraceHist, collectedTrace) = deError $ trace (deError $ start `appendHistory` (HistorySetThread t)) $ Finite $ ReplayCoord horizon
+                     let (postTraceHist, collectedTrace) = deError $ trace (deError $ start `appendHistory` (HistorySetThread t)) $ Finite horizon
                          (haveSyscall, stoppedTrace) = stop_at_syscall collectedTrace
                          filteredTrace = filter (isInteresting . trc_trc) stoppedTrace
                          isInteresting (TraceFootstep _ _ _ _) = False
@@ -256,10 +255,9 @@ findNeighbouringHistories start =
                                  | other_t <- threads', other_t /= t, evt <- snd $ tt other_t]
                          thread_event t = case thread_events t of
                                             [] -> Nothing
-                                            (x:_) -> case trc_loc x of
-                                                       ReplayCoord c -> Just $ ReplayCoord $ c + 1
+                                            (x:_) -> Just $ trc_loc x + 1
                      in [(t, (fst $ tt t, thread_event t)) | t <- threads']
-                 real_targets :: AccessNr -> [(ThreadId, ReplayCoord)]
+                 real_targets :: AccessNr -> [(ThreadId, AccessNr)]
                  real_targets h =
                      let tts = thread_targets h
                          {- We need to advance the horizon if there's
@@ -274,7 +272,7 @@ findNeighbouringHistories start =
                         else concatMap (\x -> case x of
                                                 (t, (_, Just i)) -> [(t,i)]
                                                 (_, (_, Nothing)) -> []) tts
-                 targets :: [(ThreadId, ReplayCoord)]
+                 targets :: [(ThreadId, AccessNr)]
                  targets = real_targets (now + 1000)
                            -- [(t, ReplayCoord $ now + 1) | t <- threads']
              in
@@ -408,9 +406,9 @@ getCriticalRips hist (CriticalSection interestingThread accesses) =
                      (\a -> nextThread (deError $ truncateHistory' hist $ Finite a) == interestingThread)
                      accesses'
 
-        ripsInAccess :: ReplayCoord -> [Word64]
-        ripsInAccess start@(ReplayCoord acc) =
-            case trace (deError $ truncateHistory' hist $ Finite start) (Finite $ ReplayCoord $ acc + 1) of
+        ripsInAccess :: AccessNr -> [Word64]
+        ripsInAccess acc =
+            case trace (deError $ truncateHistory' hist $ Finite acc) (Finite $ acc + 1) of
               Left err -> error $ "ripsBetween: " ++ err
               Right (_, t) -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc t]
 
@@ -696,7 +694,7 @@ lastCommunication hist threadA threadB =
                                 TraceLoad _ _ _ _ -> True
                                 _ -> False
                          else False
-            in do start <- truncateHistory hist $ Finite $ ReplayCoord horizon
+            in do start <- truncateHistory hist $ Finite horizon
                   trc <- traceTo start hist
                   return $ filter isInteresting trc
         
@@ -721,7 +719,7 @@ lastCommunication hist threadA threadB =
                      case findLast (isConflictingLoad ptr . trc_trc) trcs of
                        Nothing -> rest
                        Just conflictingLoad ->
-                           (rc_access $ trc_loc trc, rc_access $ trc_loc conflictingLoad):rest
+                           (trc_loc trc, trc_loc conflictingLoad):rest
                  _ -> rest
               
         pairsAtHorizon :: AccessNr -> Either String [(AccessNr, AccessNr)]
@@ -737,4 +735,4 @@ lastCommunication hist threadA threadB =
                        else worker $ horizon - 10
                  _ -> return $ Just $ last pairs
 
-    in worker $ rc_access endOfHistory
+    in worker endOfHistory

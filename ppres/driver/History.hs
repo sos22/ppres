@@ -8,21 +8,21 @@ import Control.Monad
 import Types
 import Worker
 
-data HistoryEntry = HistoryRun !(Topped ReplayCoord)
+data HistoryEntry = HistoryRun !(Topped AccessNr)
                   | HistorySetThread !ThreadId
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
    the number of entries in the history.  This means we can do a quick
    out in historyPrefixOf in many useful cases. -}
-data History = History (Topped ReplayCoord) Int (DList HistoryEntry) deriving (Show, Eq, Read)
+data History = History (Topped AccessNr) Int (DList HistoryEntry) deriving (Show, Eq, Read)
 
-histLastCoord :: History -> Topped ReplayCoord
+histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x
 
-last_coord :: [HistoryEntry] -> Topped ReplayCoord
+last_coord :: [HistoryEntry] -> Topped AccessNr
 last_coord he = worker $ reverse he
-                where worker [] = Finite startCoord
+                where worker [] = Finite $ AccessNr 0
                       worker ((HistoryRun x):_) = x
                       worker (_:x) = worker x
 
@@ -39,9 +39,9 @@ mkHistory :: [HistoryEntry] -> History
 mkHistory h = History (last_coord h) (length h) (listToDl h)
 
 {- Estimate of cost of going from a to b. -}
-replayCost :: ReplayCoord -> ReplayCoord -> Integer
+replayCost :: AccessNr-> AccessNr -> Integer
 replayCost a b =
-    toInteger $ rc_access b - rc_access a
+    toInteger $ b - a
 
 doHistoryEntry :: Worker -> HistoryEntry -> IO Integer
 doHistoryEntry w (HistoryRun cntr) =
@@ -157,7 +157,7 @@ appendHistory (History old_last_epoch old_nr_records dlh) he =
                 return $ sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
-truncateHistory :: History -> Topped ReplayCoord -> Either String History
+truncateHistory :: History -> Topped AccessNr -> Either String History
 truncateHistory (History _ _ hs) cntr =
     let worker [HistoryRun Infinity] = Right [HistoryRun cntr]
         worker ((HistoryRun c):hs') =
@@ -169,7 +169,7 @@ truncateHistory (History _ _ hs) cntr =
 
 {- Like truncateHistory, but make sure we stay in the same thread.
    Bit of a hack. -}
-truncateHistory' :: History -> Topped ReplayCoord -> Either String History
+truncateHistory' :: History -> Topped AccessNr -> Either String History
 truncateHistory' (History _ _ hs) cntr =
     let worker [HistoryRun Infinity] = Right [HistoryRun cntr]
         worker ((HistoryRun c):hs') =

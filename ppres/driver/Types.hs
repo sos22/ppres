@@ -21,23 +21,7 @@ data Worker = Worker { worker_fd :: Socket,
 instance Show Worker where
     show w = "worker fd " ++ (show $ worker_fd w)
 
-data ReplayCoord = ReplayCoord { rc_access :: AccessNr } deriving (Eq)
-
-instance Ord ReplayCoord where
-    compare a b = rc_access a `compare` rc_access b
-
-startCoord :: ReplayCoord
-startCoord = ReplayCoord 0
-
-instance Show ReplayCoord where
-    show tl = (show $ rc_access tl)
-
-instance Read ReplayCoord where
-    readsPrec _ x =
-        do (access,trail3) <- reads x
-           return (ReplayCoord access, trail3)
-                              
-data CriticalSection = CriticalSection ThreadId [ReplayCoord]
+data CriticalSection = CriticalSection ThreadId [AccessNr]
 
 data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                   trc_foot_rdx :: Word64,
@@ -110,7 +94,7 @@ instance Read TraceEntry where
 
 data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
                                  trc_tid :: ThreadId,
-                                 trc_loc :: ReplayCoord } deriving (Show, Read)
+                                 trc_loc :: AccessNr } deriving (Show, Read)
 
 data RegisterName = REG_RAX
                   | REG_RDX
@@ -165,16 +149,16 @@ data Binop = BinopCombine
 
 data Expression = ExpressionRegister RegisterName Word64
                 | ExpressionConst Word64
-                | ExpressionLoad ThreadId Int ReplayCoord Expression Expression
-                | ExpressionStore ThreadId ReplayCoord Expression
+                | ExpressionLoad ThreadId Int AccessNr Expression Expression
+                | ExpressionStore ThreadId AccessNr Expression
                 | ExpressionImported Word64
                 | ExpressionBinop Binop Expression Expression
                 | ExpressionNot Expression deriving (Read)
 
 data ExpressionFolder a = ExpressionFolder { ef_reg :: RegisterName -> Word64 -> a,
                                              ef_const :: Word64 -> a,
-                                             ef_load :: ThreadId -> Int -> ReplayCoord -> a -> a -> a,
-                                             ef_store :: ThreadId -> ReplayCoord -> a -> a,
+                                             ef_load :: ThreadId -> Int -> AccessNr -> a -> a -> a,
+                                             ef_store :: ThreadId -> AccessNr -> a -> a,
                                              ef_imported :: Word64 -> a,
                                              ef_binop :: Binop -> a -> a -> a,
                                              ef_not :: a -> a }
@@ -210,13 +194,13 @@ instance Show Expression where
 data ReplayFailureReason = FailureReasonControl 
                          | FailureReasonData Expression Expression deriving (Show, Read)
 
-data ReplayState = ReplayStateOkay ReplayCoord
-                 | ReplayStateFinished ReplayCoord
-                 | ReplayStateFailed String ThreadId ReplayCoord ReplayFailureReason deriving (Show, Read)
+data ReplayState = ReplayStateOkay AccessNr
+                 | ReplayStateFinished AccessNr
+                 | ReplayStateFailed String ThreadId AccessNr ReplayFailureReason deriving (Show, Read)
 
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,
-                                 ts_last_run :: ReplayCoord,
+                                 ts_last_run :: AccessNr,
                                  ts_last_rip :: Word64 } deriving Show
 
 instance Monad (Either a) where
@@ -308,9 +292,6 @@ instance Forcable Bool where
 instance Forcable x => Forcable (Maybe x) where
     force Nothing = id
     force (Just x) = force x
-
-instance Forcable ReplayCoord where
-    force rc = force $ rc_access rc
 
 data DListEntry a = DListEntry {dle_prev :: Maybe (DListEntry a),
                                 dle_next :: Maybe (DListEntry a),
