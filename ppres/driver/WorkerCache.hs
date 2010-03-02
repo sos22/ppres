@@ -4,7 +4,7 @@
    are responsible for mapping them into Workers as and when
    necessary. -}
 module WorkerCache(initWorkerCache, destroyWorkerCache, 
-                   trace, 
+                   trace,
                    threadState, replayState, 
                    fetchMemory, vgIntermediate, nextThread,
                    controlTraceTo, getRegisters,

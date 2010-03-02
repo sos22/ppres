@@ -6,6 +6,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                    compiling without getting lots of stupid compiler
                    errors. -}
                 evalExpressionInSnapshot, evalExpressionWithStore,
+                findSomeHistory,
 
                 enumerateHistories, getRacingExpressions,
                 criticalSections, mkFixupLibrary, lastCommunication) where
@@ -112,18 +113,6 @@ evalExpressionWithStore (ExpressionBinop op l' r') st =
        r <- evalExpressionWithStore r' st
        return $ binopFunc op l r
 
-traceThread :: History -> ThreadId -> [TraceRecord]
-traceThread start thr =
-    case histCoord start of
-      Infinity -> []
-      Finite cur_record ->
-          let new_record = cur_record + 50000
-          in snd $ deError $ trace (deError $ appendHistory start $ HistorySetThread thr) $ Finite new_record
-
-runMemoryThread :: History -> ThreadId -> AccessNr -> (History, [TraceRecord])
-runMemoryThread start tid acc =
-    deError $ trace (deError $ appendHistory start (HistorySetThread tid)) $ Finite acc
-
 fetchMemory8 :: History -> Word64 -> Maybe Word64
 fetchMemory8 hist addr =
     do xs <- fetchMemory hist addr 8
@@ -147,15 +136,6 @@ evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
        return $ binopFunc op l r
 evalExpressionInSnapshot (ExpressionNot l) hist st =
     fmap complement $ evalExpressionInSnapshot l hist st
-
-histCoord :: History -> Topped AccessNr
-histCoord hist = case histLastCoord hist of
-                   Finite x -> Finite x
-                   Infinity ->
-                       case replayState hist of
-                         ReplayStateOkay x -> Finite x
-                         ReplayStateFinished _ -> Infinity
-                         ReplayStateFailed _ _ e _ -> Finite e
 
 live_threads :: History -> [ThreadId]
 live_threads hist =
@@ -309,7 +289,7 @@ exhaustiveExplore start advance =
     in es_white $ exploreState startState
 
 exploreTo :: (Eq a, Show a) => a -> (a -> [a]) -> (a -> Bool) -> Maybe a
-exploreTo start advance pred =
+exploreTo start advance prd =
     let startState = ExploreState [] [start]
         exploreState state =
             case pickNextItem state of
@@ -317,24 +297,20 @@ exploreTo start advance pred =
               Just (n_item, n_state) ->
                   let new_greys = advance n_item
                       next_state = foldr discoverItem n_state new_greys
-                  in if pred n_item
+                  in if prd n_item
                      then Just n_item
                      else exploreState next_state
     in exploreState startState
 
-{-
-allReachableHistories :: History -> [History]
-allReachableHistories s = exhaustiveExplore s findNeighbouringHistories
--}
-
 enumerateHistories :: History -> [History]
-enumerateHistories start =
-    exhaustiveExplore start findNeighbouringHistories
-{-
+enumerateHistories start = exhaustiveExplore start findNeighbouringHistories
+
+findSomeHistory :: History -> Maybe History
+findSomeHistory start =
+    exploreTo start findNeighbouringHistories succeeds
     where succeeds x = case replayState x of
                          ReplayStateFinished _ -> True
                          _ -> False
--}
 
 --enumerateHistories start = enumerateAllEpochs [start]
 {-
