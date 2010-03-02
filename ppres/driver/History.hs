@@ -1,5 +1,5 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
-               appendHistory, truncateHistory, History, HistoryEntry(..),
+               appendHistory, truncateHistory, History,
                mkHistory, histLastCoord, controlTraceToWorker,
                traceToWorker, runThread) where
 
