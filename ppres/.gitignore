@@ -5,3 +5,5 @@ schedule
 test_schedule
 races
 pplogfile
+.*.dep
+.depend
