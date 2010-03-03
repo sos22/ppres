@@ -52,23 +52,17 @@ trivParsec = do inp <- getInput
                   [(x,rest)] -> do setInput rest
                                    return x
                   _ -> fail "ambiguous parse"
-                    
+
 expressionParser :: Parser UIExpression
 expressionParser =
     let parseInteger = P.integer command_lexer
-    in
-      tchoice [do h <- trivParsec
-                  return $ UILiteral h,
-               do char '~'
-                  tid <- parseInteger
-                  return $ UILiteral $ UIValueThreadId $ ThreadId tid,
-               do keyword "f"
-                  f <- expressionParser
-                  a <- expressionParser
-                  return $ UIFunApp f a,
-               do ident <- P.identifier command_lexer
-                  return $ UIVarName ident
-            ]
+    in do atoms <- many $ tchoice [liftM UILiteral trivParsec,
+                                   do char '~'
+                                      tid <- parseInteger
+                                      return $ UILiteral $ UIValueThreadId $ ThreadId tid,
+                                   liftM UIVarName $ P.identifier command_lexer,
+                                   between (P.reservedOp command_lexer "(") (P.reservedOp command_lexer ")") expressionParser]
+          return $ foldl1 UIFunApp atoms
 
 assignmentParser :: Parser UIAssignment
 assignmentParser =
