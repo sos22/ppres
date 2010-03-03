@@ -6,6 +6,7 @@ import Text.Parsec
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (haskellDef)
+import Text.Parsec.Error
 import IO
 import Control.Monad.State
 import Data.IORef
@@ -45,18 +46,28 @@ keyword x = do v <- P.identifier command_lexer
 tchoice :: [Parser a] -> Parser a
 tchoice = choice . (map Text.Parsec.try)
 
-trivParsec :: Read a => Parser a
-trivParsec = do inp <- getInput
-                case reads inp of
-                  [] -> fail "no parse"
-                  [(x,rest)] -> do setInput rest
-                                   return x
-                  _ -> fail "ambiguous parse"
+trivParsec :: (Monad m, Read a) => ParsecT [Char] u m a
+trivParsec =
+    ParsecT { runParsecT =
+                  \state ->
+                      let inp = stateInput state
+                      in case reads $ stateInput state of
+                           [] -> return $ Empty $ return $ Error $ newErrorMessage (Message "no parse") (statePos state)
+                           [(x,rest)] ->
+                               return $ Consumed $ return $ Ok x (state {stateInput = rest}) (newErrorUnknown $ statePos state)
+                           _ -> fail "ambiguous parse" }
+
+ignSpace :: Parser a -> Parser a
+ignSpace x =
+    do skipMany space
+       r <- x
+       skipMany space
+       return r
 
 expressionParser :: Parser UIExpression
 expressionParser =
     let parseInteger = P.integer command_lexer
-    in do atoms <- many $ tchoice [liftM UILiteral trivParsec,
+    in do atoms <- many $ tchoice [liftM UILiteral (ignSpace trivParsec),
                                    do char '~'
                                       tid <- parseInteger
                                       return $ UILiteral $ UIValueThreadId $ ThreadId tid,
