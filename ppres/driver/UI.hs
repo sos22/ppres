@@ -58,20 +58,16 @@ expressionParser =
     let parseInteger = P.integer command_lexer
     in
       tchoice [do h <- trivParsec
-                  return $ UILiteral $ UIValueSnapshot $ h,
-               do h <- trivParsec
                   return $ UILiteral h,
+               do char '~'
+                  tid <- parseInteger
+                  return $ UILiteral $ UIValueThreadId $ ThreadId tid,
                do keyword "f"
                   f <- expressionParser
                   a <- expressionParser
                   return $ UIFunApp f a,
-               do char '~'
-                  tid <- parseInteger
-                  return $ UILiteral $ UIValueThreadId $ ThreadId tid,
                do ident <- P.identifier command_lexer
-                  return $ UIVarName ident,
-               do v <- parseInteger
-                  return $ UILiteral $ UIValueInteger v
+                  return $ UIVarName ident
             ]
 
 assignmentParser :: Parser UIAssignment

@@ -5,6 +5,7 @@ import Control.Monad.Instances()
 import Control.Monad
 import Data.Word
 import Numeric
+import Char
 
 import Types
 import ReplayState()
@@ -56,8 +57,9 @@ instance Show UIValue where
     show (UIValueThreadId (ThreadId t)) = "~" ++ (show t)
 
 instance Read UIValue where
+    readsPrec _ [] = []
     readsPrec _ ('(':')':x) = [(UIValueNull,x)]
-    readsPrec _ x@('0':'x':_) = map (first UIValueInteger) $ reads x
+    readsPrec _ x | isDigit (head x) = map (first UIValueInteger) $ reads x
     readsPrec _ ('{':t) = do (contents, trail1) <- reads t
                              case trail1 of
                                '}':trail2 -> return (UIValueReplayCoord contents, trail2)
@@ -93,7 +95,7 @@ instance Read UIValue where
                          "History" -> do (v, trail2) <- reads x
                                          return (UIValueSnapshot v, trail2)
                          "FUNC" -> [(UIValueError "can't parse functions", trail1)]
-                         _ -> [(UIValueError $ "can't parse " ++ (show x), trail1)]
+                         _ -> []
 
 uiValueString :: String -> UIValue
 uiValueString s = UIValueList $ map UIValueChar s
