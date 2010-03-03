@@ -50,12 +50,11 @@ trivParsec :: (Monad m, Read a) => ParsecT [Char] u m a
 trivParsec =
     ParsecT { runParsecT =
                   \state ->
-                      let inp = stateInput state
-                      in case reads $ stateInput state of
-                           [] -> return $ Empty $ return $ Error $ newErrorMessage (Message "no parse") (statePos state)
-                           [(x,rest)] ->
-                               return $ Consumed $ return $ Ok x (state {stateInput = rest}) (newErrorUnknown $ statePos state)
-                           _ -> fail "ambiguous parse" }
+                      case reads $ stateInput state of
+                        [] -> return $ Empty $ return $ Error $ newErrorMessage (Message "no parse") (statePos state)
+                        [(x,rest)] ->
+                            return $ Consumed $ return $ Ok x (state {stateInput = rest}) (newErrorUnknown $ statePos state)
+                        _ -> fail "ambiguous parse" }
 
 ignSpace :: Parser a -> Parser a
 ignSpace x =
@@ -157,6 +156,10 @@ uiIndex lst idx =
 uiFilter :: (UIValue -> UIValue) -> [UIValue] -> Either String [UIValue]
 uiFilter f items = filterM (fromUI . f) items
 
+isSuccessReplayState :: ReplayState -> Bool
+isSuccessReplayState (ReplayStateFinished _) = True
+isSuccessReplayState _ = False
+
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
@@ -187,7 +190,9 @@ initialWorldState fd =
                                             ("lastcommunication", mkUIFunction3 lastCommunication),
                                             ("abshist", mkUIFunction2 absHistSuffix),
                                             ("trunc", mkUIFunction2 $ \x y -> truncateHistory x $ Finite y),
-                                            ("filter", mkUIFunction2 uiFilter)
+                                            ("filter", mkUIFunction2 uiFilter),
+                                            ("issuccess", mkUIFunction isSuccessReplayState),
+                                            ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue)))
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
