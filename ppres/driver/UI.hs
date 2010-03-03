@@ -21,8 +21,7 @@ import History
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
-data UIExpression = UIDir
-                  | UIVarName VariableName
+data UIExpression = UIVarName VariableName
                   | UITruncHist UIExpression (Topped AccessNr)
                   | UILiteral UIValue
                   | UIFunApp UIExpression UIExpression
@@ -32,6 +31,7 @@ data UIAssignment = UIAssignment VariableName UIExpression
                   | UIFunction UIExpression
                   | UILoad VariableName String
                   | UISave UIExpression String
+                  | UIDir
                   | UIExit deriving Show
 
 command_lexer :: P.TokenParser ()
@@ -62,9 +62,7 @@ expressionParser =
         parseReplayCoord = liftM AccessNr parseAccessNr
         parseInteger = P.integer command_lexer
     in
-      tchoice [
-               liftM (const UIDir) $ keyword "dir",
-               do keyword "trunc"
+      tchoice [do keyword "trunc"
                   hist <- expressionParser
                   n <- parseTopped parseReplayCoord
                   return $ UITruncHist hist n,
@@ -90,6 +88,9 @@ assignmentParser =
                 rhs <- expressionParser
                 eof
                 return $ UIAssignment var rhs,
+             do keyword "dir"
+                eof
+                return UIDir,
              do keyword "exit"
                 eof
                 return UIExit,
@@ -131,8 +132,6 @@ evalExpression ws f =
       UIVarName name -> lookupVariable ws name
       UITruncHist hist n ->
           withSnapshot ws hist $ \s -> truncateHistory s n
-      UIDir ->
-          uiValueString $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
       UILiteral x -> x
       UIFunApp ff a ->
           evalExpression ws ff `uiApply` evalExpression ws a
@@ -224,6 +223,9 @@ runAssignment as ws =
           let r = evalExpression ws f
               ws' = doAssignment ws "last" r
           in print r >> return ws'
+      UIDir ->
+          do print $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
+             return ws
       UILoad vname fname ->
           let isSpace ' ' = True
               isSpace '\n' = True
