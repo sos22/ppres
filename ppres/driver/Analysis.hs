@@ -9,7 +9,8 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 findSomeHistory,
 
                 enumerateHistories, getRacingExpressions,
-                criticalSections, mkFixupLibrary, lastCommunication) where
+                criticalSections, mkFixupLibrary, lastCommunication,
+                commGraph, communicationGraph) where
 
 import Types
 import WorkerCache
@@ -623,6 +624,30 @@ mkFixupLibrary hist crit_sects =
     do fixups <- mkFixups hist crit_sects ["id_" ++ (show x) | x <- [(0::Integer)..]]
        return $ "#include \"fixup_lib_const.h\"\n" ++ (concat fixups)
 
+{- Find the last thing in the list which satisfies a predicate, or
+   Nothing if there is no such thing. -}
+findLast :: (a -> Bool) -> [a] -> Maybe a
+findLast _ [] = Nothing
+findLast f (a:as) = case findLast f as of
+                      Nothing -> if f a
+                                 then Just a
+                                 else Nothing
+                      x -> x
+
+findCommunicatingPairs :: [TraceRecord] -> [(AccessNr, AccessNr)]
+findCommunicatingPairs [] = []
+findCommunicatingPairs (trc:trcs) =
+    let rest = findCommunicatingPairs trcs
+        isConflictingLoad ptr (TraceLoad _ _ ptr' _) = ptr == ptr'
+        isConflictingLoad _ _ = False
+    in case trc_trc trc of
+         TraceStore _ _ ptr _ ->
+             case findLast (isConflictingLoad ptr . trc_trc) $ filter ((/=) (trc_tid trc) . trc_tid) trcs of
+               Nothing -> rest
+               Just conflictingLoad ->
+                   (trc_loc trc, trc_loc conflictingLoad):rest
+         _ -> rest
+              
 {- Given a history and a pair of threads, A and B, work backwards
    through the history and discover the last point at which A might
    have influenced B.  A potential influence is defined to be wherever
@@ -665,30 +690,6 @@ lastCommunication hist threadA threadB =
                   trc <- traceTo start hist
                   return $ filter isInteresting trc
         
-        {- Find the last thing in the list which satisfies a
-           predicate, or Nothing if there is no such thing. -}
-        findLast :: (a -> Bool) -> [a] -> Maybe a
-        findLast _ [] = Nothing
-        findLast f (a:as) = case findLast f as of
-                              Nothing -> if f a
-                                         then Just a
-                                         else Nothing
-                              x -> x
-
-        findCommunicatingPairs :: [TraceRecord] -> [(AccessNr, AccessNr)]
-        findCommunicatingPairs [] = []
-        findCommunicatingPairs (trc:trcs) =
-            let rest = findCommunicatingPairs trcs
-                isConflictingLoad ptr (TraceLoad _ _ ptr' _) = ptr == ptr'
-                isConflictingLoad _ _ = False
-            in case trc_trc trc of
-                 TraceStore _ _ ptr _ ->
-                     case findLast (isConflictingLoad ptr . trc_trc) trcs of
-                       Nothing -> rest
-                       Just conflictingLoad ->
-                           (trc_loc trc, trc_loc conflictingLoad):rest
-                 _ -> rest
-              
         pairsAtHorizon :: AccessNr -> Either String [(AccessNr, AccessNr)]
         pairsAtHorizon = fmap findCommunicatingPairs . traceFromHorizon
 
@@ -703,3 +704,33 @@ lastCommunication hist threadA threadB =
                  _ -> return $ Just $ last pairs
 
     in worker endOfHistory
+
+{- Run from prefix to history, collecting a trace as we go, and then
+   use this trace to build a communication graph.  This is a list of
+   pairs of accesses where every pair (X,Y) indicates that X is a
+   store and Y a load from the same address, with Y happening after X
+   and in a different thread.  This captures all of the inter-thread
+   interactions in the trace. -}
+communicationGraph :: History -> History -> Either String [(AccessNr, AccessNr)]
+communicationGraph prefix hist = fmap findCommunicatingPairs $ traceTo prefix hist
+
+
+{- Translate the nodes in a communication graph to give (thread,RIP)
+   pairs rather than just access numbers.  These aren't as informative
+   (in particular, they're ambiguous in the presence of loops), but
+   they are much easier to work with, and the lost information isn't
+   usually critical. -}
+commGraphRel :: History -> [(AccessNr, AccessNr)] -> Either String [((ThreadId, Word64), (ThreadId, Word64))]
+commGraphRel hist accesses =
+    let doOneAccess acc =
+            do t <- threadAtAccess hist acc
+               rip <- getRipAtAccess hist acc
+               return (t, rip)
+        doOnePair (a, b) = do a' <- doOneAccess a
+                              b' <- doOneAccess b
+                              return (a', b')
+    in mapM doOnePair accesses
+
+commGraph :: History -> History -> Either String [((ThreadId, Word64), (ThreadId, Word64))]
+commGraph prefix hist =
+    communicationGraph prefix hist >>= commGraphRel hist

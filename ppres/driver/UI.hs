@@ -206,7 +206,8 @@ initialWorldState fd =
                                             ("issuccess", mkUIFunction isSuccessReplayState),
                                             ("isfailure", mkUIFunction isFailureReplayState),
                                             ("isrealfailure", mkUIFunction isRealFailureReplayState),
-                                            ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue)))
+                                            ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue))),
+                                            ("tcgraph", mkUIFunction2 commGraph)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

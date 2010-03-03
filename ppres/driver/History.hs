@@ -1,7 +1,7 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History,
                mkHistory, histLastCoord, controlTraceToWorker,
-               traceToWorker, runThread, absHistSuffix) where
+               traceToWorker, runThread, absHistSuffix, threadAtAccess) where
 
 import Control.Monad
 
@@ -181,6 +181,13 @@ absHistSuffix prefix@(History (Finite pacc) _ _) hist =
       (hh, []) -> Right $ mkThreadAbsoluteHistory pacc hh
       _ -> Left $ (show prefix) ++ " is not a prefix of " ++ (show hist)
 absHistSuffix _ _ = Left "tried to strip an infinite prefix"
+
+threadAtAccess :: History -> AccessNr -> Either String ThreadId
+threadAtAccess (History _ _ items) acc =
+    foldr (\(HistoryRun tid acc') rest ->
+               if (Finite acc) < acc'
+               then Right tid
+               else rest) (Left "ran out of history") $ dlToList items
 
 instance Forcable HistoryEntry where
     force (HistoryRun tid t) = force tid . force t
