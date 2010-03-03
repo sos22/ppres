@@ -165,6 +165,9 @@ uiFilter f items = filterM (fromUI . f) items
 isSuccessReplayState :: ReplayState -> Bool
 isSuccessReplayState (ReplayStateFinished _) = True
 isSuccessReplayState _ = False
+isFailureReplayState :: ReplayState -> Bool
+isFailureReplayState (ReplayStateFailed _ _ _ _) = True
+isFailureReplayState _ = False
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
@@ -198,6 +201,7 @@ initialWorldState fd =
                                             ("trunc", mkUIFunction2 $ \x y -> truncateHistory x $ Finite y),
                                             ("filter", mkUIFunction2 uiFilter),
                                             ("issuccess", mkUIFunction isSuccessReplayState),
+                                            ("isfailure", mkUIFunction isFailureReplayState),
                                             ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue)))
                                            ] }
 
