@@ -32,7 +32,9 @@ data UIAssignment = UIAssignment VariableName UIExpression
                   | UILoad VariableName String
                   | UISave UIExpression String
                   | UIDir
-                  | UIExit deriving Show
+                  | UIExit
+                  | UINoop
+                    deriving Show
 
 command_lexer :: P.TokenParser ()
 command_lexer = P.makeTokenParser haskellDef
@@ -72,11 +74,15 @@ expressionParser =
                                       return $ UILiteral $ UIValueThreadId $ ThreadId tid,
                                    liftM UIVarName $ P.identifier command_lexer,
                                    between (P.reservedOp command_lexer "(") (P.reservedOp command_lexer ")") expressionParser]
-          return $ foldl1 UIFunApp atoms
+          if length atoms == 0
+           then fail "Huh? parse empty expression"
+           else return $ foldl1 UIFunApp atoms
 
 assignmentParser :: Parser UIAssignment
 assignmentParser =
-    tchoice [do var <- P.identifier command_lexer
+    tchoice [do eof
+                return UINoop,
+             do var <- P.identifier command_lexer
                 P.reservedOp command_lexer "="
                 rhs <- expressionParser
                 eof
@@ -213,6 +219,7 @@ exitWorld = do destroyWorkerCache
 runAssignment :: UIAssignment -> WorldState -> IO WorldState
 runAssignment as ws =
     case as of
+      UINoop -> return ws
       UIAssignment var rhs ->
           return $ doAssignment ws var $ evalExpression ws rhs
       UIFunction f ->
