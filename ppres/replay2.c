@@ -49,6 +49,7 @@ static void run_to(struct record_consumer *logfile, replay_coord_t to);
 struct failure_reason {
 	unsigned reason;
 	unsigned tid;
+	unsigned wanted_tid;
 	const struct expression *arg1;
 	const struct expression *arg2;
 };
@@ -793,6 +794,18 @@ reason_control(void)
 }
 
 static struct failure_reason *
+reason_wrong_thread(ThreadId wanted)
+{
+	struct failure_reason *fr;
+	fr = VG_(malloc)("reason_control", sizeof(*fr));
+	VG_(memset)(fr, 0, sizeof(*fr));
+	fr->reason = REASON_WRONG_THREAD;
+	fr->tid = current_thread->id;
+	fr->wanted_tid = wanted;
+	return fr;
+}
+
+static struct failure_reason *
 reason_data(const struct expression *e1, const struct expression *e2)
 {
 	struct failure_reason *fr;
@@ -860,6 +873,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, failure_reason->tid,
 				       now.access_nr);
 			send_string(msg);
+			if (failure_reason->reason == REASON_WRONG_THREAD)
+				send_ancillary(ANCILLARY_WANTED_THREAD, failure_reason->wanted_tid);
 			if (failure_reason->arg1)
 				send_expression(failure_reason->arg1);
 			if (failure_reason->arg2)
@@ -925,7 +940,7 @@ validate_event(const struct record_header *rec,
 	const void *payload = rec + 1;
 	const unsigned long *args = event->args;
 
-	replay_assert_eq(reason_control(), rec->tid, current_thread->id);
+	replay_assert_eq(reason_wrong_thread(rec->tid), rec->tid, current_thread->id);
 	switch (event->type) {
 	case EVENT_footstep: {
 		const struct footstep_record *fr = payload;

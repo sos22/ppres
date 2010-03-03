@@ -169,6 +169,10 @@ parseReplayState (ResponseDataAncillary 11 [x, tid, access_nr]:(ResponseDataStri
                                [] -> FailureReasonControl
                                _ -> error $ "unexpected extra data in a failure control response " ++ (show items)
                         1 -> uncurry FailureReasonData $  evalConsumer items $ pairM parseExpression parseExpression
+                        3 -> case items of
+                               [ResponseDataAncillary 18 [wantedTid]] ->
+                                   FailureReasonWrongThread (ThreadId $ fromIntegral wantedTid)
+                               _ -> error $ "can't parse data for wrong thread failure " ++ (show items)
                         _ -> error $ "unexpected failure class " ++ (show x)
 parseReplayState [ResponseDataAncillary 14 [access_nr]] = ReplayStateFinished $ AccessNr $ fromIntegral access_nr
 parseReplayState x = error $ "bad replay state " ++ (show x)

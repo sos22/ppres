@@ -192,6 +192,7 @@ instance Show Expression where
     show (ExpressionNot e) = "~(" ++ (show e) ++ ")"
 
 data ReplayFailureReason = FailureReasonControl 
+                         | FailureReasonWrongThread ThreadId {- The thread we wanted; the one we got is in ReplayStateFailed -}
                          | FailureReasonData Expression Expression deriving (Show, Read)
 
 data ReplayState = ReplayStateOkay AccessNr

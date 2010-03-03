@@ -168,6 +168,9 @@ isSuccessReplayState _ = False
 isFailureReplayState :: ReplayState -> Bool
 isFailureReplayState (ReplayStateFailed _ _ _ _) = True
 isFailureReplayState _ = False
+isRealFailureReplayState :: ReplayState -> Bool
+isRealFailureReplayState (ReplayStateFailed _ _ _ (FailureReasonWrongThread _)) = False
+isRealFailureReplayState x = isFailureReplayState x
 
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
@@ -202,6 +205,7 @@ initialWorldState fd =
                                             ("filter", mkUIFunction2 uiFilter),
                                             ("issuccess", mkUIFunction isSuccessReplayState),
                                             ("isfailure", mkUIFunction isFailureReplayState),
+                                            ("isrealfailure", mkUIFunction isRealFailureReplayState),
                                             ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue)))
                                            ] }
 

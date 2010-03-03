@@ -48,6 +48,7 @@ struct response_message {
 #define ANCILLARY_NEXT_THREAD 15
 #define ANCILLARY_REG_BINDING 16
 #define ANCILLARY_TRACE_SIGNAL 17
+#define ANCILLARY_WANTED_THREAD 18
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
@@ -60,6 +61,7 @@ struct response_string {
 #define REASON_CONTROL 0
 #define REASON_DATA 1
 #define REASON_OTHER 2
+#define REASON_WRONG_THREAD 3
 
 /* These must be in the same order as the fields in VEX's guest state
    structure. */
