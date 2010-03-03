@@ -157,34 +157,30 @@ truncateHistory (History _ _ hs) cntr =
 {- Make a new history in which access numbers are all relative to the
    previous access, rather than absolute from the beginning of the
    world. -}
-mkRelativeHistory' :: AccessNr -> [HistoryEntry] -> [(ThreadId, Integer)]
-mkRelativeHistory' _ [] = []
-mkRelativeHistory' (AccessNr base) ((HistoryRun tid (Finite aa@(AccessNr acc))):others) =
-    (tid, acc - base):(mkRelativeHistory' aa others)
-mkRelativeHistory' _ [HistoryRun _ Infinity] = error "can't convert infinite history to relative form"
-mkRelativeHistory' _ _ = error "history is broken: stuff beyond infinity"
-
-mkRelativeHistory :: [HistoryEntry] -> [(ThreadId, Integer)]
-mkRelativeHistory = mkRelativeHistory' 0
+mkRelativeHistory :: AccessNr -> [HistoryEntry] -> [(ThreadId, Integer)]
+mkRelativeHistory _ [] = []
+mkRelativeHistory (AccessNr base) ((HistoryRun tid (Finite aa@(AccessNr acc))):others) =
+    (tid, acc - base):(mkRelativeHistory aa others)
+mkRelativeHistory _ [HistoryRun _ Infinity] = error "can't convert infinite history to relative form"
+mkRelativeHistory _ _ = error "history is broken: stuff beyond infinity"
 
 relHistToThreadAbs :: [(ThreadId, Integer)] -> [(ThreadId, Integer)] -> [(ThreadId, Integer)]
 relHistToThreadAbs _ [] = []
 relHistToThreadAbs currentAccs ((tid,relAcc):others) =
     let currentAcc = maybe 0 id $ lookup tid currentAccs
         newAcc = currentAcc + relAcc
-        newLookup = [(t, if t == tid
-                         then newAcc
-                         else oldAcc) | (t, oldAcc) <- currentAccs]
-    in (tid,currentAcc):(relHistToThreadAbs newLookup others)
+        newLookup = (tid,newAcc):(filter ((/=) tid . fst) currentAccs)
+    in (tid,newAcc):(relHistToThreadAbs newLookup others)
 
-mkThreadAbsoluteHistory :: [HistoryEntry] -> [(ThreadId, Integer)]
-mkThreadAbsoluteHistory = relHistToThreadAbs [] . mkRelativeHistory
+mkThreadAbsoluteHistory :: AccessNr -> [HistoryEntry] -> [(ThreadId, Integer)]
+mkThreadAbsoluteHistory acc = relHistToThreadAbs [] . mkRelativeHistory acc
 
 absHistSuffix :: History -> History -> Either String [(ThreadId, Integer)]
-absHistSuffix prefix hist =
+absHistSuffix prefix@(History (Finite pacc) _ _) hist =
     case stripSharedPrefix hist prefix of
-      (hh, []) -> Right $ mkThreadAbsoluteHistory hh
+      (hh, []) -> Right $ mkThreadAbsoluteHistory pacc hh
       _ -> Left $ (show prefix) ++ " is not a prefix of " ++ (show hist)
+absHistSuffix _ _ = Left "tried to strip an infinite prefix"
 
 instance Forcable HistoryEntry where
     force (HistoryRun tid t) = force tid . force t
