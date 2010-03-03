@@ -21,8 +21,7 @@ import History
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
-data UIExpression = UIDummyFunction
-                  | UIDir
+data UIExpression = UIDir
                   | UIVarName VariableName
                   | UITruncHist UIExpression (Topped AccessNr)
                   | UILiteral UIValue
@@ -63,7 +62,7 @@ expressionParser =
         parseReplayCoord = liftM AccessNr parseAccessNr
         parseInteger = P.integer command_lexer
     in
-      tchoice [liftM (const UIDummyFunction) $ keyword "dummy",
+      tchoice [
                liftM (const UIDir) $ keyword "dir",
                do keyword "trunc"
                   hist <- expressionParser
@@ -129,7 +128,6 @@ withSnapshot ws expr f = inUI f $ evalExpression ws expr
 evalExpression :: WorldState -> UIExpression -> UIValue
 evalExpression ws f =
     case f of
-      UIDummyFunction -> UIValueNull
       UIVarName name -> lookupVariable ws name
       UITruncHist hist n ->
           withSnapshot ws hist $ \s -> truncateHistory s n
