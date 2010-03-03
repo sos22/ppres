@@ -154,6 +154,9 @@ uiIndex lst idx =
     then UIValueError $ "index " ++ (show idx) ++ " greater than length of list " ++ (show $ length lst)
     else lst!!idx
 
+uiFilter :: (UIValue -> UIValue) -> [UIValue] -> Either String [UIValue]
+uiFilter f items = filterM (fromUI . f) items
+
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
@@ -183,7 +186,8 @@ initialWorldState fd =
                                             ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)])),
                                             ("lastcommunication", mkUIFunction3 lastCommunication),
                                             ("abshist", mkUIFunction2 absHistSuffix),
-                                            ("trunc", mkUIFunction2 $ \x y -> truncateHistory x $ Finite y)
+                                            ("trunc", mkUIFunction2 $ \x y -> truncateHistory x $ Finite y),
+                                            ("filter", mkUIFunction2 uiFilter)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
@@ -211,7 +215,7 @@ runAssignment as ws =
               ws' = doAssignment ws "last" r
           in print r >> return ws'
       UIDir ->
-          do print $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
+          do putStrLn $ foldr (\a b -> a ++ "\n" ++ b) "" $ map fst $ ws_bindings ws
              return ws
       UILoad vname fname ->
           let isSpace ' ' = True

@@ -29,6 +29,7 @@ data UIValue = UIValueNull
              | UIValueWord Word64
              | UIValueFunction (UIValue -> UIValue)
              | UIValueThreadId ThreadId
+             | UIValueBool Bool
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -55,6 +56,8 @@ instance Show UIValue where
     show (UIValueWord x) = "WORD 0x" ++ (showHex x "")
     show (UIValueFunction _) = "FUNC"
     show (UIValueThreadId (ThreadId t)) = "~" ++ (show t)
+    show (UIValueBool True) = "True"
+    show (UIValueBool False) = "False"
 
 instance Read UIValue where
     readsPrec _ [] = []
@@ -95,6 +98,8 @@ instance Read UIValue where
                          "History" -> do (v, trail2) <- reads x
                                          return (UIValueSnapshot v, trail2)
                          "FUNC" -> [(UIValueError "can't parse functions", trail1)]
+                         "True" -> return (UIValueBool True, trail1)
+                         "False" -> return (UIValueBool False, trail1)
                          _ -> []
 
 uiValueString :: String -> UIValue
@@ -235,3 +240,8 @@ instance AvailInUI AccessNr where
     toUI = UIValueReplayCoord
     fromUI (UIValueReplayCoord e) = Right e
     fromUI e = coerceError "ReplayCoord" e
+
+instance AvailInUI Bool where
+    toUI = UIValueBool
+    fromUI (UIValueBool e) = Right e
+    fromUI e = coerceError "Bool" e
