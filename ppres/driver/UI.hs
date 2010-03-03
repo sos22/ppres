@@ -232,7 +232,9 @@ runAssignment as ws =
               safeRead x = case reads x of
                              [(a, y)] | isAllSpace y -> a
                              _ -> UIValueError $ "cannot parse " ++ x
-          in liftM (doAssignment ws vname . safeRead) $ readFile fname
+          in liftM (doAssignment ws vname . safeRead) $ (catch (readFile fname) $
+                                                         \e -> return $ "ERR " ++ (show e))
+                                                         
       UISave expr fname ->
           writeFile fname (show $ evalExpression ws expr) >> return ws
       UIExit -> exitWorld >> return ws
