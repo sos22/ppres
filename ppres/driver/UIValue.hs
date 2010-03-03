@@ -60,7 +60,7 @@ instance Read UIValue where
     readsPrec _ x@('0':'x':_) = map (first UIValueInteger) $ reads x
     readsPrec _ ('{':t) = do (contents, trail1) <- reads t
                              case trail1 of
-                               '}':trail2 -> return (contents, trail2)
+                               '}':trail2 -> return (UIValueReplayCoord contents, trail2)
                                _ -> []
     readsPrec _ ('[':t) =
         let readListBody tt =

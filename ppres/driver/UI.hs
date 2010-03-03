@@ -22,7 +22,6 @@ import History
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
 data UIExpression = UIVarName VariableName
-                  | UITruncHist UIExpression (Topped AccessNr)
                   | UILiteral UIValue
                   | UIFunApp UIExpression UIExpression
                     deriving Show
@@ -56,18 +55,12 @@ trivParsec = do inp <- getInput
                     
 expressionParser :: Parser UIExpression
 expressionParser =
-    let 
-        parseTopped e = tchoice [keyword "inf" >> return Infinity, liftM Finite e]
-        parseAccessNr = keyword "AccessNr" >> parseInteger
-        parseReplayCoord = liftM AccessNr parseAccessNr
-        parseInteger = P.integer command_lexer
+    let parseInteger = P.integer command_lexer
     in
-      tchoice [do keyword "trunc"
-                  hist <- expressionParser
-                  n <- parseTopped parseReplayCoord
-                  return $ UITruncHist hist n,
-               do h <- trivParsec
+      tchoice [do h <- trivParsec
                   return $ UILiteral $ UIValueSnapshot $ h,
+               do h <- trivParsec
+                  return $ UILiteral h,
                do keyword "f"
                   f <- expressionParser
                   a <- expressionParser
@@ -120,18 +113,10 @@ getCommand =
                         getCommand
          Right v -> return v
 
-inUI :: (AvailInUI a, AvailInUI b) => (a -> b) -> UIValue -> UIValue
-inUI f x = toUI $ fmap f $ fromUI x
-
-withSnapshot :: (AvailInUI a, AvailInUI b) => WorldState -> UIExpression -> (b -> a) -> UIValue
-withSnapshot ws expr f = inUI f $ evalExpression ws expr
-
 evalExpression :: WorldState -> UIExpression -> UIValue
 evalExpression ws f =
     case f of
       UIVarName name -> lookupVariable ws name
-      UITruncHist hist n ->
-          withSnapshot ws hist $ \s -> truncateHistory s n
       UILiteral x -> x
       UIFunApp ff a ->
           evalExpression ws ff `uiApply` evalExpression ws a
@@ -196,7 +181,8 @@ initialWorldState fd =
                                             ("map", mkUIFunction2 (map :: (UIValue->UIValue) -> [UIValue] -> [UIValue])),
                                             ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)])),
                                             ("lastcommunication", mkUIFunction3 lastCommunication),
-                                            ("abshist", mkUIFunction2 absHistSuffix)
+                                            ("abshist", mkUIFunction2 absHistSuffix),
+                                            ("trunc", mkUIFunction2 $ \x y -> truncateHistory x $ Finite y)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
