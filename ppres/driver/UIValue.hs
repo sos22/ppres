@@ -63,6 +63,15 @@ instance Show UIValue where
 instance Read UIValue where
     readsPrec _ [] = []
     readsPrec _ ('(':')':x) = [(UIValueNull,x)]
+    readsPrec _ ('(':t) =
+        do (left, trail1) <- reads t
+           case trail1 of
+             ',':' ':trail2 ->
+                 do (right, trail3) <- reads trail2
+                    case trail3 of
+                      ')':trail4 -> return (UIValuePair left right, trail4)
+                      _ -> []
+             _ -> []
     readsPrec _ x | isDigit (head x) = map (first UIValueInteger) $ reads x
     readsPrec _ ('{':t) = do (contents, trail1) <- reads t
                              case trail1 of
@@ -96,6 +105,8 @@ instance Read UIValue where
                                       return (UIValueExpression v, trail2)
                          "BYTE" -> do (v, trail2) <- reads trail1
                                       return (UIValueByte v, trail2)
+                         "WORD" -> do (v, trail2) <- reads trail1
+                                      return (UIValueWord v, trail2)
                          "History" -> do (v, trail2) <- reads x
                                          return (UIValueSnapshot v, trail2)
                          "FUNC" -> [(UIValueError "can't parse functions", trail1)]
