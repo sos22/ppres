@@ -10,7 +10,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
 
                 enumerateHistories, getRacingExpressions,
                 criticalSections, mkFixupLibrary, lastCommunication,
-                commGraph, communicationGraph) where
+                commGraph, loadOrigins) where
 
 import Types
 import WorkerCache
@@ -734,3 +734,35 @@ commGraphRel hist accesses =
 commGraph :: History -> History -> Either String [((ThreadId, Word64), (ThreadId, Word64))]
 commGraph prefix hist =
     communicationGraph prefix hist >>= commGraphRel hist
+
+
+{- tid, (RIP, ptr) -}
+type MemAccess = (ThreadId, (Word64, Word64))
+
+{- All of the memory accesses made going from start to end.  The Bool
+   is true for stores and false for loads. -}
+memTraceTo :: History -> History -> Either String [(Bool, MemAccess)]
+memTraceTo start end =
+    let worker [] = return []
+        worker ((TraceRecord (TraceLoad _ _ ptr _) tid acc):others) =
+            do rest <- worker others
+               rip <- getRipAtAccess end acc
+               return $ (False, (tid, (rip, ptr))):rest
+        worker ((TraceRecord (TraceStore _ _ ptr _) tid acc):others) =
+            do rest <- worker others
+               rip <- getRipAtAccess end acc
+               return $ (True, (tid, (rip, ptr))):rest
+        worker (_:others) = worker others
+    in traceTo start end >>= worker
+
+{- Run from prefix to hist, recording every load, and, for every load,
+   where the data loaded came from.  This will be either Nothing if it
+   was imported, or Just MemAccess if it came from a store. -}
+loadOrigins :: History -> History -> Either String [(MemAccess, Maybe MemAccess)]
+loadOrigins prefix hist =
+    let worker [] = []
+        worker ((False, acc):others) =
+            let store = find (\acc' -> (snd $ snd acc) == (snd $ snd acc')) [a | (True, a) <- others]
+            in (acc, store):(worker others)
+        worker (_:others) = worker others
+    in fmap (reverse . worker . reverse) $ memTraceTo prefix hist

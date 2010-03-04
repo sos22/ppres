@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
-module UIValue(uiValueString, AvailInUI(..), mapUIValue, UIValue(..), uiApply) where
+module UIValue(uiValueString, AvailInUI(..), mapUIValue, UIValue(..), uiApply,
+               uiValueEq) where
 
 import Control.Monad.Instances()
 import Control.Monad
@@ -121,6 +122,38 @@ uiApply f a =
     case fromUI f of
       Left e -> UIValueError e
       Right f' -> f' a
+
+uiValueEq :: UIValue -> UIValue -> Either String Bool
+uiValueEq UIValueNull UIValueNull = Right True
+uiValueEq (UIValueSnapshot h) (UIValueSnapshot h') = Right $ h == h'
+uiValueEq (UIValuePair a b) (UIValuePair c d) =
+    do x <- uiValueEq a c
+       y <- uiValueEq b d
+       return $ x && y
+uiValueEq (UIValueChar x) (UIValueChar y) = Right $ x == y
+uiValueEq (UIValueList xs) (UIValueList ys) =
+    worker xs ys
+    where worker [] [] = Right True
+          worker (a:as) (b:bs) = do x <- uiValueEq a b
+                                    y <- worker as bs
+                                    return $ x && y
+          worker _ _ = Right False
+uiValueEq (UIValueTrace x) (UIValueTrace y) = Right $ x == y
+uiValueEq (UIValueReplayState _) (UIValueReplayState _) =
+    Left "equality not defined over replay states"
+uiValueEq (UIValueExpression _) (UIValueExpression _) =
+    Left "equality not defined over expressions"
+uiValueEq (UIValueByte b) (UIValueByte b') = Right $ b == b'
+uiValueEq (UIValueInteger x) (UIValueInteger y) = Right $ x == y
+uiValueEq (UIValueReplayCoord x) (UIValueReplayCoord y) = Right $ x == y
+uiValueEq (UIValueThreadState x) (UIValueThreadState y) = Right $ x == y
+uiValueEq (UIValueRegisterName x) (UIValueRegisterName y) = Right $ x == y
+uiValueEq (UIValueWord x) (UIValueWord y) = Right $ x == y
+uiValueEq (UIValueFunction _) (UIValueFunction _) =
+    Left "equality not defined over functions"
+uiValueEq (UIValueThreadId x) (UIValueThreadId y) = Right $ x == y
+uiValueEq (UIValueBool x) (UIValueBool y) = Right $ x == y
+uiValueEq _ _ = Right False
 
 instance AvailInUI () where
     toUI () = UIValueNull

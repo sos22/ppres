@@ -172,6 +172,15 @@ isRealFailureReplayState :: ReplayState -> Bool
 isRealFailureReplayState (ReplayStateFailed _ _ _ (FailureReasonWrongThread _)) = False
 isRealFailureReplayState x = isFailureReplayState x
 
+dedupe :: [UIValue] -> Either String [UIValue]
+dedupe [] = Right []
+dedupe (x:xs) =
+    do rest <- dedupe xs
+       isDupe <- liftM or $ mapM (uiValueEq x) rest
+       return $ if isDupe
+                then rest
+                else x:rest
+       
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
@@ -207,7 +216,9 @@ initialWorldState fd =
                                             ("isfailure", mkUIFunction isFailureReplayState),
                                             ("isrealfailure", mkUIFunction isRealFailureReplayState),
                                             ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue))),
-                                            ("tcgraph", mkUIFunction2 commGraph)
+                                            ("tcgraph", mkUIFunction2 commGraph),
+                                            ("dedupe", mkUIFunction dedupe),
+                                            ("loadorigins", mkUIFunction2 loadOrigins)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

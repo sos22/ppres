@@ -45,6 +45,7 @@ data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                                 trc_signr :: Int,
                                 trc_err :: Word64,
                                 trc_va :: Word64 }
+                  deriving (Eq)
 
 instance Show TraceEntry where
     show (TraceFootstep rip _ _ _ ) = "footstep " ++ (showHex rip "")
@@ -94,7 +95,7 @@ instance Read TraceEntry where
 
 data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
                                  trc_tid :: ThreadId,
-                                 trc_loc :: AccessNr } deriving (Show, Read)
+                                 trc_loc :: AccessNr } deriving (Show, Read, Eq)
 
 data RegisterName = REG_RAX
                   | REG_RDX
@@ -202,7 +203,7 @@ data ReplayState = ReplayStateOkay AccessNr
 data ThreadState = ThreadState { ts_dead :: Bool,
                                  ts_blocked :: Bool,
                                  ts_last_run :: AccessNr,
-                                 ts_last_rip :: Word64 } deriving Show
+                                 ts_last_rip :: Word64 } deriving (Show, Eq)
 
 instance Monad (Either a) where
     return x = Right x
