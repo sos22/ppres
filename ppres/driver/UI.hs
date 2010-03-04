@@ -181,6 +181,19 @@ dedupe (x:xs) =
                 then rest
                 else x:rest
        
+survivesTo :: AccessNr -> History -> Bool
+survivesTo time hist =
+    case replayState hist of
+      ReplayStateOkay acc | acc < time -> False
+      ReplayStateFinished acc | acc < time -> False
+      ReplayStateFailed _ _ acc _ | acc < time -> False
+      _ -> {- We have run past the fatal time, so we survive to the time
+              iff none of our threads have crashed right now. -}
+           not $ or $ map (ts_crashed . snd) $ threadState hist
+
+crashed :: History -> Bool
+crashed hist = or $ map (ts_crashed . snd) $ threadState hist
+
 initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
@@ -218,7 +231,9 @@ initialWorldState fd =
                                             ("comp", mkUIFunction2 ((.) :: (UIValue->UIValue)->(UIValue->UIValue)->(UIValue->UIValue))),
                                             ("tcgraph", mkUIFunction2 commGraph),
                                             ("dedupe", mkUIFunction dedupe),
-                                            ("loadorigins", mkUIFunction2 loadOrigins)
+                                            ("loadorigins", mkUIFunction2 loadOrigins),
+                                            ("survivesto",  mkUIFunction2 survivesTo),
+                                            ("crashed", mkUIFunction crashed)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
