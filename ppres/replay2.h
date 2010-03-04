@@ -219,6 +219,7 @@ struct replay_thread {
 	Bool dead;
 	Bool in_monitor;
 	Bool blocked;
+	Bool crashed;
 
 	/* The RIP last time we ran an instruction in this thread.
 	   Collected from the footstep events.  Ignores monitor

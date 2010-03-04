@@ -731,7 +731,7 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->blocked,
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->crashed, rt->blocked,
 			       rt->last_run.access_nr, rt->last_rip);
 	send_okay();
 }
@@ -1090,6 +1090,16 @@ validate_event(const struct record_header *rec,
 		replay_assert_eq(reason_other(),
 				 args[3],
 				 sr->virtaddr);
+
+
+		/* XXX This isn't, strictly speaking, valid (the
+		   signal might be caught and recovered from), but
+		   it's a reasonable approximation for the time
+		   being. */
+		/* This is also the wrong place to do this from.  Oh
+		   well. */
+		current_thread->crashed = True;
+
 		return;
 	}
 	case EVENT_nothing:
