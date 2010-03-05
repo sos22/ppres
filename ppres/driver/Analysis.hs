@@ -360,8 +360,8 @@ criticalSections expr =
                    (ExpressionFolder
                     { ef_reg = const $ const [],
                       ef_const = const [],
-                      ef_load = \tid _ when addr val -> (tid,when):(addr ++ val),
-                      ef_store = \tid when val -> (tid,when):val,
+                      ef_load = \tid _ whn addr val -> (tid,whn):(addr ++ val),
+                      ef_store = \tid whn val -> (tid,whn):val,
                       ef_imported = const [],
                       ef_binop = \_ a b -> a ++ b,
                       ef_not = id })
@@ -1026,8 +1026,7 @@ instruction_templates =
         next_instr_ret _ _ _ = return []
 
         reassemble_jcc :: Word64 -> InstructionPrefixes -> ErrorT String AssemblyMonad (Maybe Word64)
-        reassemble_jcc rip prefixes =
-            dt ("reassemble jcc at " ++ (showHex rip "")) $
+        reassemble_jcc rip _ =
             do hbyte <- assembleFetchByte rip
                offset8 <- assembleFetchByte $ rip + 1
                let offset8' = if offset8 > 0x80
@@ -1043,24 +1042,34 @@ instruction_templates =
                          assembleRelRip32 targ 0
                return $ Just $ rip + 2
 
-        reassemble_group11 :: Word64 -> InstructionPrefixes -> ErrorT String AssemblyMonad (Maybe Word64)
-        reassemble_group11 rip prefixes =
+        reassemble_modrm_imm immSz opcodeLen rip _ =
             do hbyte <- assembleFetchByte rip
                lift $ assembleByte hbyte
-               (modrmsize, _) <- reassembleModrm (rip + 1) 4
-               imm <- assembleFetchBytes (rip + (fromIntegral modrmsize) + 1) 4
+               (modrmsize, _) <- reassembleModrm (rip + opcodeLen) immSz
+               imm <- assembleFetchBytes (rip + (fromIntegral modrmsize) + opcodeLen) immSz
                lift $ assembleBytes imm
-               return $ Just $ rip + (fromIntegral modrmsize) + 5
+               return $ Just $ rip + (fromIntegral modrmsize) + opcodeLen + immSz
 
-        reassemble_modrm_imm immSz opcodeLen rip prefixes =
-            do hbyte <- assembleFetchByte rip
-               lift $ assembleByte hbyte
-               (modrmsize, _) <- reassembleModrm (rip + 1) immSz
-               imm <- assembleFetchBytes (rip + (fromIntegral modrmsize) + 1) immSz
-               lift $ assembleBytes imm
-               return $ Just $ rip + (fromIntegral modrmsize) + 1 + immSz
-
+        reassemble_group11 = reassemble_modrm_imm 4 1
         reassemble_just_modrm = reassemble_modrm_imm 0
+        reassemble_ret rip _ =
+            do hbyte <- assembleFetchByte rip
+               lift $ assembleByte hbyte
+               return Nothing
+        reassemble_fixed_length len rip _ =
+            do hbyte <- assembleFetchBytes rip len
+               lift $ assembleBytes hbyte
+               return $ Just $ rip + len
+        reassemble_group5 rip _ =
+            do hbyte <- assembleFetchByte rip
+               lift $ assembleByte hbyte
+               (modrmsize, extension) <- reassembleModrm (rip + 1) 0
+               case extension of
+                 2 -> {- Call indirect.  As in next_instr_group5, we ignore the control flow
+                         transfer and just assume the callee's going to immediately return. -}
+                      return $ Just $ rip + fromIntegral modrmsize + 1
+                 _ -> throwError $ "unknown group 5 instruction " ++ (show extension)
+        
     in
     [(0x75, InstructionTemplate { it_next_instr = next_instr_jcc,
                                   it_reassemble = reassemble_jcc }),
@@ -1070,11 +1079,14 @@ instruction_templates =
                                   it_reassemble = reassemble_just_modrm 1}),
      (0x8b, InstructionTemplate { it_next_instr = next_instr_just_modrm 1 ,
                                   it_reassemble = reassemble_just_modrm 1} ),
-     (0xc3, InstructionTemplate { it_next_instr = next_instr_ret }),
+     (0xc3, InstructionTemplate { it_next_instr = next_instr_ret,
+                                  it_reassemble = reassemble_ret }),
      (0xc7, InstructionTemplate { it_next_instr = next_instr_group11,
                                   it_reassemble = reassemble_group11 }),
-     (0xc9, InstructionTemplate { it_next_instr = next_instr_fixed_length 1 }),
-     (0xff, InstructionTemplate { it_next_instr = next_instr_group5 }) ]
+     (0xc9, InstructionTemplate { it_next_instr = next_instr_fixed_length 1,
+                                  it_reassemble = reassemble_fixed_length 1}),
+     (0xff, InstructionTemplate { it_next_instr = next_instr_group5,
+                                  it_reassemble = reassemble_group5 }) ]
 
 {- Start at start and explore until we get to end, or something bad
    happens and we can't explore any more. -}
