@@ -31,6 +31,8 @@ data UIValue = UIValueNull
              | UIValueFunction (UIValue -> UIValue)
              | UIValueThreadId ThreadId
              | UIValueBool Bool
+             | UIValueClassifier (Classifier (ThreadId, (Word64, Word64)) (Maybe (ThreadId, (Word64, Word64))) Bool)
+             | UIValueClassExpr (BooleanExpression SchedulingConstraint)
 
 instance Show UIValue where
     show UIValueNull = "()"
@@ -59,7 +61,9 @@ instance Show UIValue where
     show (UIValueThreadId (ThreadId t)) = "~" ++ (show t)
     show (UIValueBool True) = "True"
     show (UIValueBool False) = "False"
-
+    show (UIValueClassifier c) = show c
+    show (UIValueClassExpr c) = show c
+                                 
 instance Read UIValue where
     readsPrec _ [] = []
     readsPrec _ ('(':')':x) = [(UIValueNull,x)]
@@ -289,3 +293,13 @@ instance AvailInUI Bool where
     toUI = UIValueBool
     fromUI (UIValueBool e) = Right e
     fromUI e = coerceError "Bool" e
+
+instance AvailInUI (Classifier (ThreadId, (Word64, Word64)) (Maybe (ThreadId, (Word64, Word64))) Bool) where
+    toUI = UIValueClassifier 
+    fromUI (UIValueClassifier c) = Right c
+    fromUI e = coerceError "classifier" e
+
+instance AvailInUI (BooleanExpression SchedulingConstraint) where
+    toUI = UIValueClassExpr
+    fromUI (UIValueClassExpr e) = Right e
+    fromUI e = coerceError "ClassifierExpression" e

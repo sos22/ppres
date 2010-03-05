@@ -9,7 +9,7 @@ import Control.Monad.Fix
 
 import Util
 
-newtype ThreadId = ThreadId Integer deriving (Read, Show, Eq)
+newtype ThreadId = ThreadId Integer deriving (Read, Show, Eq, Ord)
 type VariableName = String
 
 newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord, Read)
@@ -352,3 +352,27 @@ instance Forcable a => Forcable (DList a) where
 
 instance Eq a => Eq (DList a) where
     x == y = (dlToList x) == (dlToList y)
+
+{- tid, (RIP, ptr) -}
+type MemAccess = (ThreadId, (Word64, Word64))
+
+{- A classifier is essentially an n-ary classification key on
+   (key,value) sets.  It's structured as a tree, where each node
+   discriminates on one of the keys and the leaves represent final
+   classifications. -}
+data Classifier key value result = ClassifierLeaf result
+                                 | ClassifierChoice key [(value, Classifier key value result)]
+                                   deriving Show
+
+{- A constraint a b means that a must happen before b -}
+data SchedulingConstraint = SchedulingConstraint MemAccess MemAccess deriving Show
+
+{- Boolean expressions which can mention variables of type t -}
+data BooleanExpression t = BooleanLeaf t
+                         | BooleanConst Bool
+                         | BooleanOr (BooleanExpression t) (BooleanExpression t)
+                         | BooleanAnd (BooleanExpression t) (BooleanExpression t)
+                         | BooleanNot (BooleanExpression t) deriving Show
+
+
+

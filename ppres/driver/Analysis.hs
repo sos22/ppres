@@ -10,7 +10,8 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
 
                 enumerateHistories, getRacingExpressions,
                 criticalSections, mkFixupLibrary, lastCommunication,
-                commGraph, loadOrigins) where
+                commGraph, loadOrigins, filterLoadOriginPools,
+                mkBinaryClassifier, classifierToExpression) where
 
 import Types
 import WorkerCache
@@ -736,9 +737,6 @@ commGraph prefix hist =
     communicationGraph prefix hist >>= commGraphRel hist
 
 
-{- tid, (RIP, ptr) -}
-type MemAccess = (ThreadId, (Word64, Word64))
-
 {- All of the memory accesses made going from start to end.  The Bool
    is true for stores and false for loads. -}
 memTraceTo :: History -> History -> Either String [(Bool, MemAccess)]
@@ -766,3 +764,117 @@ loadOrigins prefix hist =
             in (acc, store):(worker others)
         worker (_:others) = worker others
     in fmap (reverse . worker . reverse) $ memTraceTo prefix hist
+
+
+{- Like nub, but O(nlogn) rather than O(n^2), and only works on
+   totally ordered values. -}
+fastNub :: Ord a => [a] -> [a]
+fastNub = map head . group . sort
+
+{- Filter the results of loadOrigins, assuming that the first argument
+   is from running loadOrigins over a bunch of runs which crashed and
+   the second is from running it over a bunch of runs which didn't
+   crash.  We try to remove the boring accesses, where an access is
+   defined to be boring if:
+
+   a) It has the same origin every time it appears.
+ -}
+filterLoadOriginPools :: [[(MemAccess, Maybe MemAccess)]] -> [[(MemAccess, Maybe MemAccess)]] -> ([[(MemAccess, Maybe MemAccess)]], [[(MemAccess, Maybe MemAccess)]])
+filterLoadOriginPools poolA poolB =
+    let poolA' = map sort poolA
+        poolB' = map sort poolB
+        pool = concat $ poolA' ++ poolB'
+        accesses = fastNub $ map fst pool
+        originsForAcc acc = fastNub $ map snd $ filter ((==) acc . fst) pool
+        origins = [(acc, originsForAcc acc) | acc <- accesses]
+        isBoring acc =
+            case lookup acc origins of
+              Nothing -> error "Huh? lost an access in filterLoadOriginPools"
+              Just [] -> error "access with no origin"
+              Just [_] -> True
+              Just (_:_:_) -> False
+        removeBoring :: [(MemAccess, Maybe MemAccess)] -> [(MemAccess, Maybe MemAccess)]
+        removeBoring = filter (not . isBoring . fst)
+    in (map removeBoring poolA', map removeBoring poolB')
+
+
+{- Build every possible classifier which is consistent with the list
+   of samples and which doesn't just invent stuff out of thin air.
+   The samples must be consistent, but they do not have to be
+   complete.  If they are not complete, we'll take the nearest
+   available result, for some vaguely sensible definition of
+   nearest. -}
+mkClassifier :: (Ord result, Ord key, Ord value) => [([(key,value)],result)] -> [(Classifier key value result)]
+mkClassifier samples =
+    let availresults = fastNub $ map snd samples
+        allkeys = fastNub $ map fst $ concatMap fst samples
+        valuesForKey k = fmap fastNub $ sequence $ map (lookup k . fst) samples
+        availkeys = 
+            {- A key must be present in every sample in order to be
+               used as a discriminant, and must have multiple
+               potential values. -}
+            filter keyIsUsable allkeys
+            where
+              keyIsUsable k = case valuesForKey k of
+                                Nothing -> False
+                                Just [] -> error "Huh?"
+                                Just [_] -> False
+                                _ -> True
+    in case availresults of
+         [] -> []
+         [x] -> return $ ClassifierLeaf x
+         _ -> {- Multiple possible results, do it properly -}
+              do discriminant <- availkeys
+                 let fmaybe = maybe undefined id
+                     flookup k kvs = fmaybe $ lookup k kvs
+                     childForValue v =
+                         mkClassifier [ ([kvs | kvs <- fst s, fst kvs /= discriminant], snd s)
+                                        | s <- samples, flookup discriminant (fst s) == v]
+                     clistEntryForValue v =
+                         do c <- childForValue v
+                            return (v, c)
+                     children = sequence $ map clistEntryForValue $ fmaybe $ valuesForKey discriminant
+                 c <- children
+                 return $ ClassifierChoice discriminant c
+
+mkBinaryClassifier :: (Ord key, Ord value) => [[(key,value)]] -> [[(key, value)]] -> [(Classifier key value Bool)]
+mkBinaryClassifier true false =
+    mkClassifier $ (zip true $ repeat True) ++ (zip false $ repeat False)
+
+
+boolNot :: BooleanExpression t -> BooleanExpression t
+boolNot (BooleanConst False) = BooleanConst True
+boolNot (BooleanConst True) = BooleanConst False
+boolNot x = BooleanNot x
+
+boolAnd :: BooleanExpression t -> BooleanExpression t -> BooleanExpression t
+boolAnd (BooleanConst False) _ = BooleanConst False
+boolAnd (BooleanConst True) x = x
+boolAnd _ (BooleanConst False) = BooleanConst False
+boolAnd x (BooleanConst True) = x
+boolAnd x y = BooleanAnd x y
+
+boolOr :: BooleanExpression t -> BooleanExpression t -> BooleanExpression t
+boolOr (BooleanConst False) x = x
+boolOr (BooleanConst True) _ = BooleanConst True
+boolOr x (BooleanConst False) = x
+boolOr _ (BooleanConst True) = BooleanConst True
+boolOr x y = BooleanOr x y
+
+liftB :: t -> BooleanExpression t
+liftB = BooleanLeaf
+
+constB :: Bool -> BooleanExpression t
+constB = BooleanConst
+
+classifierToExpression :: Classifier MemAccess (Maybe MemAccess) Bool -> BooleanExpression SchedulingConstraint
+classifierToExpression (ClassifierLeaf r) = constB r
+classifierToExpression (ClassifierChoice discriminant options) =
+    let values = map fst options
+        nullaryValue = boolNot $ foldr1 boolAnd [liftB $ SchedulingConstraint v discriminant | Just v <- values]
+        exprForValue (v,c) =
+            (case v of
+               Nothing -> nullaryValue
+               Just v' -> liftB $ SchedulingConstraint v' discriminant) `boolAnd`
+            (classifierToExpression c)
+    in foldr1 boolOr $ map exprForValue options

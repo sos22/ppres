@@ -233,7 +233,10 @@ initialWorldState fd =
                                             ("dedupe", mkUIFunction dedupe),
                                             ("loadorigins", mkUIFunction2 loadOrigins),
                                             ("survivesto",  mkUIFunction2 survivesTo),
-                                            ("crashed", mkUIFunction crashed)
+                                            ("crashed", mkUIFunction crashed),
+                                            ("filterlo", mkUIFunction2 filterLoadOriginPools),
+                                            ("mkclass", mkUIFunction2 (mkBinaryClassifier :: [[(MemAccess, Maybe MemAccess)]] -> [[(MemAccess, Maybe MemAccess)]] -> [Classifier MemAccess (Maybe MemAccess) Bool])),
+                                            ("classexpr", mkUIFunction classifierToExpression)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
@@ -273,7 +276,7 @@ runAssignment as ws =
               isAllSpace = and . map isSpace
               safeRead x = case reads x of
                              [(a, y)] | isAllSpace y -> a
-                             _ -> UIValueError $ "cannot parse " ++ x
+                             r -> UIValueError $ "cannot parse " ++ x ++ " -> " ++ (show r)
           in liftM (doAssignment ws vname . safeRead) $ (catch (readFile fname) $
                                                          \e -> return $ "ERR " ++ (show e))
                                                          
