@@ -5,7 +5,6 @@ import Data.Word
 import Network.Socket
 import Numeric
 import Data.IORef
-import Control.Monad.Fix
 
 import Util
 
@@ -206,18 +205,6 @@ data ThreadState = ThreadState { ts_dead :: Bool, {- exitted normally -}
                                  ts_last_run :: AccessNr,
                                  ts_last_rip :: Word64 } deriving (Show, Eq)
 
-instance Monad (Either a) where
-    return x = Right x
-    (Right x) >>= f = f x
-    (Left x) >>= _ = Left x
-   
-instance MonadFix (Either a) where
-    mfix f = let y = f x
-                 x = case y of
-                       Left _ -> error "badness in mfix Either"
-                       Right z -> z
-             in y
-                       
 data Topped x = Infinity
               | Finite !x deriving Eq
 
@@ -375,4 +362,9 @@ data BooleanExpression t = BooleanLeaf t
                          | BooleanNot (BooleanExpression t) deriving Show
 
 
-
+data BooleanExpressionFolder s t =
+    BooleanExpressionFolder { bef_leaf :: s -> t,
+                              bef_const :: Bool -> t,
+                              bef_or :: t -> t -> t,
+                              bef_and :: t -> t -> t,
+                              bef_not :: t -> t }

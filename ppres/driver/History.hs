@@ -3,7 +3,7 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                mkHistory, histLastCoord, controlTraceToWorker,
                traceToWorker, runThread, absHistSuffix, threadAtAccess) where
 
-import Control.Monad
+import Control.Monad.Error
 
 import Types
 import Worker

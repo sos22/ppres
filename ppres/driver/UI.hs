@@ -236,7 +236,9 @@ initialWorldState fd =
                                             ("crashed", mkUIFunction crashed),
                                             ("filterlo", mkUIFunction2 filterLoadOriginPools),
                                             ("mkclass", mkUIFunction2 (mkBinaryClassifier :: [[(MemAccess, Maybe MemAccess)]] -> [[(MemAccess, Maybe MemAccess)]] -> [Classifier MemAccess (Maybe MemAccess) Bool])),
-                                            ("classexpr", mkUIFunction classifierToExpression)
+                                            ("classexpr", mkUIFunction classifierToExpression),
+                                            ("e2cs", mkUIFunction exprToCriticalSections),
+                                            ("cs2bp", mkUIFunction3 criticalSectionToBinpatch)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

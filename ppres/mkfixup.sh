@@ -2,4 +2,4 @@
 
 fixup_c=$1
 outfile=$2
-gcc -fPIC -shared -Wall fixup.ld fixup_asm.S $fixup_c -o $outfile
+gcc -g -fPIC -shared -Wall fixup.ld fixup_asm.S $fixup_c -o $outfile

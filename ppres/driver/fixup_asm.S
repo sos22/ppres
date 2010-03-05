@@ -1,5 +1,7 @@
 .global do_lock
 .global do_unlock
+.global critical_section_prologue
+.global critical_section_epilogue
 	
 #define SAVE_ALL_CLOBBERED	\
 	pushf;			\
@@ -26,12 +28,14 @@
 	popf
 	
 do_lock:
+critical_section_prologue:
 	SAVE_ALL_CLOBBERED
 	call do_lock_c
 	RESTORE_ALL_CLOBBERED
 	ret
 
 do_unlock:
+critical_section_epilogue:
 	SAVE_ALL_CLOBBERED
 	call do_unlock_c
 	RESTORE_ALL_CLOBBERED
