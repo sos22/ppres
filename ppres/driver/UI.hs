@@ -240,7 +240,7 @@ initialWorldState fd =
                                             ("classexpr", mkUIFunction classifierToExpression),
                                             ("e2cs", mkUIFunction exprToCriticalSections),
                                             ("cs2bp", mkUIFunction3 criticalSectionToBinpatch),
-                                            ("lo2bp", mkUIFunction3 loToBinpatch)
+                                            ("mkenforcer", mkUIFunction3 mkEnforcer)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

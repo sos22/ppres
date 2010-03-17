@@ -13,7 +13,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 commGraph, loadOrigins, filterLoadOriginPools,
                 mkBinaryClassifier, classifierToExpression,
                 exprToCriticalSections, criticalSectionToBinpatch,
-                loToBinpatch) where
+                mkEnforcer) where
 
 import Types
 import WorkerCache
@@ -1350,7 +1350,7 @@ reassemblyToC ident (rip, payload, relocs, _) =
     "        " ++ (show $ length payload) ++ ",\n" ++
     "        " ++ ident ++ "_fixups,\n" ++
     "        " ++ (show $ length relocs) ++ "\n" ++
-    "};"
+    "};\n"
 
 criticalSectionToBinpatch' :: String -> History -> Word64 -> Word64 -> Either String String
 criticalSectionToBinpatch' ident hist start end =
@@ -1386,3 +1386,15 @@ loToBinpatch hist crash_origins nocrash_origins =
     in case patches of
          [] -> Nothing
          x:_ -> Just x
+
+{- Make a binpatch which will stop the bad histories from recurring
+   while leaving the good histories possible. -}
+mkEnforcer :: History -> [History] -> [History] -> Either String String
+mkEnforcer hist bad_histories good_histories =
+    let bad_origins = mapM (loadOrigins hist) bad_histories
+        good_origins = mapM (loadOrigins hist) good_histories
+    in do b <- bad_origins
+          g <- good_origins
+          case loToBinpatch hist b g of
+            Nothing -> Left "cannot build a binpatch"
+            Just x -> Right x
