@@ -12,7 +12,8 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 criticalSections, mkFixupLibrary, lastCommunication,
                 commGraph, loadOrigins, filterLoadOriginPools,
                 mkBinaryClassifier, classifierToExpression,
-                exprToCriticalSections, criticalSectionToBinpatch) where
+                exprToCriticalSections, criticalSectionToBinpatch,
+                loToBinpatch) where
 
 import Types
 import WorkerCache
@@ -1351,9 +1352,37 @@ reassemblyToC ident (rip, payload, relocs, _) =
     "        " ++ (show $ length relocs) ++ "\n" ++
     "};"
 
-criticalSectionToBinpatch :: History -> Word64 -> Word64 -> Either String String
-criticalSectionToBinpatch hist start end =
+criticalSectionToBinpatch' :: String -> History -> Word64 -> Word64 -> Either String String
+criticalSectionToBinpatch' ident hist start end =
     do cfg <- buildCFG hist start end
        res <- reassemble hist start (map fst cfg)
-       return $ reassemblyToC "myIdent" res
+       return $ reassemblyToC ident res
 
+criticalSectionToBinpatch :: History -> Word64 -> Word64 -> Either String String
+criticalSectionToBinpatch = criticalSectionToBinpatch' "myIdent"
+
+loToBinpatch :: History -> [[(MemAccess, Maybe MemAccess)]] -> [[(MemAccess, Maybe MemAccess)]] -> Maybe String
+loToBinpatch hist crash_origins nocrash_origins =
+    let int = filterLoadOriginPools crash_origins nocrash_origins
+        predictors = mkBinaryClassifier (fst int) (snd int)
+        classifiers = map classifierToExpression predictors
+        critsects = map exprToCriticalSections classifiers
+        mkBinpatch :: [(Word64, Word64)] -> Either String String
+        mkBinpatch ranges =
+            fmap concat $ sequence [criticalSectionToBinpatch' ident hist enter exit | ((enter,exit),ident) <- zip ranges ["ident_" ++ (show x) | x <- [(0::Int)..]]]
+        deMaybe :: [Maybe a] -> [a]
+        deMaybe = foldr (\item acc ->
+                             case item of
+                               Just x -> x:acc
+                               Nothing -> acc) []
+
+        deEither :: [Either b a] -> [a]
+        deEither = foldr (\item acc ->
+                             case item of
+                               Right x -> x:acc
+                               Left _ -> acc) []
+
+        patches = deEither $ map mkBinpatch $ deMaybe critsects
+    in case patches of
+         [] -> Nothing
+         x:_ -> Just x
