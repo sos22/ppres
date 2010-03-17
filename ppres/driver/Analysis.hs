@@ -13,7 +13,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 commGraph, loadOrigins, filterLoadOriginPools,
                 mkBinaryClassifier, classifierToExpression,
                 exprToCriticalSections, criticalSectionToBinpatch,
-                mkEnforcer) where
+                mkEnforcer, classifyFutures) where
 
 import Types
 import WorkerCache
@@ -1398,3 +1398,27 @@ mkEnforcer hist bad_histories good_histories =
           case loToBinpatch hist b g of
             Nothing -> Left "cannot build a binpatch"
             Just x -> Right x
+
+classifyFutures :: History -> ([History], [History])
+classifyFutures start =
+    let allFutures = enumerateHistories start
+        allFutureStates = zip allFutures $ map replayState allFutures
+        interestingFutureStates = filter (isInteresting . snd) allFutureStates
+                                  where isInteresting (ReplayStateOkay _) = False
+                                        isInteresting (ReplayStateFailed _ _ _ (FailureReasonWrongThread _)) = False
+                                        isInteresting _ = True
+        rs_access_nr (ReplayStateOkay x) = x
+        rs_access_nr (ReplayStateFinished x) = x
+        rs_access_nr (ReplayStateFailed _ _ x _) = x
+        crashes = filter (crashed.fst) interestingFutureStates
+                  where crashed hist = or $ map (ts_crashed . snd) $ threadState hist
+        lastCrash = last $ sort $ map (rs_access_nr . snd) crashes
+        nocrash = filter (survivesTo (lastCrash + 1) . snd) interestingFutureStates
+                  where survivesTo acc s =
+                            {- Strictly speaking, we should be
+                               checking whether any threads have
+                               crashed, but we kind of know they
+                               haven't because we're past lastCrash,
+                               and it's all okay. -}
+                            rs_access_nr s >= acc
+    in (map fst crashes, map fst nocrash)
