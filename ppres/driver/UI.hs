@@ -210,6 +210,7 @@ initialWorldState fd =
                                             ("defootstep", mkUIFunction defootstep),
                                             ("replay_state", mkUIFunction replayState),
                                             ("enum", mkUIFunction enumerateHistories),
+                                            ("findhist", mkUIFunction findSomeHistory),
                                             ("fix", mkUIFunction2 mkFixupLibrary),
                                             ("pair", mkUIFunction2 ((,) :: UIValue -> UIValue -> (UIValue, UIValue))),
                                             ("findraces", mkUIFunction2 findRacingAccesses),
