@@ -12,6 +12,7 @@ import Types
 import ReplayState()
 import History
 import Util
+import Classifier
 
 data UIValue = UIValueNull
              | UIValueSnapshot History

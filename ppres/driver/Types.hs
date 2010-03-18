@@ -343,28 +343,6 @@ instance Eq a => Eq (DList a) where
 {- tid, (RIP, ptr) -}
 type MemAccess = (ThreadId, (Word64, Word64))
 
-{- A classifier is essentially an n-ary classification key on
-   (key,value) sets.  It's structured as a tree, where each node
-   discriminates on one of the keys and the leaves represent final
-   classifications. -}
-data Classifier key value result = ClassifierLeaf result
-                                 | ClassifierChoice key [(value, Classifier key value result)]
-                                   deriving Show
-
 {- A constraint a b means that a must happen before b -}
 data SchedulingConstraint = SchedulingConstraint MemAccess MemAccess deriving Show
 
-{- Boolean expressions which can mention variables of type t -}
-data BooleanExpression t = BooleanLeaf t
-                         | BooleanConst Bool
-                         | BooleanOr (BooleanExpression t) (BooleanExpression t)
-                         | BooleanAnd (BooleanExpression t) (BooleanExpression t)
-                         | BooleanNot (BooleanExpression t) deriving Show
-
-
-data BooleanExpressionFolder s t =
-    BooleanExpressionFolder { bef_leaf :: s -> t,
-                              bef_const :: Bool -> t,
-                              bef_or :: t -> t -> t,
-                              bef_and :: t -> t -> t,
-                              bef_not :: t -> t }

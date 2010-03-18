@@ -20,6 +20,7 @@ import UIValue
 import Analysis
 import History
 import Explore
+import Classifier
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
