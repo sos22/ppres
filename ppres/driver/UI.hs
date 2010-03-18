@@ -19,6 +19,7 @@ import WorkerCache
 import UIValue
 import Analysis
 import History
+import Explore
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
