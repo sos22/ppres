@@ -410,6 +410,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_TRACE_ADDRESS:
 	case WORKER_GET_MEMORY:
 	case WORKER_SET_MEMORY:
+	case WORKER_SET_TSC:
 		tl_assert(ch.nr_args == 2);
 		break;
 	case WORKER_SET_REGISTER:
@@ -1460,6 +1461,17 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			    cmd->u.set_memory_protection.size,
 			    cmd->u.set_memory_protection.prot);
 		send_okay();
+		return;
+	case WORKER_SET_TSC:
+		rt = get_thread_by_id(cmd->u.set_tsc.tid);
+		if (!rt) {
+			VG_(printf)("set tsc in bad thread %ld\n",
+				    cmd->u.set_tsc.tid);
+			send_error();
+		} else {
+			rt->rdtsc_result = cmd->u.set_tsc.tsc;
+			send_okay();
+		}
 		return;
 	}
 	VG_(tool_panic)((Char *)"Bad worker command");

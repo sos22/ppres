@@ -20,7 +20,8 @@ enum command_number {
 	WORKER_SET_REGISTER = 0x1244,
 	WORKER_ALLOCATE_MEMORY = 0x1245,
 	WORKER_SET_MEMORY = 0x1246,
-	WORKER_SET_MEMORY_PROTECTION = 0x1247
+	WORKER_SET_MEMORY_PROTECTION = 0x1247,
+	WORKER_SET_TSC = 0x1248
 };
 
 struct command_header {
@@ -286,6 +287,10 @@ struct control_command {
 			unsigned long size;
 			unsigned long prot;
 		} set_memory_protection;
+		struct {
+			long tid;
+			unsigned long tsc;
+		} set_tsc;
 		unsigned long args[4];
 	} u;
 };

@@ -3,7 +3,7 @@ module Worker(killWorker, traceWorker, traceToEventWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker,
               getRegistersWorker, setRegisterWorker, allocateMemoryWorker,
-              setMemoryWorker, setMemoryProtectionWorker)
+              setMemoryWorker, setMemoryProtectionWorker, setTscWorker)
     where
 
 import Data.Word
@@ -85,6 +85,9 @@ setMemoryPacket addr size = ControlPacket 0x1246 [addr, size]
 
 setMemoryProtectionPacket :: Word64 -> Word64 -> Word64 -> ControlPacket
 setMemoryProtectionPacket addr size prot = ControlPacket 0x1247 [addr, size, prot]
+
+setTscPacket :: ThreadId -> Word64 -> ControlPacket
+setTscPacket (ThreadId tid) tsc = ControlPacket 0x1248 [fromInteger tid, tsc]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -365,3 +368,7 @@ setMemoryProtectionWorker :: Worker -> Word64 -> Word64 -> Word64 -> IO ()
 setMemoryProtectionWorker worker addr size prot =
     do trivCommand worker $ setMemoryProtectionPacket addr size prot
        return ()
+
+setTscWorker :: Worker -> ThreadId -> Word64 -> IO Bool
+setTscWorker worker tid tsc =
+    trivCommand worker $ setTscPacket tid tsc

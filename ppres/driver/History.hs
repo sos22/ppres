@@ -2,7 +2,8 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History,
                mkHistory, histLastCoord, controlTraceToWorker,
                traceToWorker, runThread, absHistSuffix, threadAtAccess,
-               setRegister, allocateMemory, setMemory, setMemoryProtection) where
+               setRegister, allocateMemory, setMemory, setMemoryProtection,
+               setTsc) where
 
 import Control.Monad.Error
 import Data.Word
@@ -16,6 +17,7 @@ data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistoryAllocMemory !Word64 !Word64 !Word64
                   | HistorySetMemory !Word64 [Word8]
                   | HistorySetMemoryProtection !Word64 !Word64 !Word64
+                  | HistorySetTsc !ThreadId !Word64
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
@@ -42,6 +44,10 @@ setMemory hist addr contents =
 setMemoryProtection :: History -> Word64 -> Word64 -> Word64 -> History
 setMemoryProtection hist addr size prot =
     deError $ appendHistory hist $ HistorySetMemoryProtection addr size prot
+
+setTsc :: History -> ThreadId -> Word64 -> History
+setTsc hist tid tsc =
+    deError $ appendHistory hist $ HistorySetTsc tid tsc
 
 histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x
@@ -95,6 +101,9 @@ doHistoryEntry w (HistorySetMemory addr bytes) =
        return $ (toInteger $ length bytes) `div` 4096
 doHistoryEntry w (HistorySetMemoryProtection addr size prot) =
     do setMemoryProtectionWorker w addr size prot
+       return 1
+doHistoryEntry w (HistorySetTsc tid tsc) =
+    do setTscWorker w tid tsc
        return 1
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
@@ -251,6 +260,9 @@ traceTo' work tracer ((HistorySetMemory addr bytes):rest) =
        traceTo' work tracer rest
 traceTo' work tracer ((HistorySetMemoryProtection addr size prot):rest) =
     do setMemoryProtectionWorker work addr size prot
+       traceTo' work tracer rest
+traceTo' work tracer ((HistorySetTsc tid tsc):rest) =
+    do setTscWorker work tid tsc
        traceTo' work tracer rest
 
 {- Take a worker and a history representing its current state and run
