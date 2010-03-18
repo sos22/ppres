@@ -2,7 +2,7 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History,
                mkHistory, histLastCoord, controlTraceToWorker,
                traceToWorker, runThread, absHistSuffix, threadAtAccess,
-               setRegister) where
+               setRegister, allocateMemory) where
 
 import Control.Monad.Error
 import Data.Word
@@ -13,6 +13,7 @@ import Util
 
 data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistorySetRegister !ThreadId !RegisterName !Word64
+                  | HistoryAllocMemory !Word64 !Word64 !Word64
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
@@ -28,6 +29,10 @@ setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
 setRegister hist tid reg val =
     deError $ appendHistory hist $ HistorySetRegister tid reg val
 
+allocateMemory :: History -> Word64 -> Word64 -> Word64 -> History
+allocateMemory hist addr size prot =
+    deError $ appendHistory hist $ HistoryAllocMemory addr size prot
+
 histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x
 
@@ -35,7 +40,7 @@ last_coord :: [HistoryEntry] -> Topped AccessNr
 last_coord he = worker $ reverse he
                 where worker [] = Finite $ AccessNr 0
                       worker ((HistoryRun _ x):_) = x
-                      worker ((HistorySetRegister _ _ _):x) = worker x
+                      worker (_:x) = worker x
 
 {- Either id, for valid histories, or undefined for invalid ones. -}
 sanityCheckHistory :: History -> History
@@ -71,6 +76,9 @@ doHistoryEntry w (HistoryRun tid cntr) =
          ReplayStateFailed _ _ _ _ -> return 1
 doHistoryEntry w (HistorySetRegister tid reg val) =
     do setRegisterWorker w tid reg val
+       return 1
+doHistoryEntry w (HistoryAllocMemory addr size prot) =
+    do allocateMemoryWorker w addr size prot
        return 1
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
@@ -203,11 +211,24 @@ threadAtAccess (History _ _ items) acc =
                else rest) (Left "ran out of history") $ dlToList items
 
 instance Forcable HistoryEntry where
-    force (HistoryRun tid t) = force tid . force t
-    force (HistorySetRegister tid reg val) = force tid . force reg . force val
+    force = seq
 
 instance Forcable History where
     force (History a b h) = force a . force b . force h
+
+traceTo' :: Worker -> (Worker -> Topped AccessNr -> IO [a]) -> [HistoryEntry] -> IO [a]
+traceTo' _ _ [] = return []
+traceTo' work tracer ((HistoryRun tid cntr):rest) =
+    do setThreadWorker work tid
+       h <- tracer work cntr
+       rest' <- traceTo' work tracer rest
+       return $ h ++ rest'
+traceTo' work tracer ((HistorySetRegister tid reg val):rest) =
+    do setRegisterWorker work tid reg val
+       traceTo' work tracer rest
+traceTo' work tracer ((HistoryAllocMemory addr size prot):rest) =
+    do allocateMemoryWorker work addr size prot
+       traceTo' work tracer rest
 
 {- Take a worker and a history representing its current state and run
    it forwards to some other history, logging control expressions as
@@ -216,13 +237,7 @@ instance Forcable History where
    the internals of the History type. -}
 controlTraceToWorker :: Worker -> History -> History -> IO (Either String [Expression])
 controlTraceToWorker work start end =
-    let worker [] = return []
-        worker ((HistoryRun tid cntr):rest) = do setThreadWorker work tid
-                                                 h <- controlTraceWorker work cntr
-                                                 rest' <- worker rest
-                                                 return $ h ++ rest'
-        worker ((HistorySetRegister tid reg val):rest) = do setRegisterWorker work tid reg val
-                                                            worker rest
+    let worker = traceTo' work controlTraceWorker
     in
     case stripSharedPrefix start end of
       ([], todo) -> liftM Right $ worker todo
@@ -232,15 +247,7 @@ controlTraceToWorker work start end =
    of History. -}
 traceToWorker :: Worker -> History -> History -> IO (Either String [TraceRecord])
 traceToWorker worker start end =
-    let work [] = return []
-        work ((HistoryRun tid cntr):rest) =
-            do setThreadWorker worker tid
-               h <- traceWorker worker cntr
-               rest' <- work rest
-               return $ h ++ rest'
-        work ((HistorySetRegister tid reg val):rest) =
-            do setRegisterWorker worker tid reg val
-               work rest
+    let work = traceTo' worker traceWorker
     in case stripSharedPrefix start end of
          ([], todo) -> liftM Right $ work todo
          _ -> return $ Left $ shows start $ " is not a prefix of " ++ (show end)

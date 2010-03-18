@@ -2,7 +2,7 @@ module Worker(killWorker, traceWorker, traceToEventWorker,
               takeSnapshot, runWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker,
-              getRegistersWorker, setRegisterWorker)
+              getRegistersWorker, setRegisterWorker, allocateMemoryWorker)
     where
 
 import Data.Word
@@ -75,6 +75,9 @@ traceToEventPacket x = ControlPacket 0x1243 $ fromAN x
 
 setRegisterPacket :: ThreadId -> RegisterName -> Word64 -> ControlPacket
 setRegisterPacket (ThreadId tid) reg val = ControlPacket 0x1244 [fromInteger tid, unparseRegister reg, val]
+
+allocateMemoryPacket :: Word64 -> Word64 -> Word64 -> ControlPacket
+allocateMemoryPacket addr size prot = ControlPacket 0x1245 [addr, size, prot]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -337,3 +340,7 @@ getRegistersWorker worker =
 setRegisterWorker :: Worker -> ThreadId -> RegisterName -> Word64 -> IO Bool
 setRegisterWorker worker tid reg val =
     trivCommand worker $ setRegisterPacket tid reg val
+
+allocateMemoryWorker :: Worker -> Word64 -> Word64 -> Word64 -> IO Bool
+allocateMemoryWorker worker addr size prot =
+    trivCommand worker $ allocateMemoryPacket addr size prot

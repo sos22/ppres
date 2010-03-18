@@ -379,20 +379,17 @@ send_bytes(unsigned size, const void *buf)
 	send_okay();
 }
 
-static replay_coord_t
-read_trace_coord(int fd)
-{
-	replay_coord_t res;
-	safeish_read(fd, &res.access_nr, 8);
-	return res;
-}
-
 static void
 get_control_command(struct control_command *cmd)
 {
 	struct command_header ch;
+	unsigned x;
+
 	safeish_read(control_process_socket, &ch, sizeof(ch));
 	cmd->cmd = ch.command;
+	tl_assert(ch.nr_args < 4);
+	for (x = 0; x < ch.nr_args; x++)
+		safeish_read(control_process_socket, &cmd->u.args[x], 8);
 	switch (ch.command) {
 	case WORKER_SNAPSHOT:
 	case WORKER_KILL:
@@ -403,47 +400,21 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
-		tl_assert(ch.nr_args == 1);
-		cmd->u.run.when = read_trace_coord(control_process_socket);
-		break;
 	case WORKER_TRACE_TO_EVENT:
-		tl_assert(ch.nr_args == 1);
-		cmd->u.run.when = read_trace_coord(control_process_socket);
-		break;
 	case WORKER_TRACE:
-		tl_assert(ch.nr_args == 1);
-		cmd->u.trace.when = read_trace_coord(control_process_socket);
-		break;
 	case WORKER_CONTROL_TRACE:
-		tl_assert(ch.nr_args == 1);
-		cmd->u.control_trace.when = read_trace_coord(control_process_socket);
-		break;
-	case WORKER_TRACE_ADDRESS:
-		tl_assert(ch.nr_args == 2);
-		safeish_read(control_process_socket, &cmd->u.trace_mem.address, 8);
-		cmd->u.trace_mem.when = read_trace_coord(control_process_socket);
-		break;
 	case WORKER_VG_INTERMEDIATE:
-		tl_assert(ch.nr_args == 1);
-		safeish_read(control_process_socket, &cmd->u.vg_intermediate.addr, 8);
-		break;
 	case WORKER_SET_THREAD:
 		tl_assert(ch.nr_args == 1);
-		safeish_read(control_process_socket, &cmd->u.set_thread.tid, 8);
 		break;
+	case WORKER_TRACE_ADDRESS:
 	case WORKER_GET_MEMORY:
 		tl_assert(ch.nr_args == 2);
-		safeish_read(control_process_socket, &cmd->u.get_memory.addr, 8);
-		safeish_read(control_process_socket, &cmd->u.get_memory.size, 8);
 		break;
 	case WORKER_SET_REGISTER:
+	case WORKER_ALLOCATE_MEMORY:
 		tl_assert(ch.nr_args == 3);
-		safeish_read(control_process_socket, &cmd->u.set_register.tid, 8);
-		safeish_read(control_process_socket, &cmd->u.set_register.reg, 8);
-		safeish_read(control_process_socket, &cmd->u.set_register.val, 8);
 		break;
-	default:
-		VG_(tool_panic)((Char *)"bad worker command");
 	}
 	debug_control_command(cmd);
 	return;
@@ -1445,6 +1416,17 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		}
 		send_okay();
 		return;
+	case WORKER_ALLOCATE_MEMORY: {
+		SysRes res;
+		res = VG_(am_mmap_anon_fixed_client)(cmd->u.allocate_memory.addr,
+						     cmd->u.allocate_memory.size,
+						     cmd->u.allocate_memory.prot);
+		if (sr_isError(res))
+			send_error();
+		else
+			send_okay();
+		return;
+	}
 	}
 	VG_(tool_panic)((Char *)"Bad worker command");
 }

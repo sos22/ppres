@@ -17,7 +17,8 @@ enum command_number {
 	WORKER_SET_THREAD = 0x1241,
 	WORKER_GET_REGISTERS = 0x1242,
 	WORKER_TRACE_TO_EVENT = 0x1243,
-	WORKER_SET_REGISTER = 0x1244
+	WORKER_SET_REGISTER = 0x1244,
+	WORKER_ALLOCATE_MEMORY = 0x1245
 };
 
 struct command_header {
@@ -265,10 +266,16 @@ struct control_command {
 		} get_memory;
 		struct {
 			unsigned long addr;
+			unsigned long size;
+			unsigned long prot;
+		} allocate_memory;
+		struct {
+			unsigned long addr;
 		} vg_intermediate;
 		struct {
 			long tid;
 		} set_thread;
+		unsigned long args[4];
 	} u;
 };
 
