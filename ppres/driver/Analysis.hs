@@ -1,12 +1,5 @@
 {-# LANGUAGE RecursiveDo #-}
 module Analysis(findRacingAccesses, findControlFlowRaces, 
-
-                {- I don't actually use these at the moment, but will
-                   do soon, and I want to make sure they at least keep
-                   compiling without getting lots of stupid compiler
-                   errors. -}
-                evalExpressionInSnapshot, evalExpressionWithStore,
-
                 getRacingExpressions,
                 criticalSections, mkFixupLibrary, lastCommunication,
                 commGraph, loadOrigins, filterLoadOriginPools,
@@ -71,77 +64,6 @@ findControlFlowRaces races expressions =
                                      (ExpressionLoad _ _ loc2 _ _) = loc1 == loc2
           expressionMentionsLoad _ _ = error "confused"
 
-
-wordSigned :: Word64 -> Integer
-wordSigned w =
-    if w `testBit` 63
-    then (fromIntegral w) - 0x10000000000000000
-    else (fromIntegral w)
-
-binopFunc :: Binop -> Word64 -> Word64 -> Word64
-binopFunc op = case op of
-                 BinopSub -> (-)
-                 BinopAdd -> (+)
-                 BinopMull -> (*)
-                 BinopAnd -> (.&.)
-                 BinopOr -> (.|.)
-                 BinopXor -> xor
-                 _ -> \l r -> case op of
-                                BinopMullHi -> fromInteger $ (toInteger l * toInteger r) `shiftR` 64
-                                BinopShrl -> fromInteger $ (toInteger l) `shiftR` (fromIntegral r)
-                                BinopShl -> l `shiftL` (fromIntegral r)
-                                BinopShra -> l `shiftR` (fromIntegral r)
-                                BinopLe -> if wordSigned l <= wordSigned r then 1 else 0
-                                BinopBe -> if l <= r then 1 else 0
-                                BinopEq -> if l == r then 1 else 0
-                                BinopB -> if l < r then 1 else 0
-                                BinopMullS -> error "Write me"
-                                BinopCombine -> error "can't eval combine"
-                                _ -> error "can't happen"
-
-evalExpressionWithStore :: Expression -> [(Word64, Word64)] -> Maybe Word64
-evalExpressionWithStore (ExpressionRegister _ n) _ = Just n
-evalExpressionWithStore (ExpressionConst n) _ = Just n
-evalExpressionWithStore (ExpressionLoad _ _ _ addr val) st =
-    do addr' <- evalExpressionWithStore addr st
-       val' <- evalExpressionWithStore val st
-       return $ case lookup addr' st of
-                  Nothing -> val'
-                  Just v -> v
-evalExpressionWithStore (ExpressionStore _ _ val) st =
-    evalExpressionWithStore val st
-evalExpressionWithStore (ExpressionImported v) _ = Just v
-evalExpressionWithStore (ExpressionNot e) st =
-    fmap complement $ evalExpressionWithStore e st
-evalExpressionWithStore (ExpressionBinop BinopCombine _ _) _ = Nothing
-evalExpressionWithStore (ExpressionBinop op l' r') st =
-    do l <- evalExpressionWithStore l' st
-       r <- evalExpressionWithStore r' st
-       return $ binopFunc op l r
-
-fetchMemory8 :: History -> Word64 -> Maybe Word64
-fetchMemory8 hist addr =
-    do xs <- fetchMemory hist addr 8
-       return $ fromInteger $ foldr (\a b -> b * 256 + a) 0 $ map toInteger xs
-
-evalExpressionInSnapshot :: Expression -> History -> [(Word64, Word64)] -> Maybe Word64
-evalExpressionInSnapshot (ExpressionRegister _ n) _ _ = Just n
-evalExpressionInSnapshot (ExpressionConst n) _ _ = Just n
-evalExpressionInSnapshot (ExpressionLoad _ _ _ addr _) hist stores =
-    do addr' <- evalExpressionInSnapshot addr hist stores
-       case lookup addr' stores of
-         Nothing -> fetchMemory8 hist addr'
-         Just v -> Just v
-evalExpressionInSnapshot (ExpressionStore _ _ val) hist stores =
-    evalExpressionInSnapshot val hist stores
-evalExpressionInSnapshot (ExpressionImported v) _ _ = Just v
-evalExpressionInSnapshot (ExpressionBinop BinopCombine _ _) _ _ = Nothing
-evalExpressionInSnapshot (ExpressionBinop op l' r') hist st =
-    do l <- evalExpressionInSnapshot l' hist  st
-       r <- evalExpressionInSnapshot r' hist st
-       return $ binopFunc op l r
-evalExpressionInSnapshot (ExpressionNot l) hist st =
-    fmap complement $ evalExpressionInSnapshot l hist st
 
 --enumerateHistories start = enumerateAllEpochs [start]
 {-
