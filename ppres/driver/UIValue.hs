@@ -304,3 +304,9 @@ instance AvailInUI (BooleanExpression SchedulingConstraint) where
     toUI = UIValueClassExpr
     fromUI (UIValueClassExpr e) = Right e
     fromUI e = coerceError "ClassifierExpression" e
+
+instance AvailInUI a => AvailInUI (Topped a) where
+    toUI Infinity = UIValueNull
+    toUI (Finite x) = toUI x
+    fromUI UIValueNull = Right Infinity
+    fromUI x = fmap Finite $ fromUI x

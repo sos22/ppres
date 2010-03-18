@@ -7,7 +7,7 @@ module WorkerCache(initWorkerCache, destroyWorkerCache,
                    threadState, replayState, 
                    fetchMemory, vgIntermediate, nextThread,
                    controlTraceTo, getRegisters,
-                   getRipAtAccess, traceTo) where
+                   getRipAtAccess, traceTo, traceToEvent) where
 
 import Data.Word
 import Control.Monad.State
@@ -238,4 +238,12 @@ getRipAtAccess hist whn =
     do hist' <- truncateHistory hist $ Finite $ whn + 1
        getRegister (getRegisters hist') REG_RIP
 
-       
+traceToEvent :: History -> ThreadId -> Topped AccessNr -> Either String ([TraceRecord], History)
+traceToEvent start tid limit =
+    unsafePerformIO $ do worker <- getWorker start
+                         trc <- traceToEventWorker worker tid limit
+                         rs <- replayStateWorker worker
+                         killWorker worker
+                         return $ do h <- runThread start tid $ Finite (rs_access_nr rs)
+                                     return (trc, h)
+

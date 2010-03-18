@@ -237,7 +237,8 @@ initialWorldState fd =
                                             ("cs2bp", mkUIFunction3 criticalSectionToBinpatch),
                                             ("mkenforcer", mkUIFunction3 mkEnforcer),
                                             ("clsfutures", mkUIFunction classifyFutures),
-                                            ("autofix", mkUIFunction autoFix)
+                                            ("autofix", mkUIFunction autoFix),
+                                            ("tracetoevent", mkUIFunction3 traceToEvent)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

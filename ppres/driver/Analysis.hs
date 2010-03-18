@@ -176,11 +176,6 @@ mkEnforcer hist bad_histories good_histories =
           g <- good_origins
           return $ loToBinpatch hist b g
 
-rs_access_nr :: ReplayState -> AccessNr
-rs_access_nr (ReplayStateOkay x) = x
-rs_access_nr (ReplayStateFinished x) = x
-rs_access_nr (ReplayStateFailed _ _ x _) = x
-
 classifyFutures :: History -> ([History], [History])
 classifyFutures start =
     let allFutures = enumerateHistories start

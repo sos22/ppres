@@ -1,4 +1,4 @@
-module Worker(killWorker, traceWorker,
+module Worker(killWorker, traceWorker, traceToEventWorker,
               takeSnapshot, runWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker,
@@ -69,6 +69,9 @@ setThreadPacket (ThreadId tid) = ControlPacket 0x1241 [fromInteger tid]
 getRegistersPacket :: ControlPacket
 getRegistersPacket = ControlPacket 0x1242 []
 
+traceToEventPacket :: Topped AccessNr -> ControlPacket
+traceToEventPacket x = ControlPacket 0x1243 $ fromAN x
+
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
     do (ResponsePacket s _) <- sendWorkerCommand worker cmd
@@ -134,6 +137,10 @@ traceCmd worker pkt =
 
 traceWorker :: Worker -> Topped AccessNr -> IO [TraceRecord]
 traceWorker worker cntr = traceCmd worker (tracePacket cntr)
+
+traceToEventWorker :: Worker -> ThreadId -> Topped AccessNr -> IO [TraceRecord]
+traceToEventWorker worker tid limit = do setThreadWorker worker tid
+                                         traceCmd worker $ traceToEventPacket limit
 
 takeSnapshot :: Worker -> IO (Maybe Worker)
 takeSnapshot worker =
@@ -333,3 +340,4 @@ getRegistersWorker :: Worker -> IO RegisterFile
 getRegistersWorker worker =
     do (ResponsePacket True params) <- sendWorkerCommand worker getRegistersPacket
        return $ RegisterFile $ evalConsumer params $ consumeMany consumeRegisterBinding
+

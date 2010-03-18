@@ -44,7 +44,7 @@ extern UInt (*VG_(interpret))(VexGuestArchState *state);
 extern void VG_(client_syscall)(ThreadId tid, UInt trc);
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
-static void run_to(struct record_consumer *logfile, replay_coord_t to);
+static void run_to(struct record_consumer *logfile, replay_coord_t to, Bool stop_on_event);
 
 struct failure_reason {
 	unsigned reason;
@@ -406,6 +406,10 @@ get_control_command(struct control_command *cmd)
 		tl_assert(ch.nr_args == 1);
 		cmd->u.run.when = read_trace_coord(control_process_socket);
 		break;
+	case WORKER_TRACE_TO_EVENT:
+		tl_assert(ch.nr_args == 1);
+		cmd->u.run.when = read_trace_coord(control_process_socket);
+		break;
 	case WORKER_TRACE:
 		tl_assert(ch.nr_args == 1);
 		cmd->u.trace.when = read_trace_coord(control_process_socket);
@@ -540,7 +544,6 @@ syscall_event(VexGuestAMD64State *state)
 	if (current_thread->in_monitor) {
 		VG_(client_syscall)(VG_(running_tid), VEX_TRC_JMP_SYS_SYSCALL);
 	} else {
-		TRACE(SYSCALL, state->guest_RAX);
 		/* sys futex needs special handling so that we
 		   generate block and unblock events in the right
 		   places. */
@@ -548,20 +551,13 @@ syscall_event(VexGuestAMD64State *state)
 			unsigned long futex_cmd = state->guest_RSI & FUTEX_CMD_MASK;
 			if (futex_cmd == FUTEX_WAIT ||
 			    futex_cmd == FUTEX_WAIT_BITSET) {
-				int expected = state->guest_RDX;
 				int observed;
 
 				load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
-				if (expected == observed) {
-					now.access_nr++;
-					event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
-					      state->guest_RSI, state->guest_RDX, (unsigned long)state);
-					check_fpu_control();
-					return;
-				}
 			}
 		}
 		now.access_nr++;
+		TRACE(SYSCALL, state->guest_RAX);
 		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	}
@@ -862,7 +858,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			my__exit(0);
 		case WORKER_TRACE:
 			trace_mode = True;
-			run_to(&logfile, cmd.u.trace.when);
+			run_to(&logfile, cmd.u.trace.when, False);
 			trace_mode = False;
 			send_okay();
 			break;
@@ -1314,7 +1310,7 @@ replay_coord_lt(replay_coord_t l, replay_coord_t r)
 }
 
 static void
-run_to(struct record_consumer *logfile, replay_coord_t when)
+run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 {
 	const struct record_header *rec;
 	struct client_event_record thread_event;
@@ -1345,6 +1341,9 @@ run_to(struct record_consumer *logfile, replay_coord_t when)
 		current_thread->last_run = now;
 
 		next_record();
+
+		if (stop_on_event)
+			break;
 	}
 }
 
@@ -1359,49 +1358,55 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
-		run_to(logfile, cmd->u.run.when);
+		run_to(logfile, cmd->u.run.when, False);
 		send_okay();
-		break;
-	case WORKER_TRACE:
+		return;
+	case WORKER_TRACE_TO_EVENT:
 		trace_mode = True;
-		run_to(logfile, cmd->u.trace.when);
+		run_to(logfile, cmd->u.run.when, True);
 		trace_mode = False;
 		send_okay();
-		break;
+		return;
+	case WORKER_TRACE:
+		trace_mode = True;
+		run_to(logfile, cmd->u.trace.when, False);
+		trace_mode = False;
+		send_okay();
+		return;
 	case WORKER_CONTROL_TRACE:
 		want_to_interpret = True;
-		run_to(logfile, cmd->u.control_trace.when);
+		run_to(logfile, cmd->u.control_trace.when, False);
 		want_to_interpret = False;
 		send_okay();
-		break;
+		return;
 	case WORKER_SNAPSHOT:
 		control_process_socket = do_snapshot(control_process_socket);
-		break;
+		return;
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
-		run_to(logfile, cmd->u.trace_mem.when);
+		run_to(logfile, cmd->u.trace_mem.when, False);
 		send_okay();
-		break;
+		return;
 	case WORKER_THREAD_STATE:
 		do_thread_state_command();
-		break;
+		return;
 	case WORKER_REPLAY_STATE:
 		if (logfile->finished)
 			send_ancillary(ANCILLARY_REPLAY_FINISHED, now.access_nr);
 		else
 			send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.access_nr);
 		send_okay();
-		break;
+		return;
 	case WORKER_GET_MEMORY:
 		send_bytes(cmd->u.get_memory.size, (const void *)cmd->u.get_memory.addr);
-		break;
+		return;
 	case WORKER_VG_INTERMEDIATE:
 		do_vg_intermediate_command(cmd->u.vg_intermediate.addr);
-		break;
+		return;
 	case WORKER_GET_THREAD:
 		send_ancillary(ANCILLARY_NEXT_THREAD, current_thread->id);
 		send_okay();
-		break;
+		return;
 	case WORKER_SET_THREAD:
 		rt = get_thread_by_id(cmd->u.set_thread.tid);
 		if (!rt) {
@@ -1411,13 +1416,12 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			current_thread = rt;
 			send_okay();
 		}
-		break;
+		return;
 	case WORKER_GET_REGISTERS:
 		do_get_registers_command();
-		break;
-	default:
-		VG_(tool_panic)((Char *)"Bad worker command");
+		return;
 	}
+	VG_(tool_panic)((Char *)"Bad worker command");
 }
 
 /* The replay machine itself.  This consumes records from the log file

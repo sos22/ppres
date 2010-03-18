@@ -199,6 +199,11 @@ data ReplayState = ReplayStateOkay AccessNr
                  | ReplayStateFinished AccessNr
                  | ReplayStateFailed String ThreadId AccessNr ReplayFailureReason deriving (Show, Read)
 
+rs_access_nr :: ReplayState -> AccessNr
+rs_access_nr (ReplayStateOkay x) = x
+rs_access_nr (ReplayStateFinished x) = x
+rs_access_nr (ReplayStateFailed _ _ x _) = x
+
 data ThreadState = ThreadState { ts_dead :: Bool, {- exitted normally -}
                                  ts_crashed :: Bool, {- died with a segv etc. -}
                                  ts_blocked :: Bool,
