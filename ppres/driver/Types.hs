@@ -206,7 +206,6 @@ rs_access_nr (ReplayStateFailed _ _ x _) = x
 
 data ThreadState = ThreadState { ts_dead :: Bool, {- exitted normally -}
                                  ts_crashed :: Bool, {- died with a segv etc. -}
-                                 ts_blocked :: Bool,
                                  ts_last_run :: AccessNr,
                                  ts_last_rip :: Word64 } deriving (Show, Eq)
 

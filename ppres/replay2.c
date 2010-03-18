@@ -727,7 +727,7 @@ do_thread_state_command(void)
 {
 	struct replay_thread *rt;
 	for (rt = head_thread; rt; rt = rt->next)
-		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->crashed, rt->blocked,
+		send_ancillary(ANCILLARY_THREAD_STATE, rt->id, rt->dead, rt->crashed,
 			       rt->last_run.access_nr, rt->last_rip);
 	send_okay();
 }
@@ -1263,14 +1263,6 @@ replay_record(const struct record_header *rec,
 		replay_syscall(sr, event, logfile);
 		break;
 	}
-	case RECORD_thread_blocking:
-		current_thread->blocked = True;
-		finish_this_record(logfile);
-		break;
-	case RECORD_thread_unblocked:
-		current_thread->blocked = False;
-		finish_this_record(logfile);
-		break;
 	default:
 		finish_this_record(logfile);
 		break;

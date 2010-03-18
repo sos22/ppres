@@ -154,11 +154,10 @@ takeSnapshot worker =
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
 threadStateWorker worker =
     let parseItem :: ConsumerMonad ResponseData (ThreadId, ThreadState)
-        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_crashed, is_blocked, last_access, last_rip]) <- consume
+        parseItem = do (ResponseDataAncillary 13 [tid, is_dead, is_crashed, last_access, last_rip]) <- consume
                        return (ThreadId $ fromIntegral tid,
                                ThreadState {ts_dead = is_dead /= 0,
                                             ts_crashed = is_crashed /= 0,
-                                            ts_blocked = is_blocked /= 0,
                                             ts_last_run = AccessNr $ fromIntegral last_access,
                                             ts_last_rip = last_rip})
     in

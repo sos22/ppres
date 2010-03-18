@@ -220,7 +220,6 @@ struct replay_thread {
 	replay_coord_t last_run;
 	Bool dead;
 	Bool in_monitor;
-	Bool blocked;
 	Bool crashed;
 
 	/* The RIP last time we ran an instruction in this thread.
