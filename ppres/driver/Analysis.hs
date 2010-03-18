@@ -1,7 +1,5 @@
 {-# LANGUAGE RecursiveDo #-}
-module Analysis(findRacingAccesses, findControlFlowRaces, 
-                getRacingExpressions,
-                criticalSections, mkFixupLibrary, lastCommunication,
+module Analysis(lastCommunication,
                 commGraph, loadOrigins, filterLoadOriginPools,
                 mkBinaryClassifier, classifierToExpression,
                 exprToCriticalSections, criticalSectionToBinpatch,
@@ -26,127 +24,6 @@ import qualified Debug.Trace
 
 dt :: String -> a -> a
 dt = Debug.Trace.trace
-
-{- We have two traces, A and B.  A represents what actually happened,
-   and B an estimate of what we could have done by running some other
-   thread.  A pair of accesses races if one is a load in A from some
-   address X and the other is a store to X from B, and the values in
-   the two accesses are different.  This function finds all critical
-   access pairs, in some undefined order. -}
-
-findRacingAccesses :: [TraceRecord] -> [TraceRecord] -> [(TraceRecord, TraceRecord)]
-findRacingAccesses a b =
-    let aLoads = [r | r@(TraceRecord (TraceLoad _ _ _ _) _ _) <- a]
-        bStores = [r | r@(TraceRecord (TraceStore _ _ _ _) _ _) <- b]
-        storesTo ptr = [r | r <- bStores, ptr == (trc_store_ptr $ trc_trc r)]
-        res = [(load, store)
-               |
-               load <- aLoads,
-               store <- storesTo (trc_load_ptr $ trc_trc load),
-               (trc_load_val $ trc_trc load) /= (trc_store_val $ trc_trc store)
-              ]
-    in res
-
-{- Given a list of pairs of racing accesses and a list of expressions
-   on which control flow depends, find all of the races which might
-   have influenced control flow. -}
-
-findControlFlowRaces :: [(TraceRecord, TraceRecord)] -> [Expression] -> [(TraceRecord, TraceRecord)]
-findControlFlowRaces races expressions =
-    filter isRelevant races
-    where isRelevant (load, _) = or $ map (expressionMentionsLoad load) expressions
-          expressionMentionsLoad _ (ExpressionRegister _ _) = False
-          expressionMentionsLoad _ (ExpressionConst _) = False
-          expressionMentionsLoad _ (ExpressionImported _ ) = False
-          expressionMentionsLoad e (ExpressionBinop _ x y) = expressionMentionsLoad e x || expressionMentionsLoad e y
-          expressionMentionsLoad e (ExpressionNot x) = expressionMentionsLoad e x
-          expressionMentionsLoad (TraceRecord (TraceLoad _ _ _ _) _ loc1)
-                                     (ExpressionLoad _ _ loc2 _ _) = loc1 == loc2
-          expressionMentionsLoad _ _ = error "confused"
-
-
---enumerateHistories start = enumerateAllEpochs [start]
-{-
-enumerateHistories start = case filter (\x -> case replayState x of
-                                                ReplayStateFinished _ -> True
-                                                _ -> False) $ breadthFirstExplore enumerateNextEpoch start of
-                             [] -> Nothing
-                             (x:_) -> Just x
--}
-
-{- For our current purposes, a racing expression is one in which a
-   load in one thread is satisfied by a store in a different one. -}
-isRacingExpression :: Expression -> Bool
-isRacingExpression (ExpressionRegister _ _) = False
-isRacingExpression (ExpressionConst _) = False
-isRacingExpression (ExpressionLoad load_tid _ _ addr val) =
-    (case val of
-       ExpressionStore store_tid _ _ -> load_tid /= store_tid
-       ExpressionImported _ -> False
-       _ -> error "the value of a load should always be an import or a store") ||
-              (isRacingExpression addr) ||
-              (isRacingExpression val)
-isRacingExpression (ExpressionStore _ _ e) = isRacingExpression e
-isRacingExpression (ExpressionImported _) = False
-isRacingExpression (ExpressionBinop _ a b) =
-    isRacingExpression a || isRacingExpression b
-isRacingExpression (ExpressionNot x) = isRacingExpression x
-
-getRacingExpressions :: [Expression] -> [Expression]
-getRacingExpressions = filter isRacingExpression
-
-
-{- Go through and find all of the memory accesses in an expression,
-   and then partition them into a bunch of critical sections.  A
-   critical section, for our purposes, is a set of memory accesses
-   which has to be executed atomically.  ``Atomic'' in this context is
-   defined relative to all of the other critical sections in the list
-   (so other accesses can be interleaved with these ones). -}
-{- For now, we just create a critical section for every thread, and
-   put all of its memory accesses into that section.  This is quite
-   pessimistic, but easy to implement, and should at least work in
-   most of the common cases. -}
-criticalSections :: Expression -> [CriticalSection]
-criticalSections expr =
-    let accesses = foldrExpression
-                   (ExpressionFolder
-                    { ef_reg = const $ const [],
-                      ef_const = const [],
-                      ef_load = \tid _ whn addr val -> (tid,whn):(addr ++ val),
-                      ef_store = \tid whn val -> (tid,whn):val,
-                      ef_imported = const [],
-                      ef_binop = \_ a b -> a ++ b,
-                      ef_not = id })
-                   expr
-        threads = nub $ map fst accesses
-        csForThread t = CriticalSection t [acc | (thr, acc) <- accesses, t == thr]
-    in map csForThread threads
-
-{- Look at a critical section and a history and figure out which RIPs
-   should have been in the section.  All of the accesses in the CS
-   have to be in the same thread for this to be correct. -}
-getCriticalRips :: History -> CriticalSection -> [Word64]
-getCriticalRips hist (CriticalSection interestingThread accesses) =
-    let accesses' = sort accesses
-        (fstAccess:accesses'') = accesses'
-
-        ripsInAccess :: AccessNr -> [Word64]
-        ripsInAccess acc =
-            case traceTo (deError $ truncateHistory hist $ Finite acc) (deError $ truncateHistory hist $ Finite $ acc + 1) of
-              Left err -> error $ "ripsBetween: " ++ err
-              Right t -> [rip | (TraceFootstep rip _ _ _) <- map trc_trc $ filter ((==) interestingThread . trc_tid) t]
-
-        {- We want to include the instruction which issued the first
-           access.  Accesses terminate blocks, and the access shows up
-           after the footstep in the log, so the footsteps won't
-           include it, and so we need to grab it manually. -}
-        fstRip = case getRipAtAccess hist fstAccess of
-                   Left err -> error $ "ripsBetween2: " ++ err
-                   Right v -> v
-    in fstRip:(concatMap ripsInAccess accesses'')
-
-data PatchFragment = PatchFragment { pf_literal :: [Word8],
-                                     pf_fixups :: [PatchFixup] } deriving Show
 
 data InstructionPrefixes = InstructionPrefixes { ip_rexw :: Bool,
                                                  ip_rexr :: Bool,
@@ -229,72 +106,19 @@ stripPrefixes snapshot rip =
 bitSlice :: Bits a => a -> Int -> Int -> a
 bitSlice val start end = (val `shiftR` start) .&. ((1 `shiftL` (end - start + 1)) - 1)
 
-{- A patch fixup record means that the 4-byte value at offset pf_offset in the
-   string should be modified to be pf_target - (pf_offset + pf_addend + address_of_string) -}
-data PatchFixup = PatchFixup { pf_offset :: Word64,
-                               pf_target :: Either String Word64,
-                               pf_addend :: Word64,
-                               pf_size :: Int,
-                               pf_relative :: Bool
-                             } deriving Show
-
-offsetFixup :: Word64 -> PatchFixup -> PatchFixup
-offsetFixup o p = p { pf_offset = o + pf_offset p }
-
 byteListToInteger :: [Word8] -> Word64
 byteListToInteger = foldr (\a b -> a + b * 256) 0 . map fromIntegral
 
-{- Parse up a modrm sequence enough to discover:
-
-   -- its length, including SIB and displacement if present.
-   -- any fixups which might be necessary when we move it due to rip-relative addressing
- -}
-parseModrm :: History -> InstructionPrefixes -> Word64 -> Word64 -> Word64 -> Either String (Word64, [Word8], [PatchFixup], Word8)
-parseModrm snapshot _prefixes addr immediateBytes opcodeLen =
-    do modrm <- byte snapshot addr
-       let modfield = bitSlice modrm 6 7
-           regfield = bitSlice modrm 3 5
-           rmfield = bitSlice modrm 0 2
-           useSib = rmfield == 4 && modfield /= 3
-           modrmDispSize = case modfield of
-                             0 -> if rmfield == 5
-                                  then 4
-                                  else 0
-                             1 -> 1
-                             2 -> 4
-                             3 -> 0
-                             _ -> error "bitSlice not working"
-           ripRelative = rmfield == 5 && modfield == 0
-       if useSib
-        then do sib <- byte snapshot $ addr + 1
-                let _sibScale = bitSlice sib 6 7
-                    _sibIndex = bitSlice sib 3 5
-                    sibBase = bitSlice sib 0 2
-                    sibDispSize = if sibBase == 5
-                                  then case modfield of
-                                         0 -> 4
-                                         1 -> 1
-                                         2 -> 4
-                                         _ -> error "bitSlice not working"
-                                  else 0
-                if dt ("have sib " ++ (showHex sib "")) $ sibDispSize /= 0 && modrmDispSize /= 0 && sibDispSize /= modrmDispSize
-                 then Left $ "bad modrm decode at " ++ (showHex addr "") ++ ": modrm disp size doesn't match SIB disp size"
-                 else let dispSize = if sibDispSize /= 0
-                                     then sibDispSize
-                                     else modrmDispSize
-                      in do dispBytes <- bytes snapshot (addr + 2) dispSize
-                            return (addr + 2 + dispSize, modrm:sib:dispBytes,
-                                    if ripRelative
-                                    then [PatchFixup (opcodeLen + 2) (Right $ addr + 2 + immediateBytes + dispSize + byteListToInteger dispBytes) (immediateBytes + dispSize) 4 True]
-                                    else [],
-                                    regfield)
-        else do dispBytes <- bytes snapshot (addr + 1) modrmDispSize
-                return (addr + 1 + modrmDispSize, modrm:dispBytes,
-                        if ripRelative
-                        then [PatchFixup (opcodeLen + 1) (Right $ addr + 1 + immediateBytes + modrmDispSize + byteListToInteger dispBytes) (immediateBytes + modrmDispSize) 4 True]
-                        else [],
-                        regfield)
-
+{- Parse up a modrm sequence enough to discover its length and the extension field. -}
+parseModrm :: History -> Word64 -> Word64 -> Either String (Word64, Word8)
+parseModrm snapshot addr immediateBytes =
+    do (len, reg) <- evalState (runErrorT (reassembleModrm addr immediateBytes)) $ AssemblyState { as_binary = [],
+                                                                                                   as_relocs = [],
+                                                                                                   as_ripmap = [],
+                                                                                                   as_branch_targets = [],
+                                                                                                   as_final_ripmap = [],
+                                                                                                   as_snapshot = snapshot }
+       return (addr + fromIntegral len, fromIntegral reg)
 
 {- Parse up a modrm sequence and re-emit it.  Returns the length of
    the sequence and the register field of the modrm. -}
@@ -346,97 +170,9 @@ reassembleModrm startOfModrm immediateBytes =
                  else assembleBytes dispBytes
                 return (fromIntegral $ dispSize + 1, fromIntegral $ regfield)
 
-{- Concatenate two patch fragments -}
-prefixPatchFragment :: PatchFragment -> PatchFragment -> PatchFragment
-prefixPatchFragment fstFrag sndFrag =
-    PatchFragment { pf_literal = pf_literal fstFrag ++ pf_literal sndFrag,
-                    pf_fixups = pf_fixups fstFrag ++ (map (offsetFixup $ fromIntegral $ length $ pf_literal fstFrag) $ pf_fixups sndFrag) }
-
-ripListToPatchFragment :: History -> [Word64] -> PatchFragment -> Either String (PatchFragment, Word64)
-ripListToPatchFragment _ [] _ = error "ripListToPatchFragment on empty"
-ripListToPatchFragment snapshot (rip:rips) end =
-    do (after_prefix_rip, prefixes, prefix_string) <- stripPrefixes snapshot rip
-       hbyte <- byte snapshot after_prefix_rip
-       let opcodeLen = after_prefix_rip + 1 - rip
-           justModrm :: Either String (PatchFragment, Word64)
-           justModrm =
-               do (nrip, modrm_bytes, modrm_fixups, _) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 0 opcodeLen
-                  let myPF = PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes,
-                                             pf_fixups = modrm_fixups}
-                   in case rips of
-                       [] -> return (prefixPatchFragment myPF end, nrip)
-                       _ -> do (restPf, finalRip) <- ripListToPatchFragment snapshot rips end
-                               return (prefixPatchFragment myPF restPf, finalRip)
-       case hbyte of
-         0x83 -> do (after_modrm_rip, modrm_bytes, modrm_fixups, extension) <- parseModrm snapshot prefixes (after_prefix_rip + 1) 1 opcodeLen
-                    case extension of
-                      0 -> do imm8 <- byte snapshot after_modrm_rip
-                              let myPF = PatchFragment { pf_literal = prefix_string ++ [hbyte] ++ modrm_bytes ++ [imm8],
-                                                         pf_fixups = modrm_fixups}
-                               in case rips of
-                                    [] -> return (prefixPatchFragment myPF end, after_modrm_rip)
-                                    _ -> do (restPf, finalRip) <- ripListToPatchFragment snapshot rips end
-                                            return (prefixPatchFragment myPF restPf, finalRip)
-                      _ -> Left $ "unknown instruction 0x83 extension at " ++ (showHex rip "")
-         0x89 -> justModrm
-         0x8b -> justModrm
-         _ -> Left $ "unknown instruction at " ++ (showHex rip "")
-
 byteListToCString :: [Word8] -> String
 byteListToCString bl = '"':(concatMap word8ToCChar bl) ++ "\""
                        where word8ToCChar x = "\\x" ++ (showHex x "")
-
-fixupToC :: PatchFixup -> String
-fixupToC pf =
-    let targ = case pf_target pf of
-                 Left s -> "(unsigned long)&" ++ s
-                 Right i -> "0x" ++ (showHex i "")
-    in
-      "{" ++ (show $ pf_offset pf) ++ ",\n" ++
-              (show $ pf_addend pf) ++ ",\n" ++
-              targ ++ ",\n" ++
-              (show $ pf_size pf) ++ ",\n" ++
-              (if pf_relative pf then "1" else "0")
-              ++ "},"
-
-callSymbolFragment :: String -> PatchFragment
-callSymbolFragment symb = PatchFragment { pf_literal = [0x48, 0x81, 0xec, 0x80, 0x00, 0x00, 0x00, {- subq $128, %rsp -> get out of the red zone -}
-                                                        0x50, {- pushq %rax -}
-                                                        0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, {- movq imm64, %rax -}
-                                                        0xff, 0xd0, {- call *%rax -}
-                                                        0x58, {- pop %rax -}
-                                                        0x48, 0x81, 0xc4, 0x80, 0x00, 0x00, 0x00 {- addq $128, %rsp -}],
-                                          pf_fixups = [PatchFixup { pf_offset = 10, pf_target = Left symb, pf_addend = 8, pf_size = 8, pf_relative = False }]}
-
-jmpAddressFragment :: Word64 -> PatchFragment
-jmpAddressFragment targ = PatchFragment { pf_literal = [0xe9, 0x00, 0x00, 0x00, 0x00 {- jmp disp32 -}],
-                                          pf_fixups = [PatchFixup { pf_offset = 1, pf_target = Right targ, pf_addend = 4, pf_size = 4, pf_relative = True }]}
-
-mkFixup :: History -> CriticalSection -> [String] -> Either String (String, [String])
-mkFixup hist cs (pattern_ident:identifiers) =
-    let crit_rips = getCriticalRips hist cs in
-    mdo
-       (patch_frag, nextRip) <- ripListToPatchFragment hist crit_rips $ prefixPatchFragment (callSymbolFragment "do_unlock") (jmpAddressFragment nextRip)
-       let patch_frag' = prefixPatchFragment (callSymbolFragment "do_lock") patch_frag
-           pattern = byteListToCString $ pf_literal patch_frag'
-           global_part = 
-                         "static struct fixup_desc " ++ pattern_ident ++ "_fixup[] = {" ++
-                                                     (foldr (++) "" (map fixupToC $ pf_fixups patch_frag')) ++
-                         "};\n" ++
-                         "REGISTER_FIXUP(0x" ++ (showHex (head crit_rips) "") ++ ", " ++ pattern ++ ", " ++ pattern_ident ++ "_fixup);\n"
-       return $  (global_part, identifiers)
-
-mkFixups :: History -> [CriticalSection] -> [String] -> Either String [String]
-mkFixups _ [] _ = Right []
-mkFixups hist (cs:css) idents =
-    do (a, idents') <- mkFixup hist cs idents
-       rest <- mkFixups hist css idents'
-       return $ a:rest
-
-mkFixupLibrary :: History -> [CriticalSection] -> Either String String
-mkFixupLibrary hist crit_sects =
-    do fixups <- mkFixups hist crit_sects ["id_" ++ (show x) | x <- [(0::Integer)..]]
-       return $ "#include \"fixup_lib_const.h\"\n" ++ (concat fixups)
 
 {- Find the last thing in the list which satisfies a predicate, or
    Nothing if there is no such thing. -}
@@ -745,8 +481,8 @@ data InstructionTemplate =
 
 instruction_templates :: [(Word8, InstructionTemplate)]
 instruction_templates =
-    let next_instr_just_modrm opcodeLen snapshot rip prefixes =
-            do (nrip, _, _, _) <- parseModrm snapshot prefixes (rip + opcodeLen) 0 opcodeLen
+    let next_instr_just_modrm opcodeLen snapshot rip _ =
+            do (nrip, _) <- parseModrm snapshot (rip + opcodeLen) 0
                return [nrip]
         next_instr_modrm_imm imm opcodeLen snapshot rip prefixes =
             do r <- next_instr_just_modrm opcodeLen snapshot rip prefixes
@@ -758,8 +494,8 @@ instruction_templates =
                    fall_through = rip + 2
                return [fall_through, fall_through + (fromInteger b')]
 
-        next_instr_group5 snapshot rip prefixes =
-            do (nrip, _, _, extension) <- parseModrm snapshot prefixes (rip + 1) 0 1
+        next_instr_group5 snapshot rip _ =
+            do (nrip, extension) <- parseModrm snapshot (rip + 1) 0
                case extension of
                  2 -> {- Call indirect.  We cheat a bit and just return the next instruction. -}
                       return [nrip]
@@ -769,7 +505,7 @@ instruction_templates =
             let immsize = if ip_opsize prefixes
                           then 2
                           else 4
-            in do (nrip, _, _, _) <- parseModrm snapshot prefixes (rip + 1) 0 1
+            in do (nrip, _) <- parseModrm snapshot (rip + 1) immsize
                   return [nrip + immsize]
         
         next_instr_fixed_length l _ rip _ =
