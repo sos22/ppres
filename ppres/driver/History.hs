@@ -2,7 +2,7 @@ module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History,
                mkHistory, histLastCoord, controlTraceToWorker,
                traceToWorker, runThread, absHistSuffix, threadAtAccess,
-               setRegister, allocateMemory) where
+               setRegister, allocateMemory, setMemory, setMemoryProtection) where
 
 import Control.Monad.Error
 import Data.Word
@@ -14,6 +14,8 @@ import Util
 data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistorySetRegister !ThreadId !RegisterName !Word64
                   | HistoryAllocMemory !Word64 !Word64 !Word64
+                  | HistorySetMemory !Word64 [Word8]
+                  | HistorySetMemoryProtection !Word64 !Word64 !Word64
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
@@ -32,6 +34,14 @@ setRegister hist tid reg val =
 allocateMemory :: History -> Word64 -> Word64 -> Word64 -> History
 allocateMemory hist addr size prot =
     deError $ appendHistory hist $ HistoryAllocMemory addr size prot
+
+setMemory :: History -> Word64 -> [Word8] -> History
+setMemory hist addr contents =
+    deError $ appendHistory hist $ HistorySetMemory addr contents
+
+setMemoryProtection :: History -> Word64 -> Word64 -> Word64 -> History
+setMemoryProtection hist addr size prot =
+    deError $ appendHistory hist $ HistorySetMemoryProtection addr size prot
 
 histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x
@@ -79,6 +89,12 @@ doHistoryEntry w (HistorySetRegister tid reg val) =
        return 1
 doHistoryEntry w (HistoryAllocMemory addr size prot) =
     do allocateMemoryWorker w addr size prot
+       return 1
+doHistoryEntry w (HistorySetMemory addr bytes) =
+    do setMemoryWorker w addr bytes
+       return $ (toInteger $ length bytes) `div` 4096
+doHistoryEntry w (HistorySetMemoryProtection addr size prot) =
+    do setMemoryProtectionWorker w addr size prot
        return 1
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
@@ -211,7 +227,8 @@ threadAtAccess (History _ _ items) acc =
                else rest) (Left "ran out of history") $ dlToList items
 
 instance Forcable HistoryEntry where
-    force = seq
+    force (HistorySetMemory _ r) = force r
+    force x = seq x
 
 instance Forcable History where
     force (History a b h) = force a . force b . force h
@@ -228,6 +245,12 @@ traceTo' work tracer ((HistorySetRegister tid reg val):rest) =
        traceTo' work tracer rest
 traceTo' work tracer ((HistoryAllocMemory addr size prot):rest) =
     do allocateMemoryWorker work addr size prot
+       traceTo' work tracer rest
+traceTo' work tracer ((HistorySetMemory addr bytes):rest) =
+    do setMemoryWorker work addr bytes
+       traceTo' work tracer rest
+traceTo' work tracer ((HistorySetMemoryProtection addr size prot):rest) =
+    do setMemoryProtectionWorker work addr size prot
        traceTo' work tracer rest
 
 {- Take a worker and a history representing its current state and run

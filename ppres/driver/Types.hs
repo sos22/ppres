@@ -286,6 +286,9 @@ instance Forcable Int where
 instance Forcable Word64 where
     force = seq
 
+instance Forcable Word8 where
+    force = seq
+
 instance Forcable Bool where
     force = seq
 

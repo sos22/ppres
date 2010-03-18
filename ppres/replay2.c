@@ -409,10 +409,12 @@ get_control_command(struct control_command *cmd)
 		break;
 	case WORKER_TRACE_ADDRESS:
 	case WORKER_GET_MEMORY:
+	case WORKER_SET_MEMORY:
 		tl_assert(ch.nr_args == 2);
 		break;
 	case WORKER_SET_REGISTER:
 	case WORKER_ALLOCATE_MEMORY:
+	case WORKER_SET_MEMORY_PROTECTION:
 		tl_assert(ch.nr_args == 3);
 		break;
 	}
@@ -1427,6 +1429,38 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			send_okay();
 		return;
 	}
+	case WORKER_SET_MEMORY: {
+		char buf[128];
+		unsigned recved_this_time;
+		unsigned recved_total;
+		Bool worked;
+
+		worked = True;
+		for (recved_total = 0;
+		     recved_total < cmd->u.set_memory.size;
+		     recved_total += recved_this_time) {
+			recved_this_time = cmd->u.set_memory.size - recved_total;
+			if (recved_this_time > 128)
+				recved_this_time = 128;
+			safeish_read(control_process_socket,
+				     buf,
+				     recved_this_time);
+			worked &= safe_memcpy((void *)(cmd->u.set_memory.addr + recved_total),
+					      buf,
+					      recved_this_time);
+		}
+		if (worked)
+			send_okay();
+		else
+			send_error();
+		return;
+	}
+	case WORKER_SET_MEMORY_PROTECTION:
+		my_mprotect((void *)cmd->u.set_memory_protection.addr,
+			    cmd->u.set_memory_protection.size,
+			    cmd->u.set_memory_protection.prot);
+		send_okay();
+		return;
 	}
 	VG_(tool_panic)((Char *)"Bad worker command");
 }

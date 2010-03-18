@@ -18,7 +18,9 @@ enum command_number {
 	WORKER_GET_REGISTERS = 0x1242,
 	WORKER_TRACE_TO_EVENT = 0x1243,
 	WORKER_SET_REGISTER = 0x1244,
-	WORKER_ALLOCATE_MEMORY = 0x1245
+	WORKER_ALLOCATE_MEMORY = 0x1245,
+	WORKER_SET_MEMORY = 0x1246,
+	WORKER_SET_MEMORY_PROTECTION = 0x1247
 };
 
 struct command_header {
@@ -275,6 +277,15 @@ struct control_command {
 		struct {
 			long tid;
 		} set_thread;
+		struct {
+			unsigned long addr;
+			unsigned long size;
+		} set_memory; /* The actual data is still in the socket */
+		struct {
+			unsigned long addr;
+			unsigned long size;
+			unsigned long prot;
+		} set_memory_protection;
 		unsigned long args[4];
 	} u;
 };

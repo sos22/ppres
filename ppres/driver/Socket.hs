@@ -1,5 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface, ScopedTypeVariables #-}
-module Socket(sendSocketCommand, recvSocket, fdToSocket, recvStringBytes,
+module Socket(sendSocketCommand, sendSocketCommandTrailer, recvSocket, fdToSocket, recvStringBytes,
               ControlPacket(..), ResponsePacket(..), ResponseData(..))
     where
 
@@ -31,19 +31,30 @@ socketToFd (MkSocket x _ _ _ _) = x
 fdToSocket :: CInt -> IO Socket
 fdToSocket fd = mkSocket fd AF_UNIX Stream 0 Connected
 
+flatten_list :: Storable a => Ptr a -> [a] -> IO ()
+flatten_list _ [] = return ()
+flatten_list ptr (x:xs) =
+    do poke ptr x
+       flatten_list (plusPtr ptr (sizeOf x)) xs
+
+sendBytes :: Socket -> [Word8] -> IO ()
+sendBytes handle bytes =
+    let len = length bytes
+        worker ptr =
+            do flatten_list ptr bytes
+               c_send (socketToFd handle) ptr (fromIntegral len) 0
+    in do allocaBytes len worker
+          return ()
+
 sendPacket :: Socket -> ControlPacket -> IO ()
 sendPacket handle (ControlPacket command args) =
     let nr_args :: Word32
         nr_args = fromIntegral $ length args
         packet_size = 8 * (nr_args + 1)
         build_packet packet_ptr =
-            let flatten_list _ [] = return ()
-                flatten_list ptr (x:xs) =
-                    do poke ptr x
-                       flatten_list (plusPtr ptr (sizeOf x)) xs
-            in do pokeByteOff packet_ptr 0 command
-                  pokeByteOff packet_ptr 4 nr_args
-                  flatten_list (plusPtr packet_ptr 8) args
+            do pokeByteOff packet_ptr 0 command
+               pokeByteOff packet_ptr 4 nr_args
+               flatten_list (plusPtr packet_ptr 8) args
         send_packet ptr =
             do build_packet ptr
                c_send (socketToFd handle) ptr (fromInteger $ toInteger packet_size) 0
@@ -102,6 +113,12 @@ getResponse handle =
 sendSocketCommand :: Socket -> ControlPacket -> IO ResponsePacket
 sendSocketCommand handle cp =
     sendPacket handle cp >> getResponse handle
+
+sendSocketCommandTrailer :: Socket -> ControlPacket -> [Word8] -> IO ResponsePacket
+sendSocketCommandTrailer handle cp trailer =
+    do sendPacket handle cp
+       sendBytes handle trailer
+       getResponse handle
 
 recvSocket :: Socket -> IO Socket
 recvSocket parent =

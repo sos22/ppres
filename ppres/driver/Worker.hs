@@ -2,7 +2,8 @@ module Worker(killWorker, traceWorker, traceToEventWorker,
               takeSnapshot, runWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker,
-              getRegistersWorker, setRegisterWorker, allocateMemoryWorker)
+              getRegistersWorker, setRegisterWorker, allocateMemoryWorker,
+              setMemoryWorker, setMemoryProtectionWorker)
     where
 
 import Data.Word
@@ -78,6 +79,12 @@ setRegisterPacket (ThreadId tid) reg val = ControlPacket 0x1244 [fromInteger tid
 
 allocateMemoryPacket :: Word64 -> Word64 -> Word64 -> ControlPacket
 allocateMemoryPacket addr size prot = ControlPacket 0x1245 [addr, size, prot]
+
+setMemoryPacket :: Word64 -> Word64 -> ControlPacket
+setMemoryPacket addr size = ControlPacket 0x1246 [addr, size]
+
+setMemoryProtectionPacket :: Word64 -> Word64 -> Word64 -> ControlPacket
+setMemoryProtectionPacket addr size prot = ControlPacket 0x1247 [addr, size, prot]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -344,3 +351,17 @@ setRegisterWorker worker tid reg val =
 allocateMemoryWorker :: Worker -> Word64 -> Word64 -> Word64 -> IO Bool
 allocateMemoryWorker worker addr size prot =
     trivCommand worker $ allocateMemoryPacket addr size prot
+
+setMemoryWorker :: Worker -> Word64 -> [Word8] -> IO Bool
+setMemoryWorker worker addr bytes =
+    let cp = setMemoryPacket addr $ fromIntegral $ length bytes
+    in do a <- readIORef $ worker_alive worker
+          if not a
+           then error "set memory in dead worker"
+           else do (ResponsePacket s _) <- sendSocketCommandTrailer (worker_fd worker) cp bytes
+                   return s
+
+setMemoryProtectionWorker :: Worker -> Word64 -> Word64 -> Word64 -> IO ()
+setMemoryProtectionWorker worker addr size prot =
+    do trivCommand worker $ setMemoryProtectionPacket addr size prot
+       return ()
