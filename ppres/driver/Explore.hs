@@ -29,16 +29,16 @@ findNeighbouringHistories start =
                 generates some event which might cause other threads
                 to become runnable.  That pretty much means a system
                 call. -}
-             let giveUpCoord = Finite $ now + 100
-                 trc = deError $ traceTo start (deError $ runThread start t giveUpCoord)
+             let giveUpCoord = Finite $ now + 1000
+                 (trc, nextEvent) = deError $ traceToEvent start t giveUpCoord
                  syscalls = filter isSyscall trc
                             where isSyscall x = case trc_trc x of
                                                   TraceSyscall _ -> True
                                                   _ -> False
                  syscallLocs = map trc_loc syscalls
-                 runToCoord = case syscallLocs of
-                                [] -> giveUpCoord
-                                (x:_) -> Finite $ x + 1
+                 runToCoord = Finite $ case syscallLocs of
+                                         [] -> rs_access_nr $ replayState nextEvent
+                                         (x:_) -> x + 1
              in dt ("run single-threaded to " ++ (show runToCoord))
                     [deError $ runThread start t runToCoord]
 
@@ -59,8 +59,7 @@ findNeighbouringHistories start =
                 interesting. -}
              let trace_for_thread horizon t =
                      let (postTraceHist, collectedTrace) =
-                             deError $ do e <- runThread start t (Finite horizon)
-                                          trc <- traceTo start e
+                             deError $ do (trc, e) <- traceToEvent start t (Finite horizon)
                                           return (e, trc)
                          (haveSyscall, stoppedTrace) = stop_at_syscall collectedTrace
                          filteredTrace = filter (isInteresting . trc_trc) stoppedTrace
