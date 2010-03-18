@@ -248,7 +248,7 @@ capture_memory_jmpbuf;
 static void
 capture_memory_sighandler(Int signo, Addr addr)
 {
-	if (signo == VKI_SIGBUS) {
+	if (signo == VKI_SIGBUS || signo == VKI_SIGSEGV) {
 		/* Whoops.  We tried to capture some memory which
 		   didn't exist (e.g. mmap past the end of a file).
 		   Abort the capture, and just ignore everything past
