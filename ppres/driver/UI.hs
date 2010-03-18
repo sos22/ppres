@@ -150,6 +150,13 @@ mkUIFunction3 f =
           Left e -> UIValueError e
           Right a' -> mkUIFunction2 (f a')
 
+mkUIFunction4 :: (AvailInUI a, AvailInUI b, AvailInUI c, AvailInUI d, AvailInUI e) => (a -> (b -> (c -> (e -> d)))) -> UIValue
+mkUIFunction4 f =
+    UIValueFunction $ \a ->
+        case fromUI a of
+          Left e -> UIValueError e
+          Right a' -> mkUIFunction3 (f a')
+
 defootstep :: [TraceRecord] -> [TraceRecord]
 defootstep = filter (not . isFootstep . trc_trc)
              where isFootstep (TraceFootstep _ _ _ _) = True
@@ -238,7 +245,8 @@ initialWorldState fd =
                                             ("mkenforcer", mkUIFunction3 mkEnforcer),
                                             ("clsfutures", mkUIFunction classifyFutures),
                                             ("autofix", mkUIFunction autoFix),
-                                            ("tracetoevent", mkUIFunction3 traceToEvent)
+                                            ("tracetoevent", mkUIFunction3 traceToEvent),
+                                            ("setreg", mkUIFunction4 setRegister)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

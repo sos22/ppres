@@ -123,6 +123,9 @@ data RegisterName = REG_RAX
                   | REG_SSE_ROUND
                     deriving (Show, Read, Eq)
 
+instance Forcable RegisterName where
+    force = seq
+
 newtype RegisterFile = RegisterFile [(RegisterName, Word64)] deriving Show
 
 getRegister :: RegisterFile -> RegisterName -> Either String Word64
@@ -278,6 +281,9 @@ instance Forcable Integer where
     force = seq
 
 instance Forcable Int where
+    force = seq
+
+instance Forcable Word64 where
     force = seq
 
 instance Forcable Bool where

@@ -1,14 +1,18 @@
 module History(historyPrefixOf, emptyHistory, fixupWorkerForHist,
                appendHistory, truncateHistory, History,
                mkHistory, histLastCoord, controlTraceToWorker,
-               traceToWorker, runThread, absHistSuffix, threadAtAccess) where
+               traceToWorker, runThread, absHistSuffix, threadAtAccess,
+               setRegister) where
 
 import Control.Monad.Error
+import Data.Word
 
 import Types
 import Worker
+import Util
 
 data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
+                  | HistorySetRegister !ThreadId !RegisterName !Word64
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
@@ -20,6 +24,10 @@ runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
 runThread hist tid acc =
     appendHistory hist $ HistoryRun tid acc
 
+setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
+setRegister hist tid reg val =
+    deError $ appendHistory hist $ HistorySetRegister tid reg val
+
 histLastCoord :: History -> Topped AccessNr
 histLastCoord (History x _ _) = x
 
@@ -27,6 +35,7 @@ last_coord :: [HistoryEntry] -> Topped AccessNr
 last_coord he = worker $ reverse he
                 where worker [] = Finite $ AccessNr 0
                       worker ((HistoryRun _ x):_) = x
+                      worker ((HistorySetRegister _ _ _):x) = worker x
 
 {- Either id, for valid histories, or undefined for invalid ones. -}
 sanityCheckHistory :: History -> History
@@ -60,6 +69,9 @@ doHistoryEntry w (HistoryRun tid cntr) =
                   ReplayStateOkay e' -> return $ replayCost e e'
          ReplayStateFinished _ -> return 1
          ReplayStateFailed _ _ _ _ -> return 1
+doHistoryEntry w (HistorySetRegister tid reg val) =
+    do setRegisterWorker w tid reg val
+       return 1
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
 stripSharedPrefix (History _ _ aa) (History _ _ bb) =
@@ -141,6 +153,7 @@ appendHistory (History old_last_epoch old_nr_records dlh) he =
                               Right (y, old_nr_records, reverse $ he:hrest)
                           | otherwise ->
                               Right (y, old_nr_records + 1, reverse $ he:revh)
+                      _ -> Right (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
                 let res = History new_last_epoch new_nr_records $ listToDl h'
                 return $ sanityCheckHistory res
 
@@ -191,6 +204,7 @@ threadAtAccess (History _ _ items) acc =
 
 instance Forcable HistoryEntry where
     force (HistoryRun tid t) = force tid . force t
+    force (HistorySetRegister tid reg val) = force tid . force reg . force val
 
 instance Forcable History where
     force (History a b h) = force a . force b . force h
@@ -207,6 +221,8 @@ controlTraceToWorker work start end =
                                                  h <- controlTraceWorker work cntr
                                                  rest' <- worker rest
                                                  return $ h ++ rest'
+        worker ((HistorySetRegister tid reg val):rest) = do setRegisterWorker work tid reg val
+                                                            worker rest
     in
     case stripSharedPrefix start end of
       ([], todo) -> liftM Right $ worker todo
@@ -222,6 +238,9 @@ traceToWorker worker start end =
                h <- traceWorker worker cntr
                rest' <- work rest
                return $ h ++ rest'
+        work ((HistorySetRegister tid reg val):rest) =
+            do setRegisterWorker worker tid reg val
+               work rest
     in case stripSharedPrefix start end of
          ([], todo) -> liftM Right $ work todo
          _ -> return $ Left $ shows start $ " is not a prefix of " ++ (show end)

@@ -64,7 +64,16 @@ instance Show UIValue where
     show (UIValueBool False) = "False"
     show (UIValueClassifier c) = show c
     show (UIValueClassExpr c) = show c
-                                 
+
+simpleWrappedReadsPrec :: (Read a) => (a -> t) -> String -> [(t, String)] -> [(t, String)]
+simpleWrappedReadsPrec constructor t continuation =
+    case (do (contents, trail1) <- reads t
+             case trail1 of
+               '}':trail2 -> return (constructor contents, trail2)
+               _ -> []) of
+      [] -> continuation
+      x -> x
+
 instance Read UIValue where
     readsPrec _ [] = []
     readsPrec _ ('(':')':x) = [(UIValueNull,x)]
@@ -78,10 +87,9 @@ instance Read UIValue where
                       _ -> []
              _ -> []
     readsPrec _ x | isDigit (head x) = map (first UIValueInteger) $ reads x
-    readsPrec _ ('{':t) = do (contents, trail1) <- reads t
-                             case trail1 of
-                               '}':trail2 -> return (UIValueReplayCoord contents, trail2)
-                               _ -> []
+    readsPrec _ ('{':t) = simpleWrappedReadsPrec UIValueReplayCoord t $
+                          simpleWrappedReadsPrec UIValueRegisterName t $
+                          []
     readsPrec _ ('[':t) =
         let readListBody tt =
                 ([], tt):

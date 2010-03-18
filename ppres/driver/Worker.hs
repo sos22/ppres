@@ -2,7 +2,7 @@ module Worker(killWorker, traceWorker, traceToEventWorker,
               takeSnapshot, runWorker, threadStateWorker,
               replayStateWorker, controlTraceWorker, fetchMemoryWorker,
               vgIntermediateWorker, nextThreadWorker, setThreadWorker,
-              getRegistersWorker)
+              getRegistersWorker, setRegisterWorker)
     where
 
 import Data.Word
@@ -10,6 +10,7 @@ import Network.Socket
 import Control.Monad.State
 import Data.IORef
 import System.IO.Unsafe
+import Data.List
 
 import Types
 import Socket
@@ -71,6 +72,9 @@ getRegistersPacket = ControlPacket 0x1242 []
 
 traceToEventPacket :: Topped AccessNr -> ControlPacket
 traceToEventPacket x = ControlPacket 0x1243 $ fromAN x
+
+setRegisterPacket :: ThreadId -> RegisterName -> Word64 -> ControlPacket
+setRegisterPacket (ThreadId tid) reg val = ControlPacket 0x1244 [fromInteger tid, unparseRegister reg, val]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -227,33 +231,23 @@ evalConsumer items monad =
       (x, []) -> x
       _ -> error "Failed to consume all items"
 
+regNames :: [(RegisterName, Word64)]
+regNames = [(REG_RAX, 0), (REG_RCX, 1), (REG_RDX, 2), (REG_RBX, 3), (REG_RSP, 4),
+            (REG_RBP, 5), (REG_RSI, 6), (REG_RDI, 7), (REG_R8, 8), (REG_R9, 9),
+            (REG_R10, 10), (REG_R11, 11), (REG_R12, 12), (REG_R13, 13),
+            (REG_R14, 14), (REG_R15, 15), (REG_CC_OP, 16), (REG_CC_DEP1, 17),
+            (REG_CC_DEP2, 18), (REG_CC_NDEP, 19), (REG_DFLAG, 20),
+            (REG_RIP, 21), (REG_IDFLAG, 22), (REG_FS_ZERO, 23),
+            (REG_SSE_ROUND, 24)]
+
+unparseRegister :: RegisterName -> Word64
+unparseRegister rname =
+    maybe (error $ "bad register name" ++ (show rname) ++ "?") id $ lookup rname regNames
+
 parseRegister :: Word64 -> RegisterName
-parseRegister 0 = REG_RAX
-parseRegister 1 = REG_RCX
-parseRegister 2 = REG_RDX
-parseRegister 3 = REG_RBX
-parseRegister 4 = REG_RSP
-parseRegister 5 = REG_RBP
-parseRegister 6 = REG_RSI
-parseRegister 7 = REG_RDI
-parseRegister 8 = REG_R8
-parseRegister 9 = REG_R9
-parseRegister 10 = REG_R10
-parseRegister 11 = REG_R11
-parseRegister 12 = REG_R12
-parseRegister 13 = REG_R13
-parseRegister 14 = REG_R14
-parseRegister 15 = REG_R15
-parseRegister 16 = REG_CC_OP
-parseRegister 17 = REG_CC_DEP1
-parseRegister 18 = REG_CC_DEP2
-parseRegister 19 = REG_CC_NDEP
-parseRegister 20 = REG_DFLAG
-parseRegister 21 = REG_RIP
-parseRegister 22 = REG_IDFLAG
-parseRegister 23 = REG_FS_ZERO
-parseRegister 24 = REG_SSE_ROUND
-parseRegister r = error $ "bad register encoding " ++ (show r)
+parseRegister idx =
+    maybe (error $ "bad register encoding " ++ (show idx)) fst $
+    find ((==) idx . snd) regNames
 
 consumeRegisterBinding :: ConsumerMonad ResponseData (RegisterName, Word64)
 consumeRegisterBinding =
@@ -340,3 +334,6 @@ getRegistersWorker worker =
     do (ResponsePacket True params) <- sendWorkerCommand worker getRegistersPacket
        return $ RegisterFile $ evalConsumer params $ consumeMany consumeRegisterBinding
 
+setRegisterWorker :: Worker -> ThreadId -> RegisterName -> Word64 -> IO Bool
+setRegisterWorker worker tid reg val =
+    trivCommand worker $ setRegisterPacket tid reg val

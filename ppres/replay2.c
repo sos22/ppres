@@ -436,6 +436,12 @@ get_control_command(struct control_command *cmd)
 		safeish_read(control_process_socket, &cmd->u.get_memory.addr, 8);
 		safeish_read(control_process_socket, &cmd->u.get_memory.size, 8);
 		break;
+	case WORKER_SET_REGISTER:
+		tl_assert(ch.nr_args == 3);
+		safeish_read(control_process_socket, &cmd->u.set_register.tid, 8);
+		safeish_read(control_process_socket, &cmd->u.set_register.reg, 8);
+		safeish_read(control_process_socket, &cmd->u.set_register.val, 8);
+		break;
 	default:
 		VG_(tool_panic)((Char *)"bad worker command");
 	}
@@ -1411,6 +1417,33 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		return;
 	case WORKER_GET_REGISTERS:
 		do_get_registers_command();
+		return;
+	case WORKER_SET_REGISTER:
+		if (cmd->u.set_register.reg > REG_LAST) {
+			VG_(printf)("Register %ld unknown\n", cmd->u.set_register.reg);
+			send_error();
+			return;
+		}
+
+		rt = get_thread_by_id(cmd->u.set_register.tid);
+		if (!rt) {
+			VG_(printf)("bad thread %ld\n", cmd->u.set_register.tid);
+			send_error();
+			return;
+		}
+
+		if (rt->interpret_state.live) {
+			rt->interpret_state.registers[cmd->u.set_register.reg].v =
+				cmd->u.set_register.val;
+			rt->interpret_state.registers[cmd->u.set_register.reg].origin =
+				expr_imported(cmd->u.set_register.val);
+		} else {
+			ThreadState *ts;
+			ts = VG_(get_ThreadState)(cmd->u.set_register.tid);
+			(&ts->arch.vex.guest_RAX)[cmd->u.set_register.reg] =
+				cmd->u.set_register.val;
+		}
+		send_okay();
 		return;
 	}
 	VG_(tool_panic)((Char *)"Bad worker command");

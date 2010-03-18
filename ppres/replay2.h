@@ -16,7 +16,8 @@ enum command_number {
 	WORKER_GET_THREAD = 0x1240,
 	WORKER_SET_THREAD = 0x1241,
 	WORKER_GET_REGISTERS = 0x1242,
-	WORKER_TRACE_TO_EVENT = 0x1243
+	WORKER_TRACE_TO_EVENT = 0x1243,
+	WORKER_SET_REGISTER = 0x1244
 };
 
 struct command_header {
@@ -238,7 +239,7 @@ struct interpret_mem_lookaside {
 };
 
 struct control_command {
-	unsigned cmd;
+	enum command_number cmd;
 	union {
 		struct {
 			replay_coord_t when;
@@ -249,6 +250,11 @@ struct control_command {
 		struct {
 			replay_coord_t when;
 		} control_trace;
+		struct {
+			unsigned long tid;
+			unsigned long reg;
+			unsigned long val;
+		} set_register;
 		struct {
 			long address;
 			replay_coord_t when;
