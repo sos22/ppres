@@ -241,7 +241,8 @@ initialWorldState fd =
                                             ("e2cs", mkUIFunction exprToCriticalSections),
                                             ("cs2bp", mkUIFunction3 criticalSectionToBinpatch),
                                             ("mkenforcer", mkUIFunction3 mkEnforcer),
-                                            ("clsfutures", mkUIFunction classifyFutures)
+                                            ("clsfutures", mkUIFunction classifyFutures),
+                                            ("autofix", mkUIFunction autoFix)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

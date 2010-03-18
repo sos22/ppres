@@ -13,7 +13,7 @@ module Analysis(findRacingAccesses, findControlFlowRaces,
                 commGraph, loadOrigins, filterLoadOriginPools,
                 mkBinaryClassifier, classifierToExpression,
                 exprToCriticalSections, criticalSectionToBinpatch,
-                mkEnforcer, classifyFutures) where
+                mkEnforcer, classifyFutures, autoFix) where
 
 import Types
 import WorkerCache
@@ -1383,21 +1383,27 @@ loToBinpatch hist crash_origins nocrash_origins =
                                Left _ -> acc) []
 
         patches = deEither $ map mkBinpatch $ deMaybe critsects
-    in case patches of
+    in tlog ("predictors " ++ (show predictors)) $
+       tlog ("classifiers " ++ (show classifiers)) $
+       tlog ("crit sects " ++ (show critsects)) $
+       case patches of
          [] -> Nothing
          x:_ -> Just x
 
 {- Make a binpatch which will stop the bad histories from recurring
    while leaving the good histories possible. -}
-mkEnforcer :: History -> [History] -> [History] -> Either String String
+mkEnforcer :: History -> [History] -> [History] -> Either String (Maybe String)
 mkEnforcer hist bad_histories good_histories =
     let bad_origins = mapM (loadOrigins hist) bad_histories
         good_origins = mapM (loadOrigins hist) good_histories
     in do b <- bad_origins
           g <- good_origins
-          case loToBinpatch hist b g of
-            Nothing -> Left "cannot build a binpatch"
-            Just x -> Right x
+          return $ loToBinpatch hist b g
+
+rs_access_nr :: ReplayState -> AccessNr
+rs_access_nr (ReplayStateOkay x) = x
+rs_access_nr (ReplayStateFinished x) = x
+rs_access_nr (ReplayStateFailed _ _ x _) = x
 
 classifyFutures :: History -> ([History], [History])
 classifyFutures start =
@@ -1407,9 +1413,6 @@ classifyFutures start =
                                   where isInteresting (ReplayStateOkay _) = False
                                         isInteresting (ReplayStateFailed _ _ _ (FailureReasonWrongThread _)) = False
                                         isInteresting _ = True
-        rs_access_nr (ReplayStateOkay x) = x
-        rs_access_nr (ReplayStateFinished x) = x
-        rs_access_nr (ReplayStateFailed _ _ x _) = x
         crashes = filter (crashed.fst) interestingFutureStates
                   where crashed hist = or $ map (ts_crashed . snd) $ threadState hist
         lastCrash = last $ sort $ map (rs_access_nr . snd) crashes
@@ -1421,4 +1424,31 @@ classifyFutures start =
                                haven't because we're past lastCrash,
                                and it's all okay. -}
                             rs_access_nr s >= acc
-    in (map fst crashes, map fst nocrash)
+    in case crashes of
+         [] -> ([], []) {- lastCrash, and hence nocrash, is _|_ if crashes is [] -}
+         _ -> (map fst crashes, map fst nocrash)
+
+{- Given a history which crashes, generate a binpatch which would make
+   it not crash. -}
+autoFix :: History -> Either String String
+autoFix hist =
+    let baseThreshold = rs_access_nr $ replayState hist
+        tryThreshold thresh =
+            tlog ("tryThreshold " ++ (show thresh)) $ 
+            let t = deError $ truncateHistory hist $ Finite thresh in
+            case classifyFutures t of
+              ([], _) ->
+                  {- hist's truncation doesn't have any crashing
+                     futures -> hist didn't crash -> we can't fix
+                     it. -}
+                  Left "trying to fix a working history?"
+              (_, []) ->
+                  {- Every possible future of hist's truncation crashes ->
+                     we need to backtrack further -}
+                  tryThreshold (thresh - 10)
+              (crashes, nocrashes) ->
+                  case mkEnforcer t crashes nocrashes of
+                    Left e -> Left e
+                    Right Nothing -> tryThreshold (thresh - 1)
+                    Right (Just m) -> Right m
+    in tryThreshold baseThreshold
