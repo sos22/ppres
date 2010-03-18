@@ -54,7 +54,7 @@ mk_helpers(ultralong_t, 128)
 #define mk_helper_cas(typ, suffix)				       \
 static typ						               \
 helper_cas_ ## suffix (typ *addr,				       \
-			       typ expected,			       \
+		       typ expected,				       \
 		       typ data,				       \
                        unsigned long rsp,			       \
 		       unsigned long rip)			       \
@@ -69,6 +69,7 @@ helper_cas_ ## suffix (typ *addr,				       \
 }
 
 mk_helper_cas(unsigned, 32)
+mk_helper_cas(unsigned long, 64)
 
 static IRExpr *
 log_reads_expr(IRSB *sb, IRExpr *exp)
@@ -255,6 +256,11 @@ log_cas_stmt(IRSB *sb, IRCAS *details)
 		HLP(32);
 		cast_expdLo = IRExpr_Unop(Iop_32Uto64, details->expdLo);
 		cast_dataLo = IRExpr_Unop(Iop_32Uto64, details->dataLo);
+		break;
+	case Ity_I64:
+		HLP(64);
+		cast_expdLo = details->expdLo;
+		cast_dataLo = details->dataLo;
 		break;
 	default:
 		VG_(printf)("don't handle CAS type %d",
