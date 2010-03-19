@@ -1,7 +1,6 @@
 module Reassembly(AssemblyLabel(..), AssemblyReloc(..), buildCFG, reassemble) where
 
 import History
-import WorkerCache
 
 import Data.Bits
 import Data.Word

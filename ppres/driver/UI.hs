@@ -15,7 +15,6 @@ import System.Exit
 
 import Socket
 import Types
-import WorkerCache
 import UIValue
 import Analysis
 import History

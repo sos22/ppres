@@ -1,6 +1,5 @@
 module Explore(enumerateHistories, findSomeHistory) where
 
-import WorkerCache
 import History
 import Types
 import Timing

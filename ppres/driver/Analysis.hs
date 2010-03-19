@@ -5,7 +5,6 @@ module Analysis(
                 mkEnforcer, classifyFutures, autoFix) where
 
 import Types
-import WorkerCache
 import History
 import ReplayState()
 import Timing
