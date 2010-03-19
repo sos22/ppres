@@ -17,7 +17,6 @@ import Data.List
 import System.IO.Unsafe
 
 import Types
-import Worker
 import History
 
 --import qualified Debug.Trace
