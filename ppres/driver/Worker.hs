@@ -152,8 +152,8 @@ traceCmd worker pkt =
     do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
        return $ ancillaryDataToTrace args
 
-traceWorker :: Worker -> Topped AccessNr -> IO [TraceRecord]
-traceWorker worker cntr = traceCmd worker (tracePacket cntr)
+traceWorker :: Worker -> ThreadId -> Topped AccessNr -> IO [TraceRecord]
+traceWorker worker tid cntr = setThreadWorker worker tid >> traceCmd worker (tracePacket cntr)
 
 traceToEventWorker :: Worker -> ThreadId -> Topped AccessNr -> IO [TraceRecord]
 traceToEventWorker worker tid limit = do setThreadWorker worker tid
@@ -315,9 +315,10 @@ parseExpressions :: [ResponseData] -> [Expression]
 parseExpressions items =
     evalConsumer items $ consumeMany parseExpression
 
-controlTraceWorker :: Worker -> Topped AccessNr -> IO [Expression]
-controlTraceWorker worker cntr =
-    do (ResponsePacket _ params) <- sendWorkerCommand worker $ controlTracePacket cntr
+controlTraceWorker :: Worker -> ThreadId -> Topped AccessNr -> IO [Expression]
+controlTraceWorker worker tid cntr =
+    do setThreadWorker worker tid
+       (ResponsePacket _ params) <- sendWorkerCommand worker $ controlTracePacket cntr
        return $ parseExpressions params
 
 fetchMemoryWorker :: Worker -> Word64 -> Word64 -> IO (Maybe [Word8])

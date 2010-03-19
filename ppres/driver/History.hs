@@ -242,11 +242,10 @@ instance Forcable HistoryEntry where
 instance Forcable History where
     force (History a b h) = force a . force b . force h
 
-traceTo' :: Worker -> (Worker -> Topped AccessNr -> IO [a]) -> [HistoryEntry] -> IO [a]
+traceTo' :: Worker -> (Worker -> ThreadId -> Topped AccessNr -> IO [a]) -> [HistoryEntry] -> IO [a]
 traceTo' _ _ [] = return []
 traceTo' work tracer ((HistoryRun tid cntr):rest) =
-    do setThreadWorker work tid
-       h <- tracer work cntr
+    do h <- tracer work tid cntr
        rest' <- traceTo' work tracer rest
        return $ h ++ rest'
 traceTo' work tracer ((HistorySetRegister tid reg val):rest) =
