@@ -1,14 +1,20 @@
-module History(emptyHistory, 
+module History(
+               emptyHistory, 
                truncateHistory, History,
 
-               runThread, threadAtAccess,
-               setRegister, allocateMemory, setMemory, setMemoryProtection,
+               {- Single-stop operations on snapshots. -}
+               runThread, setRegister, allocateMemory, setMemory, setMemoryProtection,
                setTsc,
-               traceTo,
-               initWorkerCache, destroyWorkerCache,
-               threadState, replayState, fetchMemory, vgIntermediate,
-               nextThread, controlTraceTo, getRegisters,
-               getRipAtAccess, traceToEvent
+
+               {- Queries on histories -}
+               threadAtAccess, threadState, replayState, fetchMemory, vgIntermediate,
+               nextThread, getRegisters, getRipAtAccess,
+
+               {- Trace operations -}
+               traceTo, controlTraceTo, traceToEvent,
+
+               {- Other stuff -}
+               initWorkerCache, destroyWorkerCache               
                ) where
 
 import Control.Monad.Error
@@ -39,30 +45,6 @@ data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
    the number of entries in the history.  This means we can do a quick
    out in historyPrefixOf in many useful cases. -}
 data History = History (Topped AccessNr) Int (DList HistoryEntry) deriving (Show, Eq, Read)
-
-runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
-runThread hist tid acc =
-    appendHistory hist $ HistoryRun tid acc
-
-setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
-setRegister hist tid reg val =
-    deError $ appendHistory hist $ HistorySetRegister tid reg val
-
-allocateMemory :: History -> Word64 -> Word64 -> Word64 -> History
-allocateMemory hist addr size prot =
-    deError $ appendHistory hist $ HistoryAllocMemory addr size prot
-
-setMemory :: History -> Word64 -> [Word8] -> History
-setMemory hist addr contents =
-    deError $ appendHistory hist $ HistorySetMemory addr contents
-
-setMemoryProtection :: History -> Word64 -> Word64 -> Word64 -> History
-setMemoryProtection hist addr size prot =
-    deError $ appendHistory hist $ HistorySetMemoryProtection addr size prot
-
-setTsc :: History -> ThreadId -> Word64 -> History
-setTsc hist tid tsc =
-    deError $ appendHistory hist $ HistorySetTsc tid tsc
 
 last_coord :: [HistoryEntry] -> Topped AccessNr
 last_coord he = worker $ reverse he
@@ -850,4 +832,47 @@ traceToEvent start tid limit =
                          killWorker worker
                          return $ do h <- runThread start tid $ Finite (rs_access_nr rs)
                                      return (trc, h)
+
+runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
+runThread hist tid acc =
+    unsafePerformIO $ do worker <- getWorker hist
+                         setThreadWorker worker tid
+                         runWorker worker acc
+                         killWorker worker
+                         return $ appendHistory hist $ HistoryRun tid acc
+
+setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
+setRegister hist tid reg val =
+    deError $ unsafePerformIO $ do worker <- getWorker hist
+                                   setRegisterWorker worker tid reg val
+                                   killWorker worker
+                                   return $ appendHistory hist $ HistorySetRegister tid reg val
+
+allocateMemory :: History -> Word64 -> Word64 -> Word64 -> History
+allocateMemory hist addr size prot =
+    deError $ unsafePerformIO $ do worker <- getWorker hist
+                                   allocateMemoryWorker worker addr size prot
+                                   killWorker worker
+                                   return $ appendHistory hist $ HistoryAllocMemory addr size prot
+
+setMemory :: History -> Word64 -> [Word8] -> History
+setMemory hist addr contents =
+    deError $ unsafePerformIO $ do worker <- getWorker hist
+                                   setMemoryWorker worker addr contents
+                                   killWorker worker
+                                   return $ appendHistory hist $ HistorySetMemory addr contents
+
+setMemoryProtection :: History -> Word64 -> Word64 -> Word64 -> History
+setMemoryProtection hist addr size prot =
+    deError $ unsafePerformIO $ do worker <- getWorker hist
+                                   setMemoryProtectionWorker worker addr size prot
+                                   killWorker worker
+                                   return $ appendHistory hist $ HistorySetMemoryProtection addr size prot
+
+setTsc :: History -> ThreadId -> Word64 -> History
+setTsc hist tid tsc =
+    deError $ unsafePerformIO $ do worker <- getWorker hist
+                                   setTscWorker worker tid tsc
+                                   killWorker worker
+                                   return $ appendHistory hist $ HistorySetTsc tid tsc
 
