@@ -1,7 +1,7 @@
 module History(emptyHistory, 
                truncateHistory, History,
 
-               runThread, absHistSuffix, threadAtAccess,
+               runThread, threadAtAccess,
                setRegister, allocateMemory, setMemory, setMemoryProtection,
                setTsc,
                traceTo,
@@ -211,34 +211,6 @@ truncateHistory (History _ _ hs) cntr =
             else Right [HistoryRun tid cntr]
         worker _ = Left $ "truncate bad history: " ++ (show hs) ++ " to " ++ (show cntr)
     in liftM mkHistory (worker $ dlToList hs)
-
-{- Make a new history in which access numbers are all relative to the
-   previous access, rather than absolute from the beginning of the
-   world. -}
-mkRelativeHistory :: AccessNr -> [HistoryEntry] -> [(ThreadId, Integer)]
-mkRelativeHistory _ [] = []
-mkRelativeHistory (AccessNr base) ((HistoryRun tid (Finite aa@(AccessNr acc))):others) =
-    (tid, acc - base):(mkRelativeHistory aa others)
-mkRelativeHistory _ [HistoryRun _ Infinity] = error "can't convert infinite history to relative form"
-mkRelativeHistory _ _ = error "history is broken: stuff beyond infinity"
-
-relHistToThreadAbs :: [(ThreadId, Integer)] -> [(ThreadId, Integer)] -> [(ThreadId, Integer)]
-relHistToThreadAbs _ [] = []
-relHistToThreadAbs currentAccs ((tid,relAcc):others) =
-    let currentAcc = maybe 0 id $ lookup tid currentAccs
-        newAcc = currentAcc + relAcc
-        newLookup = (tid,newAcc):(filter ((/=) tid . fst) currentAccs)
-    in (tid,newAcc):(relHistToThreadAbs newLookup others)
-
-mkThreadAbsoluteHistory :: AccessNr -> [HistoryEntry] -> [(ThreadId, Integer)]
-mkThreadAbsoluteHistory acc = relHistToThreadAbs [] . mkRelativeHistory acc
-
-absHistSuffix :: History -> History -> Either String [(ThreadId, Integer)]
-absHistSuffix prefix@(History (Finite pacc) _ _) hist =
-    case stripSharedPrefix hist prefix of
-      (hh, []) -> Right $ mkThreadAbsoluteHistory pacc hh
-      _ -> Left $ (show prefix) ++ " is not a prefix of " ++ (show hist)
-absHistSuffix _ _ = Left "tried to strip an infinite prefix"
 
 threadAtAccess :: History -> AccessNr -> Either String ThreadId
 threadAtAccess (History _ _ items) acc =

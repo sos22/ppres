@@ -225,7 +225,6 @@ initialWorldState fd =
                                             ("fetchmem", mkUIFunction3 fetchMemory),
                                             ("map", mkUIFunction2 (map :: (UIValue->UIValue) -> [UIValue] -> [UIValue])),
                                             ("zip", mkUIFunction2 (zip :: [UIValue] -> [UIValue] -> [(UIValue,UIValue)])),
-                                            ("abshist", mkUIFunction2 absHistSuffix),
                                             ("trunc", mkUIFunction2 $ \x y -> truncateHistory x $ Finite y),
                                             ("filter", mkUIFunction2 uiFilter),
                                             ("issuccess", mkUIFunction isSuccessReplayState),
