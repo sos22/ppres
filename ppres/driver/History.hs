@@ -728,13 +728,21 @@ getWorker target =
                    mapM_ (killWorker . snd) final_expired
                    return final_worker
 
-
+registerWorker :: History -> Worker -> IO ()
+registerWorker hist worker =
+    force hist $
+    force worker $
+    do wc <- workerCache
+       lru <- readIORef $ wc_cache wc
+       let (new_lru, expired) = splitAt cacheSize ((hist,worker):lru)
+       writeIORef (wc_cache wc) new_lru
+       mapM_ (killWorker . snd) expired
 
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
     unsafePerformIO $ do worker <- getWorker hist
                          res <- w worker
-                         killWorker worker
+                         registerWorker hist worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
@@ -781,44 +789,50 @@ traceToEvent start tid limit =
 
 runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
 runThread hist tid acc =
-    unsafePerformIO $ do worker <- getWorker hist
-                         setThreadWorker worker tid
-                         runWorker worker acc
-                         killWorker worker
-                         return $ appendHistory hist $ HistoryRun tid acc
+    do res <- appendHistory hist $ HistoryRun tid acc
+       return $ unsafePerformIO $ do worker <- getWorker hist
+                                     setThreadWorker worker tid
+                                     runWorker worker acc
+                                     registerWorker res worker
+                                     return res
 
 setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
 setRegister hist tid reg val =
-    deError $ unsafePerformIO $ do worker <- getWorker hist
-                                   setRegisterWorker worker tid reg val
-                                   killWorker worker
-                                   return $ appendHistory hist $ HistorySetRegister tid reg val
+    let res = deError $ appendHistory hist $ HistorySetRegister tid reg val
+    in unsafePerformIO $ do worker <- getWorker hist
+                            setRegisterWorker worker tid reg val
+                            registerWorker res worker
+                            return res
 
 allocateMemory :: History -> Word64 -> Word64 -> Word64 -> History
 allocateMemory hist addr size prot =
-    deError $ unsafePerformIO $ do worker <- getWorker hist
-                                   allocateMemoryWorker worker addr size prot
-                                   killWorker worker
-                                   return $ appendHistory hist $ HistoryAllocMemory addr size prot
+    let res = deError $ appendHistory hist $ HistoryAllocMemory addr size prot
+    in unsafePerformIO $ do worker <- getWorker hist
+                            allocateMemoryWorker worker addr size prot
+                            registerWorker res worker
+                            return res
 
 setMemory :: History -> Word64 -> [Word8] -> History
 setMemory hist addr contents =
-    deError $ unsafePerformIO $ do worker <- getWorker hist
-                                   setMemoryWorker worker addr contents
-                                   killWorker worker
-                                   return $ appendHistory hist $ HistorySetMemory addr contents
+    let res = deError $ appendHistory hist $ HistorySetMemory addr contents
+    in unsafePerformIO $ do worker <- getWorker hist
+                            setMemoryWorker worker addr contents
+                            registerWorker res worker
+                            return res
 
 setMemoryProtection :: History -> Word64 -> Word64 -> Word64 -> History
 setMemoryProtection hist addr size prot =
-    deError $ unsafePerformIO $ do worker <- getWorker hist
-                                   setMemoryProtectionWorker worker addr size prot
-                                   killWorker worker
-                                   return $ appendHistory hist $ HistorySetMemoryProtection addr size prot
+    let res = deError $ appendHistory hist $ HistorySetMemoryProtection addr size prot
+    in unsafePerformIO $ do worker <- getWorker hist
+                            setMemoryProtectionWorker worker addr size prot
+                            registerWorker res worker
+                            return res
 
 setTsc :: History -> ThreadId -> Word64 -> History
 setTsc hist tid tsc =
-    deError $ unsafePerformIO $ do worker <- getWorker hist
-                                   setTscWorker worker tid tsc
-                                   killWorker worker
-                                   return $ appendHistory hist $ HistorySetTsc tid tsc
+    let res = deError $ appendHistory hist $ HistorySetTsc tid tsc
+    in unsafePerformIO $ do worker <- getWorker hist
+                            setTscWorker worker tid tsc
+                            registerWorker res worker
+                            return res
 
