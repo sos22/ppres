@@ -1,8 +1,7 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ForeignFunctionInterface, ScopedTypeVariables #-}
 module Logfile(Logfile, LogfilePtr, openLogfile, nextRecord,
                LogRecord(..),LogRecordBody(..)) where
 
-import System.Posix
 import System.Posix.IO
 import System.Posix.Types
 import System.IO
@@ -15,14 +14,13 @@ import Data.Word
 import Numeric
 import Control.Monad
 
-import Debug.Trace
-
 import Types
+import Util
 
 newtype Logfile = Logfile Fd
 newtype LogfilePtr = LogfilePtr FileOffset
 
-data LogRecordBody = LogSyscall { ls_nr :: Word64,
+data LogRecordBody = LogSyscall { ls_nr :: Word32,
                                   ls_res :: Word64,
                                   ls_arg1 :: Word64,
                                   ls_arg2 :: Word64,
@@ -33,7 +31,7 @@ data LogRecordBody = LogSyscall { ls_nr :: Word64,
                    | LogClientCall
                    | LogClientReturn
                    | LogSignal { ls_rip :: Word64,
-                                 ls_signo :: Word64,
+                                 ls_signo :: Word32,
                                  ls_err :: Word64,
                                  ls_va :: Word64 } deriving Show
 
@@ -91,16 +89,17 @@ getByte = ByteParser $ \contents -> case contents of
                                       [] -> []
                                       (x:xs) -> [(x, xs)]
 
-pairM a b = do a' <- a
-               b' <- b
-               return (a', b')
-
+byteParseInteger :: Int -> ByteParser Integer
 byteParseInteger nrBytes = do bytes <- byteParseByteList nrBytes
                               return $ foldr (\a b -> b * 256 + a) 0 $ map toInteger bytes
 
+byteParseUnsigned :: ByteParser Word32
 byteParseUnsigned = fmap fromInteger $ byteParseInteger 4
+
+byteParseULong :: ByteParser Word64
 byteParseULong = fmap fromInteger $ byteParseInteger 8
 
+byteParseSyscallRecord :: ByteParser LogRecordBody
 byteParseSyscallRecord = do nr <- byteParseUnsigned
                             byteParseUnsigned {- pad -}
                             res <- byteParseSysres
@@ -113,12 +112,15 @@ byteParseSyscallRecord = do nr <- byteParseUnsigned
                                                   ls_arg2 = arg2,
                                                   ls_arg3 = arg3 }
 
+byteParseMemoryRecord :: Int -> ByteParser LogRecordBody
 byteParseMemoryRecord nrBytes = do ptr <- byteParseULong
                                    body <- byteParseByteList $ nrBytes - 8
                                    return $ LogMemory { lm_ptr = ptr, lm_contents = body }
 
+byteParseRdtscRecord :: ByteParser LogRecordBody
 byteParseRdtscRecord = fmap LogRdtsc byteParseULong
 
+byteParseClientRecord :: ByteParser LogRecordBody
 byteParseClientRecord = do cls <- byteParseULong
                            return $ case cls of
                                       0x50500000 -> LogClientCall
@@ -153,6 +155,7 @@ fdReadBuf fd buf nbytes =
 foreign import ccall safe "read"
   c_safe_read :: CInt -> Ptr CChar -> CSize -> IO CSsize
 
+byteParseSysres :: ByteParser Word64
 byteParseSysres = do code <- byteParseULong
                      iserr <- byteParseBool
                      byteParseByteList 7 {- padding -}
@@ -172,7 +175,7 @@ nextRecord' lf@(Logfile fd) (LogfilePtr offset) =
        case hdr' of
          Nothing -> return Nothing
          Just hdr ->
-             let ((cls, size), tid) = parseBytes "hdr" (pairM (pairM byteParseUnsigned byteParseUnsigned) byteParseUnsigned) hdr
+             let ((cls::Word32, size), tid) = parseBytes "hdr" (pairM (pairM byteParseUnsigned byteParseUnsigned) byteParseUnsigned) hdr
              in do bodyBytes' <- fdPReadBytes fd (offset + 12) (fromIntegral $ size - 12)
                    case bodyBytes' of
                      Nothing -> error "truncated logfile"
