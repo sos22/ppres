@@ -610,28 +610,14 @@ setTscWorker :: Worker -> ThreadId -> Word64 -> IO Bool
 setTscWorker worker tid tsc =
     trivCommand worker $ setTscPacket tid tsc
 
-{- We use a two level cache.  The first level is primarily for the
-   benefit of the automated search process, and has an expiry policy
-   like this:
-
-   -- If you search for X, expire everything which isn't a prefix of X.
-   -- After that, expire in FIFO order.
-
-   Stuff which expires out of the first level goes to the second
-   level, which is maintained LRU.  This level is primarily there to
-   avoid pathological behaviour if the user is driving us
-   interactively. -}
+{- The worker cache.  Simple LRU list for now. -}
 type WorkerPool = [(History, Worker)]
-data WorkerCache = WorkerCache { wc_fifo_cache :: IORef WorkerPool,
-                                 wc_lru_cache :: IORef WorkerPool,
+data WorkerCache = WorkerCache { wc_cache :: IORef WorkerPool,
                                  wc_start :: Worker }
 
 
-fifoCacheSize :: Int
-fifoCacheSize = 800
-
-lruCacheSize :: Int
-lruCacheSize = 100
+cacheSize :: Int
+cacheSize = 900
 
 globalWorkerCache :: IORef (Maybe WorkerCache)
 {-# NOINLINE globalWorkerCache #-}
@@ -650,10 +636,9 @@ mkWorkerPool = []
 
 initWorkerCache :: Worker -> IO ()
 initWorkerCache start =
-    do fifo <- newIORef mkWorkerPool
+    do 
        lru <- newIORef mkWorkerPool
-       writeIORef globalWorkerCache $ Just $ WorkerCache { wc_fifo_cache = fifo,
-                                                           wc_lru_cache = lru,
+       writeIORef globalWorkerCache $ Just $ WorkerCache { wc_cache = lru,
                                                            wc_start = start }
 
 destroyWorkerCache :: IO ()
@@ -662,8 +647,7 @@ destroyWorkerCache =
         killPool p = readIORef p >>= mapM_ (killWorker . snd)
     in
     do wc <- workerCache
-       killPool $ wc_fifo_cache wc
-       killPool $ wc_lru_cache wc
+       killPool $ wc_cache wc
        killWorker $ wc_start wc
        writeIORef globalWorkerCache Nothing
 
@@ -681,57 +665,27 @@ getWorker target =
 
     do wc <- workerCache
 
-       fifo <- readIORef $ wc_fifo_cache wc
-       lru <- readIORef $ wc_lru_cache wc
+       lru <- readIORef $ wc_cache wc
 
-       let {- First, search the FIFO list, expiring as we go. -}
-           (best_fifo, new_fifo', expired_fifo) = search_fifo fifo
-           search_fifo [] = (Nothing, [], expired_fifo')
-           search_fifo ((h,w):rest) =
-               let (best_rest, new_fifo_rest, expired_rest) = search_fifo rest
-                   isPrefixOfTarget = historyPrefixOf h target
-                   new_best =
-                       if not isPrefixOfTarget
-                       then best_rest
-                       else case best_rest of
-                              Nothing -> Just (h, w)
-                              Just (best_rest_h, _) ->
-                                  if best_rest_h `historyPrefixOf` h
-                                  then Just (h, w)
-                                  else best_rest
-                   new_fifo'' = (if isPrefixOfTarget
-                                then (:) (h,w)
-                                else id) new_fifo_rest
-                   new_expired = (if isPrefixOfTarget
-                                  then id
-                                  else (:) (h, w)) expired_rest
-               in (new_best, new_fifo'', new_expired)
-           (new_fifo, expired_fifo') = splitAt (fifoCacheSize-1) new_fifo'
-
-           {- Search the current LRU, comparing to both the target and
-              the best FIFO.  sorted_lru is the current LRU list
-              sorted by goodness, except that if the best history is
-              to be found in the LRU we remove it from the list and
-              put it in best_lru.  The final result is either new_fifo
-              or new_fifo with the best from the LRU at the front. -}
-           (best_lru, sorted_lru, new_fifo_augmented) =
+       let 
+           {- Search the current LRU, comparing to the target.
+              sorted_lru is the current LRU list sorted by goodness,
+              except that if the best history is to be found in the
+              LRU we remove it from the list and put it in
+              best_lru. -}
+           ((best_hist, best_worker), sorted_lru) =
                case sortBy goodnessOrdering lru of
-                 [] -> (best_fifo, [], new_fifo)
+                 [] -> ((emptyHistory, wc_start wc), [])
                  xs@(x:xss) ->
                      if historyPrefixOf (fst x) target
-                     then case best_fifo of
-                            Nothing -> (Just x, xss, x:new_fifo)
-                            Just bh ->
-                                if historyPrefixOf (fst bh) (fst x)
-                                then (Just x, xss, x:new_fifo)
-                                else (best_fifo, xs, new_fifo)
-                     else (best_fifo, xs, new_fifo)
+                     then (x, xss)
+                     else ((emptyHistory, wc_start wc), xs)
 
            {- Build the new LRU.  We do a kind of pull-to-front which
               means that stuff in the LRU which could have been used
               as a basis for the current target ends up ahead of
               things which couldn't have been. -}
-           (new_lru, expired_lru) = splitAt lruCacheSize $ sortBy goodnessOrdering $ expired_fifo ++ sorted_lru
+           (new_lru, expired_lru) = splitAt cacheSize sorted_lru
 
            goodnessOrdering (x,_) (y,_) =
                {- Is x a better prefix of target than y?  LT if it is,
@@ -746,13 +700,8 @@ getWorker target =
                     then GT
                     else EQ
            
-           (best_hist, best_worker) = case best_lru of
-                                        Nothing -> (emptyHistory, wc_start wc)
-                                        Just x -> x
-
            reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
-       writeIORef (wc_lru_cache wc) new_lru
-       writeIORef (wc_fifo_cache wc) new_fifo_augmented
+       writeIORef (wc_cache wc) new_lru
 
        mapM_ (killWorker . snd) expired_lru
        
@@ -764,22 +713,19 @@ getWorker target =
                         case costOrPartial of
                           (cost, Nothing) ->
                               if cost > 10
-                              then do modifyIORef (wc_fifo_cache wc) $ (:) (target, currentWorker)
+                              then do modifyIORef (wc_cache wc) $ (:) (target, currentWorker)
                                       s <- reallySnapshot currentWorker
                                       return (s, cost + cost_base)
                               else return (currentWorker, cost + cost_base)
                           (cost, Just partial) ->
                               dt ("Partial fixup: " ++ (show currentHistory) ++ " -> " ++ (show partial) ++ ", target " ++ (show target)) $
-                              do modifyIORef (wc_fifo_cache wc) $ (:) (partial, currentWorker)
+                              do modifyIORef (wc_cache wc) $ (:) (partial, currentWorker)
                                  newWorker <- reallySnapshot currentWorker
                                  doFixup newWorker partial $ cost_base + cost
-             in do (final_worker, cost) <- doFixup new_worker best_hist 0
-                   (final_fifo, final_fifo_expired) <- dt ("fixup cost " ++ (show cost)) $ liftM (splitAt fifoCacheSize) $ readIORef $ wc_fifo_cache wc
-                   writeIORef (wc_fifo_cache wc) final_fifo
-                   almost_final_lru <- readIORef $ wc_lru_cache wc
-                   let (final_lru, final_lru_expired) = splitAt lruCacheSize $ sortBy goodnessOrdering $ final_fifo_expired ++ almost_final_lru
-                   writeIORef (wc_lru_cache wc) final_lru
-                   mapM_ (killWorker . snd) final_lru_expired
+             in do (final_worker, _) <- doFixup new_worker best_hist 0
+                   (final_lru, final_expired) <- liftM (splitAt cacheSize) $ readIORef $ wc_cache wc
+                   writeIORef (wc_cache wc) final_lru
+                   mapM_ (killWorker . snd) final_expired
                    return final_worker
 
 
