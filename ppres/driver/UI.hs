@@ -20,6 +20,7 @@ import Analysis
 import History
 import Explore
 import Classifier
+import Logfile
 
 data WorldState = WorldState { ws_bindings :: [(VariableName, UIValue)] }
 
@@ -206,9 +207,10 @@ initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
        a <- newIORef True
+       (l, startlp) <- openLogfile "logfile1"
        let root_snap = Worker f a
-       initWorkerCache root_snap
-       return $ WorldState { ws_bindings = [("start", UIValueSnapshot emptyHistory),
+       initWorkerCache l root_snap
+       return $ WorldState { ws_bindings = [("start", UIValueSnapshot $ emptyHistory startlp),
                                             ("first", mkUIFunction (fst :: (UIValue, UIValue) -> UIValue)),
                                             ("second", mkUIFunction (snd :: (UIValue, UIValue) -> UIValue)),
                                             ("thread_state", mkUIFunction threadState),

@@ -18,7 +18,13 @@ import Types
 import Util
 
 newtype Logfile = Logfile Fd
-newtype LogfilePtr = LogfilePtr FileOffset
+newtype LogfilePtr = LogfilePtr FileOffset deriving (Show, Read, Eq)
+
+instance Forcable COff where
+    force = seq
+
+instance Forcable LogfilePtr where
+    force (LogfilePtr x) = force x
 
 data LogRecordBody = LogSyscall { ls_nr :: Word32,
                                   ls_res :: Word64,

@@ -27,6 +27,7 @@ import Data.List
 import Types
 import Util
 import Socket
+import Logfile
 
 --import qualified Debug.Trace
 dt :: String -> a -> a
@@ -39,12 +40,18 @@ data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistorySetMemory !Word64 [Word8]
                   | HistorySetMemoryProtection !Word64 !Word64 !Word64
                   | HistorySetTsc !ThreadId !Word64
+                  | HistoryAdvanceLog !LogfilePtr
                     deriving (Eq, Show, Read)
 
 {- We cache, in the history record, the last epoch in the history and
    the number of entries in the history.  This means we can do a quick
    out in historyPrefixOf in many useful cases. -}
-data History = History (Topped AccessNr) Int (DList HistoryEntry) deriving (Show, Eq, Read)
+{- The logfile ptr is for the *start* of the log, not the current
+   position. -}
+data History = History { hs_start_lp :: LogfilePtr,
+                         hs_last_access :: Topped AccessNr,
+                         hs_length :: Int,
+                         hs_contents :: DList HistoryEntry } deriving (Show, Eq, Read)
 
 last_coord :: [HistoryEntry] -> Topped AccessNr
 last_coord he = worker $ reverse he
@@ -52,17 +59,23 @@ last_coord he = worker $ reverse he
                       worker ((HistoryRun _ x):_) = x
                       worker (_:x) = worker x
 
+history_logfile_ptr :: History -> LogfilePtr
+history_logfile_ptr (History st _ _ hes) =
+    foldr (\x y -> case x of
+                     HistoryAdvanceLog z -> z
+                     _ -> y) st $ reverse $ dlToList hes
+
 {- Either id, for valid histories, or undefined for invalid ones. -}
 sanityCheckHistory :: History -> History
-sanityCheckHistory hh@(History epoch len h) =
+sanityCheckHistory hh@(History _ epoch len h) =
     if len /= dlLength h
     then error $ "History " ++ (show hh) ++ " had bad length (should be " ++ (show $ dlLength h) ++ ")"
     else if last_coord (dlToList h) /= epoch
          then error $ "History " ++ (show hh) ++ " had bad last epoch (should be " ++ (show $ last_coord (dlToList h)) ++ ")"
          else hh
 
-mkHistory :: [HistoryEntry] -> History
-mkHistory h = History (last_coord h) (length h) (listToDl h)
+mkHistory :: LogfilePtr -> [HistoryEntry] -> History
+mkHistory startlp h = History startlp (last_coord h) (length h) (listToDl h)
 
 {- Estimate of cost of going from a to b. -}
 replayCost :: AccessNr-> AccessNr -> Integer
@@ -99,9 +112,10 @@ doHistoryEntry w (HistorySetMemoryProtection addr size prot) =
 doHistoryEntry w (HistorySetTsc tid tsc) =
     do setTscWorker w tid tsc
        return 1
+doHistoryEntry _ (HistoryAdvanceLog _) = return 0
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
-stripSharedPrefix (History _ _ aa) (History _ _ bb) =
+stripSharedPrefix (History _ _ _ aa) (History _ _ _ bb) =
     worker (dlToList aa) (dlToList bb)
     where worker a [] = (a, [])
           worker [] b = ([], b)
@@ -117,7 +131,7 @@ stripSharedPrefix (History _ _ aa) (History _ _ bb) =
 {- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
    when a and b are equal as a special case) -}
 historyPrefixOf :: History -> History -> Bool
-historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length b) =
+historyPrefixOf (History _ a_last_epoch a_length a) (History _ b_last_epoch b_length b) =
     if a_length > b_length || a_last_epoch > b_last_epoch
     then False
     else
@@ -137,8 +151,8 @@ historyPrefixOf (History a_last_epoch a_length a) (History b_last_epoch b_length
             res = worker (dle_head a) (dle_head b)
         in res
 
-emptyHistory :: History
-emptyHistory = mkHistory []
+emptyHistory :: LogfilePtr -> History
+emptyHistory lp = mkHistory lp []
 
 {- fixupWorkerForHist worker current desired -> assume that worker is
    in a state represented by current, and get it into a state
@@ -164,12 +178,12 @@ fixupWorkerForHist budget w current desired =
       _ -> error $ (show current) ++ " is not a prefix of " ++ (show desired) ++ " (historyPrefixOf " ++ (show $ historyPrefixOf current desired) ++ ")"
 
 appendHistory :: History -> HistoryEntry -> Either String History
-appendHistory (History old_last_epoch old_nr_records dlh) he =
+appendHistory (History startlp old_last_epoch old_nr_records dlh) he =
     let h = dlToList dlh
         revh = reverse h
         (hl:hrest) = revh
     in case h of
-         [] -> Right $ mkHistory [he]
+         [] -> Right $ mkHistory startlp [he]
          _ ->
              do (new_last_epoch, new_nr_records, h') <-
                     case (hl, he) of
@@ -181,21 +195,21 @@ appendHistory (History old_last_epoch old_nr_records dlh) he =
                           | otherwise ->
                               Right (y, old_nr_records + 1, reverse $ he:revh)
                       _ -> Right (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
-                let res = History new_last_epoch new_nr_records $ listToDl h'
+                let res = History startlp new_last_epoch new_nr_records $ listToDl h'
                 return $ sanityCheckHistory res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped AccessNr -> Either String History
-truncateHistory (History _ _ hs) cntr =
+truncateHistory (History startlp _ _ hs) cntr =
     let worker [HistoryRun tid Infinity] = Right [HistoryRun tid cntr]
         worker ((HistoryRun tid c):hs') =
             if c < cntr then liftM ((:) $ HistoryRun tid c) $ worker hs'
             else Right [HistoryRun tid cntr]
         worker _ = Left $ "truncate bad history: " ++ (show hs) ++ " to " ++ (show cntr)
-    in liftM mkHistory (worker $ dlToList hs)
+    in liftM (mkHistory startlp) (worker $ dlToList hs)
 
 threadAtAccess :: History -> AccessNr -> Either String ThreadId
-threadAtAccess (History _ _ items) acc =
+threadAtAccess (History _ _ _ items) acc =
     foldr (\(HistoryRun tid acc') rest ->
                if (Finite acc) < acc'
                then Right tid
@@ -206,7 +220,7 @@ instance Forcable HistoryEntry where
     force x = seq x
 
 instance Forcable History where
-    force (History a b h) = force a . force b . force h
+    force (History l a b h) = force l . force a . force b . force h
 
 traceTo' :: Worker -> (Worker -> ThreadId -> Topped AccessNr -> IO [a]) -> [HistoryEntry] -> IO [a]
 traceTo' _ _ [] = return []
@@ -229,6 +243,8 @@ traceTo' work tracer ((HistorySetMemoryProtection addr size prot):rest) =
 traceTo' work tracer ((HistorySetTsc tid tsc):rest) =
     do setTscWorker work tid tsc
        traceTo' work tracer rest
+traceTo' worker tracer ((HistoryAdvanceLog _):rest) =
+    traceTo' worker tracer rest
 
 {- Take a worker and a history representing its current state and run
    it forwards to some other history, logging control expressions as
@@ -468,12 +484,6 @@ consumeMany what =
                   rest <- consumeMany what
                   return $ i:rest
 
-pairM :: Monad m => m b -> m c -> m (b, c)
-pairM a b =
-    do a' <- a
-       b' <- b
-       return $ (a', b')
-
 evalConsumer :: [a] -> ConsumerMonad a b -> b
 evalConsumer items monad =
     case runConsumer monad items of
@@ -613,7 +623,9 @@ setTscWorker worker tid tsc =
 {- The worker cache.  Simple LRU list for now. -}
 type WorkerPool = [(History, Worker)]
 data WorkerCache = WorkerCache { wc_cache :: IORef WorkerPool,
-                                 wc_start :: Worker }
+                                 wc_start :: Worker,
+                                 wc_logfile :: Logfile
+                               }
 
 
 cacheSize :: Int
@@ -634,12 +646,13 @@ workerCache =
 mkWorkerPool :: WorkerPool
 mkWorkerPool = []
 
-initWorkerCache :: Worker -> IO ()
-initWorkerCache start =
+initWorkerCache :: Logfile -> Worker -> IO ()
+initWorkerCache lf start =
     do 
        lru <- newIORef mkWorkerPool
        writeIORef globalWorkerCache $ Just $ WorkerCache { wc_cache = lru,
-                                                           wc_start = start }
+                                                           wc_start = start,
+                                                           wc_logfile = lf }
 
 destroyWorkerCache :: IO ()
 destroyWorkerCache =
@@ -675,11 +688,11 @@ getWorker target =
               best_lru. -}
            ((best_hist, best_worker), sorted_lru) =
                case sortBy goodnessOrdering lru of
-                 [] -> ((emptyHistory, wc_start wc), [])
+                 [] -> ((emptyHistory (hs_start_lp target), wc_start wc), [])
                  xs@(x:xss) ->
                      if historyPrefixOf (fst x) target
                      then (x, xss)
-                     else ((emptyHistory, wc_start wc), xs)
+                     else ((emptyHistory (hs_start_lp target), wc_start wc), xs)
 
            {- Build the new LRU.  We do a kind of pull-to-front which
               means that stuff in the LRU which could have been used

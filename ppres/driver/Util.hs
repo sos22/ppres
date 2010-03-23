@@ -1,4 +1,4 @@
-module Util(first, second, deError, fastNub) where
+module Util where
 
 import Data.List
 
@@ -17,3 +17,7 @@ deError (Left err) = error err
 fastNub :: Ord a => [a] -> [a]
 fastNub = map head . group . sort
 
+pairM :: (Monad m) => m t -> m t1 -> m (t, t1)
+pairM a b = do a' <- a
+               b' <- b
+               return (a', b')
