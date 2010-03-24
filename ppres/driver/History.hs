@@ -49,8 +49,6 @@ data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
 {- The logfile ptr is for the *start* of the log, not the current
    position. -}
 data History = History { hs_start_lp :: LogfilePtr,
-                         hs_last_access :: Topped AccessNr,
-                         hs_length :: Int,
                          hs_contents :: DList HistoryEntry } deriving (Show, Eq, Read)
 
 last_coord :: [HistoryEntry] -> Topped AccessNr
@@ -60,22 +58,13 @@ last_coord he = worker $ reverse he
                       worker (_:x) = worker x
 
 history_logfile_ptr :: History -> LogfilePtr
-history_logfile_ptr (History st _ _ hes) =
+history_logfile_ptr (History st hes) =
     foldr (\x y -> case x of
                      HistoryAdvanceLog z -> z
                      _ -> y) st $ reverse $ dlToList hes
 
-{- Either id, for valid histories, or undefined for invalid ones. -}
-sanityCheckHistory :: History -> History
-sanityCheckHistory hh@(History _ epoch len h) =
-    if len /= dlLength h
-    then error $ "History " ++ (show hh) ++ " had bad length (should be " ++ (show $ dlLength h) ++ ")"
-    else if last_coord (dlToList h) /= epoch
-         then error $ "History " ++ (show hh) ++ " had bad last epoch (should be " ++ (show $ last_coord (dlToList h)) ++ ")"
-         else hh
-
 mkHistory :: LogfilePtr -> [HistoryEntry] -> History
-mkHistory startlp h = History startlp (last_coord h) (length h) (listToDl h)
+mkHistory startlp h = History startlp (listToDl h)
 
 {- Estimate of cost of going from a to b. -}
 replayCost :: AccessNr-> AccessNr -> Integer
@@ -127,7 +116,7 @@ stripSharedPrefix' rprefix aas@(a:as) bbs@(b:bs) =
            _ -> (reverse rprefix, (a:as), (b:bs))
 
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
-stripSharedPrefix (History _ _ _ aa) (History _ _ _ bb) =
+stripSharedPrefix (History _ aa) (History _ bb) =
     case stripSharedPrefix' (error "stripSharedPrefix") (dlToList aa) (dlToList bb) of
       (_, a, b) -> (a, b)
 
@@ -135,29 +124,27 @@ emptyHistory :: LogfilePtr -> History
 emptyHistory lp = mkHistory lp []
 
 appendHistory :: History -> HistoryEntry -> Either String History
-appendHistory (History startlp old_last_epoch old_nr_records dlh) he =
+appendHistory (History startlp dlh) he =
     let h = dlToList dlh
         revh = reverse h
         (hl:hrest) = revh
     in case h of
          [] -> Right $ mkHistory startlp [he]
          _ ->
-             do (new_last_epoch, new_nr_records, h') <-
+             do h' <-
                     case (hl, he) of
                       (HistoryRun xtid x, HistoryRun ytid y)
-                          | x == y -> Right (old_last_epoch, old_nr_records, h) {- didn't advance -> no-op -}
+                          | x == y -> Right h {- didn't advance -> no-op -}
                           | y < x -> Left "appendHistory tried to go backwards in time!"
-                          | xtid == ytid ->
-                              Right (y, old_nr_records, reverse $ he:hrest)
-                          | otherwise ->
-                              Right (y, old_nr_records + 1, reverse $ he:revh)
-                      _ -> Right (old_last_epoch, old_nr_records + 1, reverse $ he:revh)
-                let res = History startlp new_last_epoch new_nr_records $ listToDl h'
-                return $ sanityCheckHistory res
+                          | xtid == ytid -> Right $ reverse $ he:hrest
+                          | otherwise -> Right $ reverse $ he:revh
+                      _ -> Right $ reverse $ he:revh
+                let res = History startlp $ listToDl h'
+                return res
 
 {- Truncate a history so that it only runs to a particular epoch number -}
 truncateHistory :: History -> Topped AccessNr -> Either String History
-truncateHistory (History startlp _ _ hs) cntr =
+truncateHistory (History startlp hs) cntr =
     let worker [HistoryRun tid Infinity] = Right [HistoryRun tid cntr]
         worker ((HistoryRun tid c):hs') =
             if c < cntr then liftM ((:) $ HistoryRun tid c) $ worker hs'
@@ -166,7 +153,7 @@ truncateHistory (History startlp _ _ hs) cntr =
     in liftM (mkHistory startlp) (worker $ dlToList hs)
 
 threadAtAccess :: History -> AccessNr -> Either String ThreadId
-threadAtAccess (History _ _ _ items) acc =
+threadAtAccess (History _ items) acc =
     foldr (\(HistoryRun tid acc') rest ->
                if (Finite acc) < acc'
                then Right tid
@@ -177,7 +164,7 @@ instance Forcable HistoryEntry where
     force x = seq x
 
 instance Forcable History where
-    force (History l a b h) = force l . force a . force b . force h
+    force (History l h) = force l . force h
 
 traceTo' :: Worker -> (Worker -> ThreadId -> Topped AccessNr -> IO [a]) -> [HistoryEntry] -> IO [a]
 traceTo' _ _ [] = return []
