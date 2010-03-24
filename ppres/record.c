@@ -181,7 +181,7 @@ record_load(const void *ptr, unsigned size, void *base, unsigned long rsp,
 {
 	struct mem_read_record *mrr;
 	VG_(memcpy)(base, ptr, size);
-	if (!client_in_monitor() && !IS_STACK(ptr, rsp)) {
+	if (!IS_STACK(ptr, rsp)) {
 		mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
 		mrr->ptr = (Word)ptr;
 		VG_(memcpy)(mrr + 1, base, size);
@@ -194,7 +194,7 @@ record_store(void *ptr, unsigned size, const void *base, unsigned long rsp,
 {
 	struct mem_write_record *mrr;
 	VG_(memcpy)(ptr, base, size);
-	if (!client_in_monitor() && !IS_STACK(ptr, rsp)) {
+	if (!IS_STACK(ptr, rsp)) {
 		mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
 		mrr->ptr = (Word)ptr;
 		VG_(memcpy)(mrr + 1, base, size);
@@ -231,8 +231,6 @@ static void
 emit_triv_syscall(UInt nr, SysRes res, UWord *args)
 {
 	struct syscall_record *sr;
-
-	tl_assert(!client_in_monitor());
 
 	sr = emit_record(&logfile, RECORD_syscall, sizeof(*sr));
 	sr->syscall_nr = nr;
@@ -300,9 +298,6 @@ capture_memory(void *base, unsigned size)
 static void
 pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 {
-	if (client_in_monitor())
-		return;
-
 	switch (syscall_nr) {
 	case __NR_mmap: {
 		UWord flags = syscall_args[3];
@@ -355,9 +350,6 @@ static void
 post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	     SysRes res)
 {
-	if (client_in_monitor())
-		return;
-
 	emit_triv_syscall(syscall_nr, res, syscall_args);
 
 	switch (syscall_nr) {

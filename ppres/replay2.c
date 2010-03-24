@@ -519,28 +519,22 @@ void
 syscall_event(VexGuestAMD64State *state)
 {
 	check_fpu_control();
-	/* This needs to be kept in sync with the variant at the end
-	   of interpret_log_control_flow() */
-	if (current_thread->in_monitor) {
-		VG_(client_syscall)(VG_(running_tid), VEX_TRC_JMP_SYS_SYSCALL);
-	} else {
-		/* sys futex needs special handling so that we
-		   generate block and unblock events in the right
-		   places. */
-		if (state->guest_RAX == __NR_futex) {
-			unsigned long futex_cmd = state->guest_RSI & FUTEX_CMD_MASK;
-			if (futex_cmd == FUTEX_WAIT ||
-			    futex_cmd == FUTEX_WAIT_BITSET) {
-				int observed;
+	/* sys futex needs special handling so that we
+	   generate block and unblock events in the right
+	   places. */
+	if (state->guest_RAX == __NR_futex) {
+		unsigned long futex_cmd = state->guest_RSI & FUTEX_CMD_MASK;
+		if (futex_cmd == FUTEX_WAIT ||
+		    futex_cmd == FUTEX_WAIT_BITSET) {
+			int observed;
 
-				load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
-			}
+			load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 		}
-		now.access_nr++;
-		TRACE(SYSCALL, state->guest_RAX);
-		event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
-		      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	}
+	now.access_nr++;
+	TRACE(SYSCALL, state->guest_RAX);
+	event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
+	      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	check_fpu_control();
 }
 
@@ -590,20 +584,19 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 	}
 	check_fpu_control();
 	if (IS_STACK(ptr, rsp)) {
-		if (!current_thread->in_monitor)
-			debug_trace_data(ANCILLARY_TRACE_LOAD,
-					 size == 8 ?
-					 *(unsigned long *)read_bytes :
-					 *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
-					 size,
-					 (unsigned long)ptr,
-					 current_thread->in_monitor);
+		debug_trace_data(ANCILLARY_TRACE_LOAD,
+				 size == 8 ?
+				 *(unsigned long *)read_bytes :
+				 *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
+				 size,
+				 (unsigned long)ptr,
+				 current_thread->in_monitor);
 		check_fpu_control();
 		return;
 	}
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
-	    (trace_mode && !current_thread->in_monitor))
+	    (trace_mode))
 		ALWAYS_TRACE(LOAD,
 		       size == 8 ?
 		       *(unsigned long *)read_bytes :
@@ -611,11 +604,9 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 		       size,
 		       (unsigned long)ptr,
 		       current_thread->in_monitor);
-	if (!current_thread->in_monitor) {
-		now.access_nr++;
-		event(EVENT_load, (unsigned long)ptr, size,
-		      (unsigned long)read_bytes);
-	}
+	now.access_nr++;
+	event(EVENT_load, (unsigned long)ptr, size,
+	      (unsigned long)read_bytes);
 	check_fpu_control();
 }
 
@@ -629,20 +620,19 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 	}
 	check_fpu_control();
 	if (IS_STACK(ptr, rsp)) {
-		if (!current_thread->in_monitor)
-			debug_trace_data(ANCILLARY_TRACE_STORE,
-					 size == 8 ?
-					 *(unsigned long *)written_bytes :
-					 *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
-					 size,
-					 (unsigned long)ptr,
-					 current_thread->in_monitor);
+		debug_trace_data(ANCILLARY_TRACE_STORE,
+				 size == 8 ?
+				 *(unsigned long *)written_bytes :
+				 *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
+				 size,
+				 (unsigned long)ptr,
+				 current_thread->in_monitor);
 		check_fpu_control();
 		return;
 	}
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
-	    (trace_mode && !current_thread->in_monitor))
+	    (trace_mode))
 		ALWAYS_TRACE(STORE,
 		       size == 8 ?
 		       *(unsigned long *)written_bytes :
@@ -650,11 +640,9 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 		       size,
 		       (unsigned long)ptr,
 		       current_thread->in_monitor);
-	if (!current_thread->in_monitor) {
-		now.access_nr++;
-		event(EVENT_store, (unsigned long)ptr, size,
-		      (unsigned long)written_bytes);
-	}
+	now.access_nr++;
+	event(EVENT_store, (unsigned long)ptr, size,
+	      (unsigned long)written_bytes);
 	check_fpu_control();
 }
 
