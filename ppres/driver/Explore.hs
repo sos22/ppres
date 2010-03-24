@@ -39,9 +39,9 @@ findNeighbouringHistories start =
                                                   _ -> False
                  syscallLocs = map trc_loc syscalls
                  runToCoord = Finite $ case syscallLocs of
-                                         [] -> rs_access_nr $ replayState nextEvent
+                                         [] -> 1 + (rs_access_nr $ replayState nextEvent)
                                          (x:_) -> x + 1
-             in dt ("run single-threaded to " ++ (show runToCoord))
+             in dt ("run single-threaded to " ++ (show runToCoord) ++ " " ++ (show syscallLocs))
                     [deError $ runThread start t runToCoord]
 
          (ReplayStateOkay now, _) ->
