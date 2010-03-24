@@ -859,7 +859,7 @@ queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
     unsafePerformIO $ do worker <- getWorker hist
                          res <- w worker
-                         registerWorker hist worker
+                         killWorker worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
