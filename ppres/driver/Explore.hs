@@ -14,6 +14,9 @@ live_threads :: History -> [ThreadId]
 live_threads hist =
     [a | (a, b) <- threadState hist, not (ts_dead b)]
 
+rescheduleOnEveryAccess :: Bool
+rescheduleOnEveryAccess = True
+
 findNeighbouringHistories :: History -> [History]
 findNeighbouringHistories start =
     let threads = live_threads start
@@ -75,6 +78,8 @@ findNeighbouringHistories start =
                          should_stop_here (TraceCalled _) = True
                          should_stop_here (TraceSignal _ _ _ _) = tlog "stopping on signal" True
                          should_stop_here TraceRdtsc = True
+                         should_stop_here (TraceLoad _ _ _ _) = rescheduleOnEveryAccess
+                         should_stop_here (TraceStore _ _ _ _) = rescheduleOnEveryAccess
                          should_stop_here _ = False
                      in case replayState postTraceHist of
                           ReplayStateFailed _ _ _ _ -> (True, filteredTrace)
@@ -87,9 +92,9 @@ findNeighbouringHistories start =
                          thread_events t = filter (isTargetEvent . trc_trc) $ snd $ tt t
                                            where 
                                                  isTargetEvent (TraceLoad _ _ p _) =
-                                                     existsStoreNotInThread t p
+                                                     rescheduleOnEveryAccess || existsStoreNotInThread t p
                                                  isTargetEvent (TraceStore _ _ p _) =
-                                                     existsAccessNotInThread t p
+                                                     rescheduleOnEveryAccess || existsAccessNotInThread t p
                                                  isTargetEvent _ = True
                          {- True if any thread other than t accesses ptr -}
                          existsAccessNotInThread t ptr =
