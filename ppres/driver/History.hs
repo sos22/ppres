@@ -681,24 +681,16 @@ getWorker target =
        lru <- readIORef $ wc_cache wc
 
        let 
-           {- Search the current LRU, comparing to the target.
-              sorted_lru is the current LRU list sorted by goodness,
-              except that if the best history is to be found in the
-              LRU we remove it from the list and put it in
-              best_lru. -}
-           ((best_hist, best_worker), sorted_lru) =
-               case sortBy goodnessOrdering lru of
-                 [] -> ((emptyHistory (hs_start_lp target), wc_start wc), [])
-                 xs@(x:xss) ->
-                     if historyPrefixOf (fst x) target
-                     then (x, xss)
-                     else ((emptyHistory (hs_start_lp target), wc_start wc), xs)
-
-           {- Build the new LRU.  We do a kind of pull-to-front which
-              means that stuff in the LRU which could have been used
-              as a basis for the current target ends up ahead of
-              things which couldn't have been. -}
-           (new_lru, expired_lru) = splitAt cacheSize sorted_lru
+           {- Search the current LRU, comparing to the target. -}
+           sorted_lru = sortBy goodnessOrdering lru
+           (best_hist, best_worker) =
+               let miss = (emptyHistory (hs_start_lp target), wc_start wc)
+               in case sorted_lru of
+                    [] -> miss
+                    (x:_) ->
+                        if historyPrefixOf (fst x) target
+                        then x
+                        else miss
 
            goodnessOrdering (x,_) (y,_) =
                {- Is x a better prefix of target than y?  LT if it is,
@@ -714,28 +706,25 @@ getWorker target =
                     else EQ
            
            reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
-       writeIORef (wc_cache wc) new_lru
-
-       mapM_ (killWorker . snd) expired_lru
        
        new_worker <- reallySnapshot best_worker
        dt ("found " ++ (show best_hist) ++ " for " ++ (show target)) $ if best_hist == target
         then return new_worker
-        else let doFixup currentWorker currentHistory cost_base =
+        else let doFixup currentWorker currentHistory =
                      do costOrPartial <- fixupWorkerForHist 50 currentWorker currentHistory target
                         case costOrPartial of
                           (cost, Nothing) ->
                               if cost > 10
                               then do modifyIORef (wc_cache wc) $ (:) (target, currentWorker)
                                       s <- reallySnapshot currentWorker
-                                      return (s, cost + cost_base)
-                              else return (currentWorker, cost + cost_base)
-                          (cost, Just partial) ->
+                                      return s
+                              else return currentWorker
+                          (_, Just partial) ->
                               dt ("Partial fixup: " ++ (show currentHistory) ++ " -> " ++ (show partial) ++ ", target " ++ (show target)) $
                               do modifyIORef (wc_cache wc) $ (:) (partial, currentWorker)
                                  newWorker <- reallySnapshot currentWorker
-                                 doFixup newWorker partial $ cost_base + cost
-             in do (final_worker, _) <- doFixup new_worker best_hist 0
+                                 doFixup newWorker partial
+             in do final_worker <- doFixup new_worker best_hist
                    (final_lru, final_expired) <- liftM (splitAt cacheSize) $ readIORef $ wc_cache wc
                    writeIORef (wc_cache wc) final_lru
                    mapM_ (killWorker . snd) final_expired
