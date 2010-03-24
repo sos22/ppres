@@ -114,68 +114,25 @@ doHistoryEntry w (HistorySetTsc tid tsc) =
        return 1
 doHistoryEntry _ (HistoryAdvanceLog _) = return 0
 
+stripSharedPrefix' :: [HistoryEntry] -> [HistoryEntry] -> [HistoryEntry] -> ([HistoryEntry], [HistoryEntry], [HistoryEntry])
+stripSharedPrefix' x a [] = (reverse x, a, [])
+stripSharedPrefix' x [] b = (reverse x, [], b)
+stripSharedPrefix' rprefix aas@(a:as) bbs@(b:bs) =
+    if a == b then stripSharedPrefix' (a:rprefix) as bs
+    else case (a, b) of
+           (HistoryRun atid an, HistoryRun btid bn) | atid == btid ->
+             if an < bn
+             then stripSharedPrefix' (a:rprefix) as bbs
+             else stripSharedPrefix' (b:rprefix) aas bs
+           _ -> (reverse rprefix, (a:as), (b:bs))
+
 stripSharedPrefix :: History -> History -> ([HistoryEntry], [HistoryEntry])
 stripSharedPrefix (History _ _ _ aa) (History _ _ _ bb) =
-    worker (dlToList aa) (dlToList bb)
-    where worker a [] = (a, [])
-          worker [] b = ([], b)
-          worker aas@(a:as) bbs@(b:bs) =
-              if a == b then worker as bs
-              else case (a, b) of
-                     (HistoryRun atid an, HistoryRun btid bn) | atid == btid ->
-                         if an < bn
-                         then worker as bbs
-                         else worker aas bs
-                     _ -> ((a:as), (b:bs))
-
-{- a `historyPrefixOf` b -> True iff a is a prefix of b (which includes
-   when a and b are equal as a special case) -}
-historyPrefixOf :: History -> History -> Bool
-historyPrefixOf (History _ a_last_epoch a_length a) (History _ b_last_epoch b_length b) =
-    if a_length > b_length || a_last_epoch > b_last_epoch
-    then False
-    else
-        let worker aas bbs =
-              {-# SCC "historyPrefixOfWorker" #-}
-              case (aas, bbs) of
-                (Nothing, _) -> True
-                (_, Nothing) -> False
-                (Just (DListEntry _ as aa), Just (DListEntry _ bs bb)) ->
-                    if aa == bb then worker as bs
-                    else case (aa, bb) of
-                           (HistoryRun atid acntr, HistoryRun btid bcntr) | atid == btid ->
-                               if acntr <= bcntr
-                               then worker as bbs
-                               else False
-                           _ -> False
-            res = worker (dle_head a) (dle_head b)
-        in res
+    case stripSharedPrefix' (error "stripSharedPrefix") (dlToList aa) (dlToList bb) of
+      (_, a, b) -> (a, b)
 
 emptyHistory :: LogfilePtr -> History
 emptyHistory lp = mkHistory lp []
-
-{- fixupWorkerForHist worker current desired -> assume that worker is
-   in a state represented by current, and get it into a state
-   represented by desired.  current must be a prefix of desired.
-   Returns either:
-
-   -- Left an estimate of how much that cost, or
-
-   -- Right intermediate_history if we go over budget.
- -}
-fixupWorkerForHist :: Integer -> Worker -> History -> History -> IO (Integer, Maybe History)
-fixupWorkerForHist budget w current desired =
-    case stripSharedPrefix current desired of
-      ([], todo) ->
-          worker todo 0 current
-          where worker [] cost _ = return (cost, Nothing)
-                worker (x:xs) cost so_far =
-                    if cost > budget
-                    then return $ (cost, Just so_far)
-                    else do cost' <- doHistoryEntry w x
-                            let (Right r) = appendHistory so_far x
-                            worker xs (cost + cost') r
-      _ -> error $ (show current) ++ " is not a prefix of " ++ (show desired) ++ " (historyPrefixOf " ++ (show $ historyPrefixOf current desired) ++ ")"
 
 appendHistory :: History -> HistoryEntry -> Either String History
 appendHistory (History startlp old_last_epoch old_nr_records dlh) he =
@@ -620,13 +577,226 @@ setTscWorker :: Worker -> ThreadId -> Word64 -> IO Bool
 setTscWorker worker tid tsc =
     trivCommand worker $ setTscPacket tid tsc
 
-{- The worker cache.  Simple LRU list for now. -}
-type WorkerPool = [(History, Worker)]
-data WorkerCache = WorkerCache { wc_cache :: IORef WorkerPool,
-                                 wc_start :: Worker,
-                                 wc_logfile :: Logfile
+{- The worker cache.  The cache is structured as an n-ary tree.  Each
+   edge is labelled with a history entry.  Each node is labelled with
+   a sequence of history entries, and sometimes also with a worker.
+   The edges leaving any given node are distinct and non-overlapping.
+   For every worker, concatenating all of the history entries on the
+   path from the root to that worker gives the worker's current state.
+   If an edge is labelled HistoryRun, the counter is always zero, and
+   is ignored.
+
+   We also thread a cyclic double-linked list through every node in
+   the tree, which is used for LRU expiry.
+
+   The root entry is special, because it can never be expired.  It is
+   used to mark the end of the linked lists.  Its parent is itself.
+-}
+data WorkerCacheEntry = WorkerCacheEntry {
+      wce_id :: Integer,
+      wce_worker :: IORef (Maybe Worker),
+      wce_history_entries :: IORef [HistoryEntry],
+      wce_children :: IORef [(HistoryEntry, WorkerCacheEntry)],
+      wce_parent :: WorkerCacheEntry,
+      wce_is_root :: Bool,
+
+      wce_next_lru :: IORef WorkerCacheEntry,
+      wce_prev_lru :: IORef WorkerCacheEntry
+ }
+
+instance Show WorkerCacheEntry where
+    show x = "<WCE " ++ (show $ wce_id x) ++ ">"
+
+data WorkerCache = WorkerCache { wc_cache_root :: WorkerCacheEntry,
+                                 wc_logfile :: Logfile,
+                                 wc_remaining_ids :: IORef [Integer],
+                                 wc_nr_workers :: IORef Int
                                }
 
+{- Pull a WCE to the front of the LRU list -}
+touchWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
+touchWorkerCacheEntry wc wce =
+    if wce_is_root wce
+    then return ()
+    else do {- Remove from old place -}
+            prev <- readIORef $ wce_prev_lru wce
+            next <- readIORef $ wce_next_lru wce
+            writeIORef (wce_next_lru prev) next
+            writeIORef (wce_prev_lru next) prev
+
+            {- Insert in new place -}
+            addWceToList wc wce
+
+addWceToList :: WorkerCache -> WorkerCacheEntry -> IO ()
+addWceToList wc wce =
+    let newPrev = wc_cache_root wc
+    in do newNext <- readIORef $ wce_next_lru newPrev
+          writeIORef (wce_next_lru wce) newNext
+          writeIORef (wce_prev_lru wce) newPrev
+          writeIORef (wce_next_lru newPrev) wce
+          writeIORef (wce_prev_lru newNext) wce
+
+assert :: Bool -> a -> a
+assert True = id
+assert False = error "assertion failure"
+
+killWorkerTree :: WorkerCache -> WorkerCacheEntry -> IO ()
+killWorkerTree wc wce =
+    do w <- readIORef $ wce_worker wce
+       case w of
+         Nothing -> return ()
+         Just w' -> do modifyIORef (wc_nr_workers wc) $ \x -> x - 1
+                       killWorker w'
+       writeIORef (wce_worker wce) Nothing
+       children <- readIORef $ wce_children wce
+       mapM_ (killWorkerTree wc . snd) children
+
+removeWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
+removeWorkerCacheEntry wc wce =
+    assert (not $ wce_is_root wce) $
+       do {- First, remove from the linked list. -}
+          prev <- readIORef $ wce_prev_lru wce
+          next <- readIORef $ wce_next_lru wce
+          writeIORef (wce_next_lru prev) next
+          writeIORef (wce_prev_lru next) prev
+
+          {- Next, remove from the parent -}
+          modifyIORef (wce_children $ wce_parent wce) $ filter (\(_,x) -> wce_id x /= wce_id wce)
+
+          {- Finally, kill all the workers which we just unhooked -}
+          killWorkerTree wc wce
+
+foldrM :: Monad m => (a -> m b -> m b) -> m b -> [a] -> m b
+foldrM _ base [] = base
+foldrM iter base (a:as) =
+    iter a (foldrM iter base as)
+
+fixupWorkerCache :: WorkerCache -> IO ()
+fixupWorkerCache wc =
+    do nrWorkers <- readIORef $ wc_nr_workers wc
+       if nrWorkers >= cacheSize
+          then do lastWce <- readIORef $ wce_prev_lru $ wc_cache_root wc
+                  dt ("Trim cache: remove " ++ (show lastWce) ++ ", have " ++ (show nrWorkers) ++ ", want " ++ (show cacheSize)) $ removeWorkerCacheEntry wc lastWce
+                  fixupWorkerCache wc
+          else return ()
+
+registerWorker :: History -> Worker -> IO ()
+registerWorker hist worker =
+    force hist $
+    force worker $
+    dt ("register worker " ++ (show worker) ++ " for " ++ (show hist)) $
+    do wc <- workerCache
+       addWorkerCacheEntry wc (wc_cache_root wc) (dlToList $ hs_contents hist) worker
+       modifyIORef (wc_nr_workers wc) ((+) 1)
+       fixupWorkerCache wc
+
+addWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> Worker -> IO ()
+addWorkerCacheEntry wc cursor hist worker =
+    do touchWorkerCacheEntry wc cursor
+       cursor_prefix <- readIORef $ wce_history_entries cursor
+       case stripSharedPrefix' [] cursor_prefix hist of
+         (_, [], []) -> {- We've found the right place to do the insert. -}
+                        do cur_worker <- readIORef $ wce_worker cursor
+                           case cur_worker of
+                             Nothing -> return ()
+                             Just x -> 
+                                       do killWorker x -- We already had
+                                                       -- a worker for
+                                                       -- this history.
+                                                       -- Replace it.
+                                          modifyIORef (wc_nr_workers wc) ((+) (-1))
+                           writeIORef (wce_worker cursor) (Just worker)
+         (_, [], he@(hist_excess_head:hist_excess)) ->
+             {- Try to insert into a child. -}
+             do cursor_childs <- readIORef $ wce_children cursor
+                foldrM (\(cursor_child_hist, cursor_child) b ->
+                            if cursor_child_hist == hist_excess_head
+                            then addWorkerCacheEntry wc cursor_child hist_excess worker
+                            else case (cursor_child_hist, hist_excess_head) of
+                                   (HistoryRun ctid _, HistoryRun htid _) | ctid == htid ->
+                                      addWorkerCacheEntry wc cursor_child he worker
+                                   _ -> b)
+                       (
+                        let (newChildEntry, he') = case hist_excess_head of
+                                                     HistoryRun tid _ -> (HistoryRun tid 0, he)
+                                                     _ -> (hist_excess_head, hist_excess)
+                        in
+                          do newChildWorker <- newIORef $ Just worker
+                             newChildHistoryEntries <- newIORef he'
+                             newChildChilds <- newIORef []
+                             (newChildId:remainingIds) <- readIORef $ wc_remaining_ids wc
+                             writeIORef (wc_remaining_ids wc) remainingIds
+                             newChildNext <- newIORef undefined
+                             newChildPrev <- newIORef undefined
+                             let newChild = WorkerCacheEntry { wce_id = newChildId,
+                                                               wce_worker = newChildWorker,
+                                                               wce_history_entries = newChildHistoryEntries,
+                                                               wce_children = newChildChilds,
+                                                               wce_parent = cursor,
+                                                               wce_is_root = False,
+                                                               wce_next_lru = newChildNext,
+                                                               wce_prev_lru = newChildPrev }
+                             addWceToList wc newChild
+                             writeIORef (wce_children cursor) ((newChildEntry,newChild):cursor_childs))
+                       cursor_childs
+         (prefix, ce@(cursor_excess_head:cursor_excess), _) ->
+             {- We need to split this entry.  Go and do so. -}
+             let (childEntry, childHist) = case cursor_excess_head of
+                                             HistoryRun tid _ -> (HistoryRun tid 0, ce)
+                                             _ -> (cursor_excess_head, cursor_excess)
+             in do newChildWorker <- newIORef Nothing
+                   newChildHistoryEntries <- newIORef childHist
+                   oldChilds <- readIORef $ wce_children cursor
+                   newChildChilds <- newIORef oldChilds
+                   (newChildId:remainingIds) <- readIORef $ wc_remaining_ids wc
+                   writeIORef (wc_remaining_ids wc) remainingIds
+                   newChildNext <- newIORef undefined
+                   newChildPrev <- newIORef undefined
+                   let newChild = WorkerCacheEntry { wce_id = newChildId,
+                                                     wce_worker = newChildWorker,
+                                                     wce_history_entries = newChildHistoryEntries,
+                                                     wce_children = newChildChilds,
+                                                     wce_parent = cursor,
+                                                     wce_is_root = False,
+                                                     wce_next_lru = newChildNext,
+                                                     wce_prev_lru = newChildPrev }
+                   addWceToList wc newChild
+                   writeIORef (wce_children cursor) [(childEntry,newChild)]
+                   writeIORef (wce_history_entries cursor) prefix
+                   {- Try that again.  This time, we should insert directly into the cursor. -}
+                   addWorkerCacheEntry wc cursor hist worker
+                                   
+
+getWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> ([HistoryEntry], Worker) -> IO ([HistoryEntry], Worker)
+getWorkerCacheEntry wc cursor hist bestSoFar =
+    do touchWorkerCacheEntry wc cursor
+       cursor_prefix <- readIORef $ wce_history_entries cursor
+       cursor_worker <- readIORef $ wce_worker cursor
+       case stripSharedPrefix' undefined cursor_prefix hist of
+         (_, [], []) ->
+             {- we're done -}
+             do cworker <- readIORef $ wce_worker cursor
+                return $ case cworker of
+                           Nothing -> bestSoFar
+                           Just w -> ([], w)             
+         (_, [], rh@(rhHead:remainingHist)) ->
+               {- Search children -}
+               let newBest = case cursor_worker of
+                               Nothing -> bestSoFar
+                               Just w -> (rh, w)
+               in do childs <- readIORef $ wce_children cursor
+                     let r =  foldr (\(key, child) rest ->
+                                         if key == rhHead
+                                         then Just (child, remainingHist)
+                                         else case (key, rhHead) of
+                                                (HistoryRun ktid _, HistoryRun rtid _) | ktid == rtid
+                                                  -> Just (child, rh)
+                                                _ -> rest) Nothing childs
+                     case r of
+                       Nothing -> return newBest
+                       Just (child, remainingHist') -> getWorkerCacheEntry wc child remainingHist' newBest
+         (_, (_:_), _) -> {- gone too far -}
+                          return bestSoFar
 
 cacheSize :: Int
 cacheSize = 900
@@ -643,29 +813,38 @@ workerCache =
          Nothing -> error "worker cache not ready"
          Just wc' -> return wc'
 
-mkWorkerPool :: WorkerPool
-mkWorkerPool = []
-
 initWorkerCache :: Logfile -> Worker -> IO ()
 initWorkerCache lf start =
-    do 
-       lru <- newIORef mkWorkerPool
-       writeIORef globalWorkerCache $ Just $ WorkerCache { wc_cache = lru,
-                                                           wc_start = start,
-                                                           wc_logfile = lf }
+    do root_worker <- newIORef $ Just start
+       root_entries <- newIORef []
+       root_children <- newIORef []
+       root_prev <- newIORef undefined
+       root_next <- newIORef undefined
+       let root = WorkerCacheEntry { wce_id = 0,
+                                     wce_worker = root_worker,
+                                     wce_history_entries = root_entries,
+                                     wce_children = root_children,
+                                     wce_parent = root,
+                                     wce_is_root = True,
+                                     wce_next_lru = root_next,
+                                     wce_prev_lru = root_prev }
+       writeIORef root_prev root
+       writeIORef root_next root
+       ids <- newIORef [1..]
+       nrWorkers <- newIORef 1
+       writeIORef globalWorkerCache $ Just $ WorkerCache { wc_cache_root = root,
+                                                           wc_remaining_ids = ids,
+                                                           wc_logfile = lf,
+                                                           wc_nr_workers = nrWorkers }
 
 destroyWorkerCache :: IO ()
 destroyWorkerCache =
-    let killPool :: IORef WorkerPool -> IO ()
-        killPool p = readIORef p >>= mapM_ (killWorker . snd)
-    in
     do wc <- workerCache
-       killPool $ wc_cache wc
-       killWorker $ wc_start wc
+       killWorkerTree wc $ wc_cache_root wc
        writeIORef globalWorkerCache Nothing
 
-getWorker :: History -> IO Worker
-getWorker target =
+getWorker' :: [HistoryEntry] -> IO Worker
+getWorker' target =
 
     {- This is a bit skanky.  The problem is that hist might contain
        some thunks which will themselves perform worker cache
@@ -677,68 +856,17 @@ getWorker target =
     force target $
 
     do wc <- workerCache
+       (fixup, worker) <- getWorkerCacheEntry wc (wc_cache_root wc) target undefined
+       let reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
+           doFixup currentWorker [] = return currentWorker
+           doFixup currentWorker (x:xs) = do doHistoryEntry currentWorker x
+                                             doFixup currentWorker xs
+       worker' <- dt ("getwce " ++ (show target) ++ " -> " ++ (show fixup) ++ ", " ++ (show worker)) $ reallySnapshot worker
+       doFixup worker' fixup
+       return worker'
 
-       lru <- readIORef $ wc_cache wc
-
-       let 
-           {- Search the current LRU, comparing to the target. -}
-           sorted_lru = sortBy goodnessOrdering lru
-           (best_hist, best_worker) =
-               let miss = (emptyHistory (hs_start_lp target), wc_start wc)
-               in case sorted_lru of
-                    [] -> miss
-                    (x:_) ->
-                        if historyPrefixOf (fst x) target
-                        then x
-                        else miss
-
-           goodnessOrdering (x,_) (y,_) =
-               {- Is x a better prefix of target than y?  LT if it is,
-                  GT if it isn't, and EQ if they're unordered. -}
-               if historyPrefixOf x target
-               then if historyPrefixOf y target
-                    then if historyPrefixOf x y
-                         then LT
-                         else GT
-                    else LT
-               else if historyPrefixOf y target
-                    then GT
-                    else EQ
-           
-           reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
-       
-       new_worker <- reallySnapshot best_worker
-       dt ("found " ++ (show best_hist) ++ " for " ++ (show target)) $ if best_hist == target
-        then return new_worker
-        else let doFixup currentWorker currentHistory =
-                     do costOrPartial <- fixupWorkerForHist 50 currentWorker currentHistory target
-                        case costOrPartial of
-                          (cost, Nothing) ->
-                              if cost > 10
-                              then do modifyIORef (wc_cache wc) $ (:) (target, currentWorker)
-                                      s <- reallySnapshot currentWorker
-                                      return s
-                              else return currentWorker
-                          (_, Just partial) ->
-                              dt ("Partial fixup: " ++ (show currentHistory) ++ " -> " ++ (show partial) ++ ", target " ++ (show target)) $
-                              do modifyIORef (wc_cache wc) $ (:) (partial, currentWorker)
-                                 newWorker <- reallySnapshot currentWorker
-                                 doFixup newWorker partial
-             in do final_worker <- doFixup new_worker best_hist
-                   (final_lru, final_expired) <- liftM (splitAt cacheSize) $ readIORef $ wc_cache wc
-                   writeIORef (wc_cache wc) final_lru
-                   mapM_ (killWorker . snd) final_expired
-                   return final_worker
-
-registerWorker :: History -> Worker -> IO ()
-registerWorker hist worker =
-    force hist $
-    force worker $
-    do wc <- workerCache
-       lru <- readIORef $ wc_cache wc
-       let (new_lru, expired) = splitAt cacheSize ((hist,worker):lru)
-       writeIORef (wc_cache wc) new_lru
-       mapM_ (killWorker . snd) expired
+getWorker :: History -> IO Worker
+getWorker = getWorker' . dlToList . hs_contents
 
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
