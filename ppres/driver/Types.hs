@@ -15,7 +15,8 @@ newtype RecordNr = RecordNr Integer deriving (Eq, Show, Enum, Ord, Read)
 newtype AccessNr = AccessNr Integer deriving (Eq, Show, Enum, Ord, Real, Num, Read, Integral)
 
 data Worker = Worker { worker_fd :: Socket,
-                       worker_alive :: IORef Bool }
+                       worker_alive :: IORef Bool,
+                       worker_frozen :: IORef Bool }
 
 instance Show Worker where
     show w = "worker fd " ++ (show $ worker_fd w)

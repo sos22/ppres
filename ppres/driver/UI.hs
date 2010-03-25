@@ -207,8 +207,9 @@ initialWorldState :: CInt -> IO WorldState
 initialWorldState fd =
     do f <- fdToSocket fd
        a <- newIORef True
+       fr <- newIORef False
        (l, startlp) <- openLogfile "logfile1"
-       let root_snap = Worker f a
+       let root_snap = Worker f a fr
        initWorkerCache l root_snap
        return $ WorldState { ws_bindings = [("start", UIValueSnapshot $ emptyHistory startlp),
                                             ("first", mkUIFunction (fst :: (UIValue, UIValue) -> UIValue)),

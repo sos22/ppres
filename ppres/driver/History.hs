@@ -33,7 +33,6 @@ import Logfile
 dt :: String -> a -> a
 dt = const id
 
-
 data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistorySetRegister !ThreadId !RegisterName !Word64
                   | HistoryAllocMemory !Word64 !Word64 !Word64
@@ -71,7 +70,7 @@ doHistoryEntry w (HistoryRun tid cntr) =
        rs <- replayStateWorker w
        case rs of
          ReplayStateOkay e ->
-             do r <- runWorker w cntr
+             do r <- runWorker "doHistoryEntry" w cntr
                 if not r
                    then putStrLn $ "failed to replay history entry run " ++ (show tid) ++ " " ++ (show cntr) ++ " in " ++ (show w)
                    else return ()
@@ -215,7 +214,7 @@ instance Forcable x => Forcable (IORef x) where
                              return $ force x res
 
 instance Forcable Worker where
-    force (Worker fd alive) = force fd . force alive 
+    force (Worker fd alive thawed) = force fd . force alive . force thawed
 
 sendWorkerCommand :: Worker -> ControlPacket -> IO ResponsePacket
 sendWorkerCommand worker cp =
@@ -298,8 +297,19 @@ killWorker worker =
                   writeIORef (worker_alive worker) False
           else error "can't kill worker?"
 
-runWorker :: Worker -> Topped AccessNr -> IO Bool
-runWorker worker = trivCommand worker . runPacket
+freezeWorker :: Worker -> IO ()
+freezeWorker worker =
+    writeIORef (worker_frozen worker) True
+
+workerFrozen :: Worker -> IO Bool
+workerFrozen = readIORef . worker_frozen
+
+mustBeThawed :: String -> Worker -> IO ()
+mustBeThawed m w = do t <- workerFrozen w
+                      assert ("worker frozen unexpectedly: " ++ m) (not t) $ return ()
+
+runWorker :: String -> Worker -> Topped AccessNr -> IO Bool
+runWorker msg worker acc = mustBeThawed ("runWorker: " ++ msg) worker >> trivCommand worker (runPacket acc)
 
 ancillaryDataToTrace :: [ResponseData] -> [TraceRecord]
 ancillaryDataToTrace [] = []
@@ -345,7 +355,8 @@ ancillaryDataToTrace x = error $ "bad trace ancillary data " ++ (show x)
 
 traceCmd :: Worker -> ControlPacket -> IO [TraceRecord]
 traceCmd worker pkt =
-    do (ResponsePacket _ args) <- sendWorkerCommand worker pkt
+    do mustBeThawed "traceCmd" worker
+       (ResponsePacket _ args) <- sendWorkerCommand worker pkt
        return $ ancillaryDataToTrace args
 
 traceWorker :: Worker -> ThreadId -> Topped AccessNr -> IO [TraceRecord]
@@ -361,7 +372,8 @@ takeSnapshot worker =
        if s
         then do newFd <- recvSocket (worker_fd worker)
                 newAlive <- newIORef True
-                return $ Just $ Worker {worker_fd = newFd, worker_alive = newAlive }
+                newFrozen <- newIORef False
+                return $ Just $ Worker {worker_fd = newFd, worker_alive = newAlive, worker_frozen = newFrozen }
         else return Nothing
 
 threadStateWorker :: Worker -> IO [(ThreadId, ThreadState)]
@@ -508,6 +520,7 @@ parseExpressions items =
 controlTraceWorker :: Worker -> ThreadId -> Topped AccessNr -> IO [Expression]
 controlTraceWorker worker tid cntr =
     do setThreadWorker worker tid
+       mustBeThawed "controlTraceWorker" worker
        (ResponsePacket _ params) <- sendWorkerCommand worker $ controlTracePacket cntr
        return $ parseExpressions params
 
@@ -663,7 +676,7 @@ sanityCheckWorkerCache wc =
 checkWorkerCache :: WorkerCache -> IO ()
 checkWorkerCache wc =
     do r <- sanityCheckWorkerCache wc
-       assert r $ return ()
+       assert "worker cache insane" r $ return ()
 
 {- Pull a WCE to the front of the LRU list -}
 touchWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
@@ -688,9 +701,9 @@ addWceToList wc wce =
           writeIORef (wce_next_lru newPrev) wce
           writeIORef (wce_prev_lru newNext) wce
 
-assert :: Bool -> a -> a
-assert True = id
-assert False = error "assertion failure"
+assert :: String -> Bool -> a -> a
+assert _ True = id
+assert msg False = error $ "assertion failure: " ++ msg
 
 killWorkerTree :: WorkerCache -> WorkerCacheEntry -> IO ()
 killWorkerTree wc wce =
@@ -705,7 +718,7 @@ killWorkerTree wc wce =
 
 removeWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
 removeWorkerCacheEntry wc wce =
-    assert (not $ wce_is_root wce) $
+    assert "remove root WCE" (not $ wce_is_root wce) $
        do {- First, remove from the linked list. -}
           prev <- readIORef $ wce_prev_lru wce
           next <- readIORef $ wce_next_lru wce
@@ -741,8 +754,9 @@ registerWorker hist worker =
     dt ("register worker " ++ (show worker) ++ " for " ++ (show hist)) $
     do wc <- workerCache
        checkWorkerCache wc
+       freezeWorker worker
        v <- validateHistoryWorker worker (dlToList $ hs_contents hist)
-       assert v $ addWorkerCacheEntry wc (wc_cache_root wc) (dlToList $ hs_contents hist) worker
+       assert "register invalid worker" v $ addWorkerCacheEntry wc (wc_cache_root wc) (dlToList $ hs_contents hist) worker
        modifyIORef (wc_nr_workers wc) ((+) 1)
        fixupWorkerCache wc
        checkWorkerCache wc
@@ -927,6 +941,7 @@ getWorker' target =
            doFixup currentWorker (x:xs) = do doHistoryEntry currentWorker x
                                              doFixup currentWorker xs
        worker' <- dt ("getwce " ++ (show target) ++ " -> " ++ (show fixup) ++ ", " ++ (show worker)) $ reallySnapshot worker
+       mustBeThawed "getWorker'" worker'
        checkWorkerCache wc
        doFixup worker' fixup
        checkWorkerCache wc
@@ -1000,8 +1015,9 @@ runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
 runThread hist tid acc =
     do res <- appendHistory hist $ HistoryRun tid acc
        return $ unsafePerformIO $ do worker <- getWorker hist
+                                     mustBeThawed "runThread" worker
                                      setThreadWorker worker tid
-                                     r <- runWorker worker acc
+                                     r <- runWorker "runThread" worker acc
                                      if not r
                                         then do putStrLn $ "failed to run worker " ++ (show worker) ++ " from " ++ (show hist) ++ " to " ++ (show tid) ++ ":" ++ (show acc)
                                                 killWorker worker
