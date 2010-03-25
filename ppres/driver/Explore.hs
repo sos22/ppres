@@ -1,4 +1,5 @@
-module Explore(enumerateHistories, findSomeHistory) where
+module Explore(enumerateHistories, findSomeHistory,
+               findNeighbouringHistories) where
 
 import History
 import Types

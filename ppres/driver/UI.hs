@@ -246,7 +246,8 @@ initialWorldState fd =
                                             ("clsfutures", mkUIFunction classifyFutures),
                                             ("autofix", mkUIFunction autoFix),
                                             ("tracetoevent", mkUIFunction3 traceToEvent),
-                                            ("setreg", mkUIFunction4 setRegister)
+                                            ("setreg", mkUIFunction4 setRegister),
+                                            ("fnh", mkUIFunction findNeighbouringHistories)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue
