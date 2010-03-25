@@ -1018,10 +1018,7 @@ runThread hist tid acc =
                                      mustBeThawed "runThread" worker
                                      setThreadWorker worker tid
                                      r <- runWorker "runThread" worker acc
-                                     if not r
-                                        then do putStrLn $ "failed to run worker " ++ (show worker) ++ " from " ++ (show hist) ++ " to " ++ (show tid) ++ ":" ++ (show acc)
-                                                killWorker worker
-                                        else registerWorker res worker
+                                     registerWorker res worker
                                      return res
 
 setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
