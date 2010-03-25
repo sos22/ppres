@@ -532,8 +532,8 @@ syscall_event(VexGuestAMD64State *state)
 			load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 		}
 	}
-	now.access_nr++;
 	TRACE(SYSCALL, state->guest_RAX);
+	now.access_nr++;
 	event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 	      state->guest_RSI, state->guest_RDX, (unsigned long)state);
 	check_fpu_control();
