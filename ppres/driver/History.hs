@@ -802,7 +802,8 @@ addWorkerCacheEntry wc cursor hist worker =
              let (childEntry, childHist) = case cursor_excess_head of
                                              HistoryRun tid _ -> (HistoryRun tid 0, ce)
                                              _ -> (cursor_excess_head, cursor_excess)
-             in do newChildWorker <- newIORef Nothing
+             in do cursorWorker <- readIORef $ wce_worker cursor
+                   newChildWorker <- newIORef cursorWorker
                    newChildHistoryEntries <- newIORef childHist
                    oldChilds <- readIORef $ wce_children cursor
                    newChildChilds <- newIORef oldChilds
@@ -821,6 +822,10 @@ addWorkerCacheEntry wc cursor hist worker =
                    addWceToList wc newChild
                    writeIORef (wce_children cursor) [(childEntry,newChild)]
                    writeIORef (wce_history_entries cursor) prefix
+                   writeIORef (wce_worker cursor) Nothing
+                   
+                   putStrLn ("did a WCE split at " ++ (show cursor) ++ ", new child " ++ (show newChild) ++ ", cursor hist " ++ (show prefix) ++ ", child hist " ++ (show childHist))
+
                    {- Try that again.  This time, we should insert directly into the cursor. -}
                    addWorkerCacheEntry wc cursor hist worker
                                    
