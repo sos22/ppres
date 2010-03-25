@@ -77,7 +77,10 @@ doHistoryEntry w (HistoryRun tid cntr) =
        rs <- replayStateWorker w
        case rs of
          ReplayStateOkay e ->
-             do runWorker w cntr
+             do r <- runWorker w cntr
+                if not r
+                   then putStrLn $ "failed to replay history entry run " ++ (show tid) ++ " " ++ (show cntr) ++ " in " ++ (show w)
+                   else return ()
                 rs' <- replayStateWorker w
                 case rs' of
                   ReplayStateFinished e' -> return $ replayCost e e'
@@ -983,8 +986,11 @@ runThread hist tid acc =
     do res <- appendHistory hist $ HistoryRun tid acc
        return $ unsafePerformIO $ do worker <- getWorker hist
                                      setThreadWorker worker tid
-                                     runWorker worker acc
-                                     registerWorker res worker
+                                     r <- runWorker worker acc
+                                     if not r
+                                        then do putStrLn $ "failed to run worker " ++ (show worker) ++ " from " ++ (show hist) ++ " to " ++ (show tid) ++ ":" ++ (show acc)
+                                                killWorker worker
+                                        else registerWorker res worker
                                      return res
 
 setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
