@@ -828,6 +828,20 @@ _history_append(unsigned key, const unsigned long *params,
 		unsigned nr_params)
 {
 	struct history_entry *he;
+	if (last_history_entry &&
+	    last_history_entry->params[0] == key &&
+	    key == WORKER_RUN) {
+		if (params[0] == last_history_entry->params[1]) {
+			/* Run the same thread -> merge into previous
+			 * entry */
+			last_history_entry->params[2] = params[1];
+			return;
+		}
+		if (params[1] == last_history_entry->params[2]) {
+			/* Running for zero operations -> drop */
+			return;
+		}
+	}
 	he = VG_(malloc)("history_entry",
 			 sizeof(*he) + (nr_params+1) * sizeof(unsigned long));
 	he->next = NULL;
@@ -857,6 +871,7 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	struct replay_thread *rt;
 
 	history_append(WORKER_RUN, current_thread->id, now.access_nr);
+	history_append(0);
 
 	va_start(args, fmt);
 	msg = my_vasprintf(fmt, args);

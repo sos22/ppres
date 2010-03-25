@@ -567,6 +567,7 @@ setTscWorker worker tid tsc =
 validateHistoryWorker :: Worker -> [HistoryEntry] -> IO Bool
 validateHistoryWorker worker desired_hist =
     let validateHistory [] [] = True
+        validateHistory [ResponseDataAncillary 19 [0]] _ = True
         validateHistory ((ResponseDataAncillary 19 [0x1236, tid, acc]):o) o's@((HistoryRun tid' acc'):o')
             | (ThreadId $ toInteger tid) == tid' =
                 case (Finite $ AccessNr $ toInteger acc) `compare` acc' of
@@ -591,7 +592,9 @@ validateHistoryWorker worker desired_hist =
         validateHistory o ((HistoryAdvanceLog _):o') = validateHistory o o'
         validateHistory o o' = dt ("history validation failed: " ++ (show o) ++ " vs " ++ (show o')) False
     in do (ResponsePacket _ params) <- sendWorkerCommand worker getHistoryPacket
-          return $ validateHistory params desired_hist
+          let r = validateHistory params desired_hist
+          when (not r) $ putStrLn $ "validation of " ++ (show desired_hist) ++ " against " ++ (show params) ++ " in " ++ (show worker) ++ " failed"
+          return r
 
 {- The worker cache.  The cache is structured as an n-ary tree.  Each
    edge is labelled with a history entry.  Each node is labelled with
