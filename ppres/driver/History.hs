@@ -1007,9 +1007,11 @@ traceToEvent start tid limit =
     unsafePerformIO $ do worker <- getWorker start
                          trc <- traceToEventWorker worker tid limit
                          rs <- replayStateWorker worker
-                         killWorker worker
-                         return $ do h <- runThread start tid $ Finite (rs_access_nr rs)
-                                     return (trc, h)
+                         case appendHistory start $ HistoryRun tid $ Finite $ rs_access_nr rs of
+                           Left e -> return $ Left e
+                           Right finalHist ->
+                               do registerWorker finalHist worker
+                                  return $ Right (trc, finalHist)
 
 runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
 runThread hist tid acc =
@@ -1017,7 +1019,7 @@ runThread hist tid acc =
        return $ unsafePerformIO $ do worker <- getWorker hist
                                      mustBeThawed "runThread" worker
                                      setThreadWorker worker tid
-                                     r <- runWorker "runThread" worker acc
+                                     runWorker "runThread" worker acc
                                      registerWorker res worker
                                      return res
 
