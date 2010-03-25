@@ -921,8 +921,8 @@ destroyWorkerCache =
        killWorkerTree wc $ wc_cache_root wc
        writeIORef globalWorkerCache Nothing
 
-getWorker' :: [HistoryEntry] -> IO Worker
-getWorker' target =
+getWorker' :: Bool -> [HistoryEntry] -> IO (Worker, Bool)
+getWorker' is_pure target =
 
     {- This is a bit skanky.  The problem is that hist might contain
        some thunks which will themselves perform worker cache
@@ -940,33 +940,35 @@ getWorker' target =
            doFixup currentWorker [] = return currentWorker
            doFixup currentWorker (x:xs) = do doHistoryEntry currentWorker x
                                              doFixup currentWorker xs
-       worker' <- dt ("getwce " ++ (show target) ++ " -> " ++ (show fixup) ++ ", " ++ (show worker)) $ reallySnapshot worker
-       mustBeThawed "getWorker'" worker'
-       checkWorkerCache wc
-       doFixup worker' fixup
-       checkWorkerCache wc
-       return worker'
+       case (fixup, is_pure) of
+         ([], True) -> return (worker, False)
+         _ -> do worker' <- dt ("getwce " ++ (show target) ++ " -> " ++ (show fixup) ++ ", " ++ (show worker)) $ reallySnapshot worker
+                 mustBeThawed "getWorker'" worker'
+                 checkWorkerCache wc
+                 doFixup worker' fixup
+                 checkWorkerCache wc
+                 return (worker', True)
 
-getWorker :: History -> IO Worker
-getWorker hist =
-    do worker <- getWorker' $ dlToList $ hs_contents hist
+getWorker :: Bool -> History -> IO (Worker, Bool)
+getWorker isPure hist =
+    do (worker, needkill) <- getWorker' isPure $ dlToList $ hs_contents hist
        v <- validateHistoryWorker worker (dlToList $ hs_contents hist)
        if not v
           then error $ "worker cache is broken: history " ++ (show hist) ++ " gave worker " ++ (show worker)
-          else return worker
+          else return (worker, needkill)
 
 impureCmd :: (Worker -> IO a) -> History -> a
 impureCmd w hist =
-    unsafePerformIO $ do worker <- getWorker hist
+    unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                          res <- w worker
-                         killWorker worker
+                         when needkill $ killWorker worker
                          return res
 
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
-    unsafePerformIO $ do worker <- getWorker hist
+    unsafePerformIO $ do (worker, needkill) <- getWorker True hist
                          res <- w worker
-                         registerWorker hist worker
+                         when needkill $ registerWorker hist worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
@@ -1004,61 +1006,62 @@ getRipAtAccess hist whn =
 
 traceToEvent :: History -> ThreadId -> Topped AccessNr -> Either String ([TraceRecord], History)
 traceToEvent start tid limit =
-    unsafePerformIO $ do worker <- getWorker start
+    unsafePerformIO $ do (worker, needkill) <- getWorker False start
                          trc <- traceToEventWorker worker tid limit
                          rs <- replayStateWorker worker
                          case appendHistory start $ HistoryRun tid $ Finite $ rs_access_nr rs of
-                           Left e -> return $ Left e
+                           Left e -> do when needkill $ killWorker worker
+                                        return $ Left e
                            Right finalHist ->
-                               do registerWorker finalHist worker
+                               do when needkill $ registerWorker finalHist worker
                                   return $ Right (trc, finalHist)
 
 runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
 runThread hist tid acc =
     do res <- appendHistory hist $ HistoryRun tid acc
-       return $ unsafePerformIO $ do worker <- getWorker hist
+       return $ unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                                      mustBeThawed "runThread" worker
                                      setThreadWorker worker tid
                                      runWorker "runThread" worker acc
-                                     registerWorker res worker
+                                     when needkill $ registerWorker res worker
                                      return res
 
 setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
 setRegister hist tid reg val =
     let res = deError $ appendHistory hist $ HistorySetRegister tid reg val
-    in unsafePerformIO $ do worker <- getWorker hist
+    in unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                             setRegisterWorker worker tid reg val
-                            registerWorker res worker
+                            when needkill $ registerWorker res worker
                             return res
 
 allocateMemory :: History -> Word64 -> Word64 -> Word64 -> History
 allocateMemory hist addr size prot =
     let res = deError $ appendHistory hist $ HistoryAllocMemory addr size prot
-    in unsafePerformIO $ do worker <- getWorker hist
+    in unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                             allocateMemoryWorker worker addr size prot
-                            registerWorker res worker
+                            when needkill $ registerWorker res worker
                             return res
 
 setMemory :: History -> Word64 -> [Word8] -> History
 setMemory hist addr contents =
     let res = deError $ appendHistory hist $ HistorySetMemory addr contents
-    in unsafePerformIO $ do worker <- getWorker hist
+    in unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                             setMemoryWorker worker addr contents
-                            registerWorker res worker
+                            when needkill $ registerWorker res worker
                             return res
 
 setMemoryProtection :: History -> Word64 -> Word64 -> Word64 -> History
 setMemoryProtection hist addr size prot =
     let res = deError $ appendHistory hist $ HistorySetMemoryProtection addr size prot
-    in unsafePerformIO $ do worker <- getWorker hist
+    in unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                             setMemoryProtectionWorker worker addr size prot
-                            registerWorker res worker
+                            when needkill $ registerWorker res worker
                             return res
 
 setTsc :: History -> ThreadId -> Word64 -> History
 setTsc hist tid tsc =
     let res = deError $ appendHistory hist $ HistorySetTsc tid tsc
-    in unsafePerformIO $ do worker <- getWorker hist
+    in unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                             setTscWorker worker tid tsc
-                            registerWorker res worker
+                            when needkill $ registerWorker res worker
                             return res
