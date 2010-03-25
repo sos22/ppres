@@ -51,12 +51,6 @@ data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
 data History = History { hs_start_lp :: LogfilePtr,
                          hs_contents :: DList HistoryEntry } deriving (Show, Eq, Read)
 
-last_coord :: [HistoryEntry] -> Topped AccessNr
-last_coord he = worker $ reverse he
-                where worker [] = Finite $ AccessNr 0
-                      worker ((HistoryRun _ x):_) = x
-                      worker (_:x) = worker x
-
 history_logfile_ptr :: History -> LogfilePtr
 history_logfile_ptr (History st hes) =
     foldr (\x y -> case x of
