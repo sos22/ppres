@@ -629,9 +629,15 @@ data WorkerCache = WorkerCache { wc_cache_root :: WorkerCacheEntry,
                                  wc_nr_workers :: IORef Int
                                }
 
+doSanityChecks :: Bool
+doSanityChecks = False
+
 sanityCheckWorkerCache :: WorkerCache -> IO Bool
 sanityCheckWorkerCache wc =
-    sanityCheckWorkerCacheTree [] (wc_cache_root wc)
+    if doSanityChecks
+    then sanityCheckWorkerCacheTree [] (wc_cache_root wc)
+    else return True
+
     where sanityCheckWorkerCacheTree prefix wce =
               do e <- readIORef $ wce_history_entries wce
                  let local_hist = prefix ++ e
