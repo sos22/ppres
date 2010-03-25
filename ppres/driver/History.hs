@@ -935,11 +935,18 @@ getWorker hist =
           then error $ "worker cache is broken: history " ++ (show hist) ++ " gave worker " ++ (show worker)
           else return worker
 
+impureCmd :: (Worker -> IO a) -> History -> a
+impureCmd w hist =
+    unsafePerformIO $ do worker <- getWorker hist
+                         res <- w worker
+                         killWorker worker
+                         return res
+
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
     unsafePerformIO $ do worker <- getWorker hist
                          res <- w worker
-                         killWorker worker
+                         registerWorker hist worker
                          return res
 
 threadState :: History -> [(ThreadId, ThreadState)]
@@ -961,11 +968,11 @@ nextThread = queryCmd nextThreadWorker
 
 controlTraceTo :: History -> History -> Either String [Expression]
 controlTraceTo start end =
-    queryCmd (\worker -> controlTraceToWorker worker start end) start
+    impureCmd (\worker -> controlTraceToWorker worker start end) start
 
 traceTo :: History -> History -> Either String [TraceRecord]
 traceTo start end = 
-    queryCmd (\worker -> traceToWorker worker start end) start
+    impureCmd (\worker -> traceToWorker worker start end) start
 
 getRegisters :: History -> RegisterFile
 getRegisters = queryCmd getRegistersWorker
