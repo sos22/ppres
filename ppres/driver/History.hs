@@ -285,6 +285,9 @@ setMemoryProtectionPacket addr size prot = ControlPacket 0x1247 [addr, size, pro
 setTscPacket :: ThreadId -> Word64 -> ControlPacket
 setTscPacket (ThreadId tid) tsc = ControlPacket 0x1248 [fromInteger tid, tsc]
 
+getHistoryPacket :: ControlPacket
+getHistoryPacket = ControlPacket 0x1249 []
+
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
     do (ResponsePacket s _) <- sendWorkerCommand worker cmd
@@ -564,6 +567,35 @@ setTscWorker :: Worker -> ThreadId -> Word64 -> IO Bool
 setTscWorker worker tid tsc =
     trivCommand worker $ setTscPacket tid tsc
 
+validateHistoryWorker :: Worker -> [HistoryEntry] -> IO Bool
+validateHistoryWorker worker desired_hist =
+    let validateHistory [] [] = True
+        validateHistory ((ResponseDataAncillary 19 [0x1236, tid, acc]):o) o's@((HistoryRun tid' acc'):o')
+            | (ThreadId $ toInteger tid) == tid' =
+                case (Finite $ AccessNr $ toInteger acc) `compare` acc' of
+                  LT -> validateHistory o o's
+                  EQ -> validateHistory o o'
+                  GT -> dt ("history validation failed because worker was at " ++ (show acc) ++ " and we only wanted " ++ (show acc') ++ ", rest " ++ (show o')) False
+        validateHistory ((ResponseDataAncillary 19 [0x1244, tid, reg, val]):o)
+                        ((HistorySetRegister tid' reg' val'):o')
+            | (ThreadId $ toInteger tid) == tid' && (parseRegister reg) == reg' && val == val' = validateHistory o o'
+        validateHistory ((ResponseDataAncillary 19 [0x1245, addr, size, prot]):o)
+                        ((HistoryAllocMemory addr' size' prot'):o')
+            | addr == addr' && size == size' && prot == prot' = validateHistory o o'
+        validateHistory ((ResponseDataAncillary 19 [0x1246, addr, size]):o)
+                        ((HistorySetMemory addr' bytes):o')
+            | addr == addr' && size == (fromIntegral $ length bytes) = validateHistory o o'
+        validateHistory ((ResponseDataAncillary 19 [0x1247, addr, size, prot]):o)
+                        ((HistorySetMemoryProtection addr' size' prot'):o')
+            | addr == addr' && size == size' && prot == prot' = validateHistory o o'
+        validateHistory ((ResponseDataAncillary 19 [0x1248, tid, tsc]):o)
+                        ((HistorySetTsc tid' tsc'):o')
+            | (ThreadId $ toInteger tid) == tid' && tsc == tsc' = validateHistory o o'
+        validateHistory o ((HistoryAdvanceLog _):o') = validateHistory o o'
+        validateHistory o o' = dt ("history validation failed: " ++ (show o) ++ " vs " ++ (show o')) False
+    in do (ResponsePacket _ params) <- sendWorkerCommand worker getHistoryPacket
+          return $ validateHistory params desired_hist
+
 {- The worker cache.  The cache is structured as an n-ary tree.  Each
    edge is labelled with a history entry.  Each node is labelled with
    a sequence of history entries, and sometimes also with a worker.
@@ -599,6 +631,33 @@ data WorkerCache = WorkerCache { wc_cache_root :: WorkerCacheEntry,
                                  wc_remaining_ids :: IORef [Integer],
                                  wc_nr_workers :: IORef Int
                                }
+
+sanityCheckWorkerCache :: WorkerCache -> IO Bool
+sanityCheckWorkerCache wc =
+    sanityCheckWorkerCacheTree [] (wc_cache_root wc)
+    where sanityCheckWorkerCacheTree prefix wce =
+              do e <- readIORef $ wce_history_entries wce
+                 let local_hist = prefix ++ e
+                 worker <- readIORef $ wce_worker wce
+                 v <- case worker of
+                   Nothing -> return True
+                   Just w -> do r <- validateHistoryWorker w local_hist
+                                when (not r) $
+                                 putStrLn $ "worker cache sanity check failed at " ++ (show worker) ++ ": wanted history " ++ (show local_hist)
+                                return r
+                 childs <- readIORef $ wce_children wce
+                 children_sane <- mapM (\(hist_entry, child) ->
+                                            let child_prefix =
+                                                    case hist_entry of
+                                                      HistoryRun _ _ -> local_hist
+                                                      _ -> local_hist ++ [hist_entry]
+                                            in sanityCheckWorkerCacheTree child_prefix child) childs
+                 return $ and $ v:children_sane
+
+checkWorkerCache :: WorkerCache -> IO ()
+checkWorkerCache wc =
+    do r <- sanityCheckWorkerCache wc
+       assert r $ return ()
 
 {- Pull a WCE to the front of the LRU list -}
 touchWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
@@ -653,6 +712,8 @@ removeWorkerCacheEntry wc wce =
           {- Finally, kill all the workers which we just unhooked -}
           killWorkerTree wc wce
 
+          checkWorkerCache wc
+
 foldrM :: Monad m => (a -> m b -> m b) -> m b -> [a] -> m b
 foldrM _ base [] = base
 foldrM iter base (a:as) =
@@ -665,7 +726,7 @@ fixupWorkerCache wc =
           then do lastWce <- readIORef $ wce_prev_lru $ wc_cache_root wc
                   dt ("Trim cache: remove " ++ (show lastWce) ++ ", have " ++ (show nrWorkers) ++ ", want " ++ (show cacheSize)) $ removeWorkerCacheEntry wc lastWce
                   fixupWorkerCache wc
-          else return ()
+          else checkWorkerCache wc
 
 registerWorker :: History -> Worker -> IO ()
 registerWorker hist worker =
@@ -673,13 +734,17 @@ registerWorker hist worker =
     force worker $
     dt ("register worker " ++ (show worker) ++ " for " ++ (show hist)) $
     do wc <- workerCache
-       addWorkerCacheEntry wc (wc_cache_root wc) (dlToList $ hs_contents hist) worker
+       checkWorkerCache wc
+       v <- validateHistoryWorker worker (dlToList $ hs_contents hist)
+       assert v $ addWorkerCacheEntry wc (wc_cache_root wc) (dlToList $ hs_contents hist) worker
        modifyIORef (wc_nr_workers wc) ((+) 1)
        fixupWorkerCache wc
+       checkWorkerCache wc
 
 addWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> Worker -> IO ()
 addWorkerCacheEntry wc cursor hist worker =
-    do touchWorkerCacheEntry wc cursor
+    do checkWorkerCache wc
+       touchWorkerCacheEntry wc cursor
        cursor_prefix <- readIORef $ wce_history_entries cursor
        case stripSharedPrefix' [] cursor_prefix hist of
          (_, [], []) -> {- We've found the right place to do the insert. -}
@@ -756,7 +821,8 @@ addWorkerCacheEntry wc cursor hist worker =
 
 getWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> ([HistoryEntry], Worker) -> IO ([HistoryEntry], Worker)
 getWorkerCacheEntry wc cursor hist bestSoFar =
-    do touchWorkerCacheEntry wc cursor
+    do checkWorkerCache wc
+       touchWorkerCacheEntry wc cursor
        cursor_prefix <- readIORef $ wce_history_entries cursor
        cursor_worker <- readIORef $ wce_worker cursor
        case stripSharedPrefix' undefined cursor_prefix hist of
@@ -843,17 +909,25 @@ getWorker' target =
     force target $
 
     do wc <- workerCache
+       checkWorkerCache wc
        (fixup, worker) <- getWorkerCacheEntry wc (wc_cache_root wc) target undefined
        let reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
            doFixup currentWorker [] = return currentWorker
            doFixup currentWorker (x:xs) = do doHistoryEntry currentWorker x
                                              doFixup currentWorker xs
        worker' <- dt ("getwce " ++ (show target) ++ " -> " ++ (show fixup) ++ ", " ++ (show worker)) $ reallySnapshot worker
+       checkWorkerCache wc
        doFixup worker' fixup
+       checkWorkerCache wc
        return worker'
 
 getWorker :: History -> IO Worker
-getWorker = getWorker' . dlToList . hs_contents
+getWorker hist =
+    do worker <- getWorker' $ dlToList $ hs_contents hist
+       v <- validateHistoryWorker worker (dlToList $ hs_contents hist)
+       if not v
+          then error $ "worker cache is broken: history " ++ (show hist) ++ " gave worker " ++ (show worker)
+          else return worker
 
 queryCmd :: (Worker -> IO a) -> History -> a
 queryCmd w hist =
@@ -952,4 +1026,3 @@ setTsc hist tid tsc =
                             setTscWorker worker tid tsc
                             registerWorker res worker
                             return res
-

@@ -397,6 +397,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_REPLAY_STATE:
 	case WORKER_GET_THREAD:
 	case WORKER_GET_REGISTERS:
+	case WORKER_GET_HISTORY:
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
@@ -800,6 +801,53 @@ do_vg_intermediate_command(unsigned long addr)
 	send_okay();
 }
 
+struct history_entry {
+	struct history_entry *next;
+	unsigned nr_params;
+	unsigned long params[];
+};
+
+static struct history_entry *
+first_history_entry, *
+last_history_entry;
+
+static void
+do_get_history_command(void)
+{
+	const struct history_entry *he;
+	for (he = first_history_entry; he; he = he->next) {
+		_send_ancillary(ANCILLARY_HISTORY_ENTRY,
+				he->nr_params + 1,
+				he->params);
+	}
+	send_okay();
+}
+
+static void
+_history_append(unsigned key, const unsigned long *params,
+		unsigned nr_params)
+{
+	struct history_entry *he;
+	he = VG_(malloc)("history_entry",
+			 sizeof(*he) + (nr_params+1) * sizeof(unsigned long));
+	he->next = NULL;
+	he->nr_params = nr_params;
+	he->params[0] = key;
+	VG_(memcpy)(he->params+1, params, nr_params * sizeof(params[0]));
+	if (last_history_entry)
+		last_history_entry->next = he;
+	else
+		first_history_entry = he;
+	last_history_entry = he;
+}
+
+#define history_append(key, ...)				\
+do {							        \
+	unsigned long params[] = {__VA_ARGS__};			\
+	_history_append(key, params,				\
+			sizeof(params)/sizeof(params[0]));	\
+} while (0)
+
 static void
 replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 {
@@ -807,6 +855,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 	struct control_command cmd;
 	char *msg;
 	struct replay_thread *rt;
+
+	history_append(WORKER_RUN, current_thread->id, now.access_nr);
 
 	va_start(args, fmt);
 	msg = my_vasprintf(fmt, args);
@@ -867,6 +917,9 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			break;
 		case WORKER_GET_REGISTERS:
 			do_get_registers_command();
+			break;
+		case WORKER_GET_HISTORY:
+			do_get_history_command();
 			break;
 		default:
 			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
@@ -1290,6 +1343,8 @@ run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 				break;
 			if (!replay_coord_lt(now, when)) {
 				current_thread->last_run = now;
+				history_append(WORKER_RUN, current_thread->id,
+					       now.access_nr);
 				return;
 			}
 		}
@@ -1305,6 +1360,7 @@ run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 		if (stop_on_event)
 			break;
 	}
+	history_append(WORKER_RUN, current_thread->id, now.access_nr);
 }
 
 static void
@@ -1394,6 +1450,8 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			return;
 		}
 
+		history_append(WORKER_SET_REGISTER, rt->id, cmd->u.set_register.reg,
+			       cmd->u.set_register.val);
 		if (rt->interpret_state.live) {
 			rt->interpret_state.registers[cmd->u.set_register.reg].v =
 				cmd->u.set_register.val;
@@ -1412,10 +1470,15 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		res = VG_(am_mmap_anon_fixed_client)(cmd->u.allocate_memory.addr,
 						     cmd->u.allocate_memory.size,
 						     cmd->u.allocate_memory.prot);
-		if (sr_isError(res))
+		if (sr_isError(res)) {
 			send_error();
-		else
+		} else {
+			history_append(WORKER_ALLOCATE_MEMORY,
+				       cmd->u.allocate_memory.addr,
+				       cmd->u.allocate_memory.size,
+				       cmd->u.allocate_memory.prot);
 			send_okay();
+		}
 		return;
 	}
 	case WORKER_SET_MEMORY: {
@@ -1438,13 +1501,20 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 					      buf,
 					      recved_this_time);
 		}
-		if (worked)
+		if (worked) {
 			send_okay();
-		else
+		} else {
+			history_append(WORKER_SET_MEMORY,
+				       cmd->u.set_memory.addr,
+				       cmd->u.set_memory.size);
 			send_error();
+		}
 		return;
 	}
 	case WORKER_SET_MEMORY_PROTECTION:
+		history_append(WORKER_SET_MEMORY_PROTECTION,
+			       cmd->u.set_memory_protection.addr,
+			       cmd->u.set_memory_protection.prot);
 		my_mprotect((void *)cmd->u.set_memory_protection.addr,
 			    cmd->u.set_memory_protection.size,
 			    cmd->u.set_memory_protection.prot);
@@ -1458,8 +1528,13 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			send_error();
 		} else {
 			rt->rdtsc_result = cmd->u.set_tsc.tsc;
+			history_append(WORKER_SET_TSC,
+				       cmd->u.set_tsc.tsc);
 			send_okay();
 		}
+		return;
+	case WORKER_GET_HISTORY:
+		do_get_history_command();
 		return;
 	}
 	VG_(tool_panic)((Char *)"Bad worker command");

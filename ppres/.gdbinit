@@ -108,7 +108,11 @@ define dump_control_command
 			  if $cmd == 0x1241
 			    printf "set thread %d\n", ($arg0)->u.set_thread.tid
 			  else
-			    inspect /x $arg0
+			    if $cmd == 0x1249
+			      printf "get history\n"
+			    else
+			      inspect /x $arg0
+			    end
 			  end
 			end
 		      end

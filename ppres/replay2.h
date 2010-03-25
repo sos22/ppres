@@ -21,7 +21,8 @@ enum command_number {
 	WORKER_ALLOCATE_MEMORY = 0x1245,
 	WORKER_SET_MEMORY = 0x1246,
 	WORKER_SET_MEMORY_PROTECTION = 0x1247,
-	WORKER_SET_TSC = 0x1248
+	WORKER_SET_TSC = 0x1248,
+	WORKER_GET_HISTORY = 0x1249
 };
 
 struct command_header {
@@ -56,6 +57,7 @@ struct response_message {
 #define ANCILLARY_REG_BINDING 16
 #define ANCILLARY_TRACE_SIGNAL 17
 #define ANCILLARY_WANTED_THREAD 18
+#define ANCILLARY_HISTORY_ENTRY 19
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
