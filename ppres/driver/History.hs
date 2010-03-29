@@ -874,10 +874,28 @@ addWorkerCacheEntry wc cursor hist worker =
                    {- Try that again.  This time, we should insert directly into the cursor. -}
                    addWorkerCacheEntry wc cursor hist worker
                                    
+{- Like touchWorkerCacheEntry, but less so: rather than moving it the
+   front of the list, just move it one item earlier (assuming it's not
+   already at the front. -}
+lightTouchWorkerCacheEntry :: WorkerCacheEntry -> IO ()
+lightTouchWorkerCacheEntry wce =
+    if wce_is_root wce then return ()
+    else do prev <- readIORef $ wce_prev_lru wce
+            if wce_is_root prev
+             then return ()
+             else do next <- readIORef $ wce_next_lru wce
+                     writeIORef (wce_next_lru prev) next
+                     writeIORef (wce_prev_lru next) prev
+                     prevPrev <- readIORef $ wce_prev_lru prev
+                     writeIORef (wce_prev_lru wce) prevPrev
+                     writeIORef (wce_next_lru wce) prev
+                     writeIORef (wce_prev_lru prev) wce
+                     writeIORef (wce_next_lru prevPrev) wce
 
 getWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> ([HistoryEntry], Worker, WorkerCacheEntry) -> IO ([HistoryEntry], Worker, WorkerCacheEntry)
 getWorkerCacheEntry wc cursor hist bestSoFar =
     do checkWorkerCache wc
+       lightTouchWorkerCacheEntry cursor
        cursor_prefix <- readIORef $ wce_history_entries cursor
        cursor_worker <- readIORef $ wce_worker cursor
        case stripSharedPrefix' undefined cursor_prefix hist of
