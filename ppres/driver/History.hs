@@ -338,10 +338,10 @@ ancillaryDataToTrace ((ResponseDataAncillary code (loc':tid':other_args)):rs) =
                                  trc_store_in_monitor = other_args!!3 /= 0 }, rs)
               6 -> (case head rs of
                       ResponseDataString s -> TraceCalling s
-                      _ -> error "mangled trace", tail rs)
+                      _ -> error $ "mangled trace calling: " ++ (show other_args) ++ ", " ++ (show rs), tail rs)
               7 -> (case head rs of
                       ResponseDataString s -> TraceCalled s
-                      _ -> error "mangled trace", tail rs)
+                      _ -> error $ "mangled trace called: " ++ (show other_args) ++ ", " ++ (show rs), tail rs)
               8 -> (TraceEnterMonitor, rs)
               9 -> (TraceExitMonitor, rs)
               17 -> (TraceSignal { trc_rip = other_args!!0,
