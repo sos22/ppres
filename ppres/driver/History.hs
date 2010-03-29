@@ -23,6 +23,8 @@ import Data.IORef
 import System.IO.Unsafe
 import Network.Socket
 import Data.List
+import System.Posix.Signals
+import IO
 
 import Types
 import Util
@@ -645,6 +647,36 @@ data WorkerCache = WorkerCache { wc_cache_root :: WorkerCacheEntry,
                                  wc_nr_workers :: IORef Int
                                }
 
+hDumpWorkerCache :: WorkerCache -> Handle -> IO ()
+hDumpWorkerCache wc h =
+    let dumpWceTree :: Int -> WorkerCacheEntry -> IO ()
+        dumpWceTree depth wce =
+            let putInd x = hPutStrLn h $ (take depth $ repeat ' ') ++ x
+            in do putInd $ "WCE " ++ (show $ wce_id wce) ++ " isRoot " ++ (show $ wce_is_root wce)
+                  w <- readIORef $ wce_worker wce
+                  putInd $ "worker " ++ (show w)
+                  he <- readIORef $ wce_history_entries wce
+                  putInd $ "history " ++ (show he)
+                  n <- readIORef $ wce_next_lru wce
+                  p <- readIORef $ wce_prev_lru wce
+                  putInd $ "n " ++ (show $ wce_id n) ++ " p " ++ (show $ wce_id p)
+                  children <- readIORef $ wce_children wce
+                  mapM_ (\(ce, child) ->
+                             putInd $ "child " ++ (show ce) ++ " -> " ++ (show $ wce_id child))
+                        children
+                  mapM_ (\(_, child) -> dumpWceTree (depth + 1) child)
+                        children
+    in do hPutStrLn h "dumpWorkerCache"
+          nextId <- fmap head $ readIORef $ wc_remaining_ids wc
+          hPutStrLn h $ "next ID " ++ (show nextId)
+          nrWorkers <- readIORef $ wc_nr_workers wc
+          hPutStrLn h $ "nrWorkers " ++ (show nrWorkers)
+          dumpWceTree 0 $ wc_cache_root wc
+
+dumpWorkerCache :: WorkerCache -> IO ()
+dumpWorkerCache wc =
+    bracket (openFile "workercache.dmp" WriteMode) hClose (hDumpWorkerCache wc)
+
 doSanityChecks :: Bool
 doSanityChecks = False
 
@@ -887,7 +919,13 @@ workerCache =
     do wc <- readIORef globalWorkerCache
        case wc of
          Nothing -> error "worker cache not ready"
-         Just wc' -> return wc'
+         Just wc' ->
+             do pending <- getPendingSignals
+                when (sigUSR1 `inSignalSet` pending) $
+                 do dumpWorkerCache wc'
+                    unblockSignals $ addSignal sigUSR1 emptySignalSet
+                    blockSignals $ addSignal sigUSR1 emptySignalSet
+                return wc'
 
 initWorkerCache :: Logfile -> Worker -> IO ()
 initWorkerCache lf start =
@@ -912,6 +950,8 @@ initWorkerCache lf start =
                                                            wc_remaining_ids = ids,
                                                            wc_logfile = lf,
                                                            wc_nr_workers = nrWorkers }
+       installHandler sigUSR1 Ignore Nothing
+       blockSignals $ addSignal sigUSR1 emptySignalSet
 
 destroyWorkerCache :: IO ()
 destroyWorkerCache =
