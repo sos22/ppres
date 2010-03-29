@@ -969,6 +969,7 @@ initWorkerCache lf start =
                                                            wc_logfile = lf,
                                                            wc_nr_workers = nrWorkers }
        installHandler sigUSR1 Ignore Nothing
+       installHandler sigUSR2 (Catch $ workerCache >>= dumpWorkerCache) Nothing
        blockSignals $ addSignal sigUSR1 emptySignalSet
 
 destroyWorkerCache :: IO ()
