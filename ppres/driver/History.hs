@@ -30,6 +30,7 @@ import Types
 import Util
 import Socket
 import Logfile
+import Debug
 
 --import qualified Debug.Trace
 dt :: String -> a -> a
@@ -680,6 +681,7 @@ dumpWorkerCache wc =
 doSanityChecks :: Bool
 doSanityChecks = False
 
+{-
 sanityCheckWorkerCache :: WorkerCache -> IO Bool
 sanityCheckWorkerCache wc =
     if doSanityChecks
@@ -704,6 +706,25 @@ sanityCheckWorkerCache wc =
                                                       _ -> local_hist ++ [hist_entry]
                                             in sanityCheckWorkerCacheTree child_prefix child) childs
                  return $ and $ v:children_sane
+-}
+sanityCheckWorkerCache :: WorkerCache -> IO Bool
+sanityCheckWorkerCache wc =
+    if doSanityChecks
+    then sanityCheckWCEList (wc_cache_root wc)
+    else return True
+
+    where sanityCheckWCEList wce =
+              do next <- readIORef $ wce_next_lru wce
+                 thisOneGood <- if wce_id wce /= wce_id (wc_cache_root wc)
+                                then do prev <- readIORef $ wce_prev_lru wce                                        
+                                        prevnext <- readIORef $ wce_next_lru prev
+                                        nextprev <- readIORef $ wce_prev_lru next
+                                        return (wce_id prevnext == wce_id wce && wce_id nextprev == wce_id wce)
+                                else return True
+                 restGood <- if wce_id next /= wce_id (wc_cache_root wc)
+                             then sanityCheckWCEList next
+                             else return True
+                 return $ thisOneGood && restGood
 
 checkWorkerCache :: WorkerCache -> IO ()
 checkWorkerCache wc =
@@ -713,6 +734,7 @@ checkWorkerCache wc =
 {- Pull a WCE to the front of the LRU list -}
 touchWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
 touchWorkerCacheEntry wc wce =
+    logMsg ("touchWorkerCacheEntry " ++ (show wce)) $
     if wce_is_root wce
     then return ()
     else do {- Remove from old place -}
@@ -726,6 +748,7 @@ touchWorkerCacheEntry wc wce =
 
 addWceToList :: WorkerCache -> WorkerCacheEntry -> IO ()
 addWceToList wc wce =
+    logMsg ("addWceToList " ++ (show wce)) $
     let newPrev = wc_cache_root wc
     in do newNext <- readIORef $ wce_next_lru newPrev
           writeIORef (wce_next_lru wce) newNext
@@ -740,11 +763,7 @@ assert msg False = error $ "assertion failure: " ++ msg
 killWorkerTree :: WorkerCache -> WorkerCacheEntry -> IO ()
 killWorkerTree wc wce =
     do {- Remove from the LRU list -} 
-       prev <- readIORef $ wce_prev_lru wce
-       next <- readIORef $ wce_next_lru wce
-       writeIORef (wce_next_lru prev) next
-       writeIORef (wce_prev_lru next) prev
-
+       putStrLn ("killWorkerTree " ++ (show $ wce_id wce))
        w <- readIORef $ wce_worker wce
        case w of
          Nothing -> return ()
@@ -754,16 +773,98 @@ killWorkerTree wc wce =
        children <- readIORef $ wce_children wce
        mapM_ (killWorkerTree wc . snd) children
 
+foldOnlyChild :: WorkerCacheEntry -> IO ()
+foldOnlyChild wce =
+    logMsg ("foldOnlyChild " ++ (show wce)) $
+    do w <- readIORef $ wce_worker wce
+       children <- assert "foldOnlyChild with non-Nothing worker" (case w of
+                                                                     Nothing -> True
+                                                                     _ -> False) $
+                   readIORef $ wce_children wce
+       case children of
+         [(childe, childc)] ->
+             do childWorker <- readIORef $ wce_worker childc
+                childEntries <- readIORef $ wce_history_entries childc
+                childChildren <- readIORef $ wce_children childc
+                pEntries <- readIORef $ wce_history_entries wce
+                let newEntries = case childe of
+                                   HistoryRun _ _ -> pEntries ++ childEntries
+                                   _ -> pEntries ++ [childe] ++ childEntries
+                writeIORef (wce_worker wce) childWorker
+                writeIORef (wce_history_entries wce) newEntries
+                writeIORef (wce_children wce) childChildren
+
+                {- Now update the LRU.  Remove the child we just
+                   merged and add the wce at the same place -}
+                case childWorker of
+                  Nothing -> do r <- readIORef (wce_prev_lru wce)
+                                assert "foldOnlyChild on LRU" (wce_id r == wce_id wce) $
+                                       return ()
+                  Just _ -> do childPrev <- readIORef (wce_prev_lru childc)
+                               childNext <- readIORef (wce_next_lru childc)
+                               writeIORef (wce_next_lru childPrev) wce
+                               writeIORef (wce_prev_lru childNext) wce
+                               writeIORef (wce_prev_lru childc) childc
+                               writeIORef (wce_next_lru childc) childc
+                               writeIORef (wce_next_lru wce) childNext
+                               writeIORef (wce_prev_lru wce) childPrev
+         _ -> error "foldOnlyChild on node with not a single child"
+
+removeChildWce :: WorkerCache -> WorkerCacheEntry -> WorkerCacheEntry -> IO ()
+removeChildWce wc parent child =
+    logMsg ("removeChildWce " ++ (show parent) ++ (show child)) $
+    do children <- readIORef $ wce_children parent
+       let newChildren = filter (\(_, c) -> wce_id c /= wce_id child) children
+       writeIORef (wce_children parent) newChildren
+
+       {- If the parent has no worker, it may itself need to be
+          culled. -}
+       w <- readIORef $ wce_worker parent
+       case w of
+         Just _ -> return () {- Nope -}
+         Nothing ->
+             case newChildren of
+               [] -> {- Complete dead -}
+                     removeWorkerCacheEntry wc parent
+               [_] -> {- Only one surviving child, so can simplify a bit -}
+                      foldOnlyChild parent
+               _ -> {- Still useful, leave intact. -}
+                    return ()
+
 removeWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
 removeWorkerCacheEntry wc wce =
+    logMsg ("removeWorkerCacheEntry " ++ (show wce)) $
     assert "remove root WCE" (not $ wce_is_root wce) $
-       do {- Remove from the parent -}
-          modifyIORef (wce_children $ wce_parent wce) $ filter (\(_,x) -> wce_id x /= wce_id wce)
+    do w <- readIORef $ wce_worker wce
+       case w of
+         Nothing ->
+             do {- Check that we've been removed from the list already -}
+               p <- readIORef $ wce_prev_lru wce
+               assert "removeWCE nothing on LRU" (wce_id p == wce_id wce) $ return ()
 
-          {- Kill all the workers which we just unhooked -}
-          killWorkerTree wc wce
+         Just w' ->
+             do {- Kill the worker -}
+               modifyIORef (wc_nr_workers wc) $ \x -> x - 1
+               killWorker w'
+               writeIORef (wce_worker wce) Nothing
 
-          checkWorkerCache wc
+               {- Remove from the LRU -}
+               prev <- readIORef $ wce_prev_lru wce
+               next <- readIORef $ wce_next_lru wce
+               writeIORef (wce_next_lru prev) next
+               writeIORef (wce_prev_lru next) prev
+               writeIORef (wce_next_lru wce) wce
+               writeIORef (wce_prev_lru wce) wce
+
+       {- If we have no children, we are completely dead
+          and should be removed from the parent -}
+       children <- readIORef $ wce_children wce
+       case children of
+         [] -> removeChildWce wc (wce_parent wce) wce
+         [_] ->
+             {- only one child -> simplify -}
+             foldOnlyChild wce
+         _ -> return ()
 
 foldrM :: Monad m => (a -> m b -> m b) -> m b -> [a] -> m b
 foldrM _ base [] = base
@@ -783,7 +884,7 @@ registerWorker :: History -> Worker -> IO ()
 registerWorker hist worker =
     force hist $
     force worker $
-    dt ("register worker " ++ (show worker) ++ " for " ++ (show hist)) $
+    logMsg ("register worker " ++ (show worker) ++ " for " ++ (show hist)) $
     do wc <- workerCache
        checkWorkerCache wc
        freezeWorker worker
@@ -795,6 +896,7 @@ registerWorker hist worker =
 
 addWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> Worker -> IO ()
 addWorkerCacheEntry wc cursor hist worker =
+    logMsg ("addWorkerCacheEntry " ++ (show cursor) ++ " <hist> " ++ (show worker)) $
     do checkWorkerCache wc
        cursor_prefix <- readIORef $ wce_history_entries cursor
        case stripSharedPrefix' [] cursor_prefix hist of
@@ -869,33 +971,22 @@ addWorkerCacheEntry wc cursor hist worker =
                    writeIORef (wce_history_entries cursor) prefix
                    writeIORef (wce_worker cursor) Nothing
                    
+                   {- This node no longer has a worker, so can be removed from the LRU -}
+                   prev <- readIORef $ wce_prev_lru cursor
+                   next <- readIORef $ wce_next_lru cursor
+                   writeIORef (wce_prev_lru next) prev
+                   writeIORef (wce_next_lru prev) next
+                   writeIORef (wce_next_lru cursor) cursor
+                   writeIORef (wce_prev_lru cursor) cursor
+
                    putStrLn ("did a WCE split at " ++ (show cursor) ++ ", new child " ++ (show newChild) ++ ", cursor hist " ++ (show prefix) ++ ", child hist " ++ (show childHist))
 
                    {- Try that again.  This time, we should insert directly into the cursor. -}
                    addWorkerCacheEntry wc cursor hist worker
                                    
-{- Like touchWorkerCacheEntry, but less so: rather than moving it the
-   front of the list, just move it one item earlier (assuming it's not
-   already at the front. -}
-lightTouchWorkerCacheEntry :: WorkerCacheEntry -> IO ()
-lightTouchWorkerCacheEntry wce =
-    if wce_is_root wce then return ()
-    else do prev <- readIORef $ wce_prev_lru wce
-            if wce_is_root prev
-             then return ()
-             else do next <- readIORef $ wce_next_lru wce
-                     writeIORef (wce_next_lru prev) next
-                     writeIORef (wce_prev_lru next) prev
-                     prevPrev <- readIORef $ wce_prev_lru prev
-                     writeIORef (wce_prev_lru wce) prevPrev
-                     writeIORef (wce_next_lru wce) prev
-                     writeIORef (wce_prev_lru prev) wce
-                     writeIORef (wce_next_lru prevPrev) wce
-
 getWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> ([HistoryEntry], Worker, WorkerCacheEntry) -> IO ([HistoryEntry], Worker, WorkerCacheEntry)
 getWorkerCacheEntry wc cursor hist bestSoFar =
     do checkWorkerCache wc
-       lightTouchWorkerCacheEntry cursor
        cursor_prefix <- readIORef $ wce_history_entries cursor
        cursor_worker <- readIORef $ wce_worker cursor
        case stripSharedPrefix' undefined cursor_prefix hist of
@@ -941,6 +1032,7 @@ workerCache =
              do pending <- getPendingSignals
                 when (sigUSR1 `inSignalSet` pending) $
                  do dumpWorkerCache wc'
+                    dumpLog
                     unblockSignals $ addSignal sigUSR1 emptySignalSet
                     blockSignals $ addSignal sigUSR1 emptySignalSet
                 return wc'
@@ -969,7 +1061,9 @@ initWorkerCache lf start =
                                                            wc_logfile = lf,
                                                            wc_nr_workers = nrWorkers }
        installHandler sigUSR1 Ignore Nothing
-       installHandler sigUSR2 (Catch $ workerCache >>= dumpWorkerCache) Nothing
+       installHandler sigUSR2 (Catch $ do wc <- workerCache
+                                          dumpWorkerCache wc
+                                          dumpLog) Nothing
        blockSignals $ addSignal sigUSR1 emptySignalSet
 
 destroyWorkerCache :: IO ()
