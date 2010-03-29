@@ -764,7 +764,6 @@ registerWorker hist worker =
 addWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> Worker -> IO ()
 addWorkerCacheEntry wc cursor hist worker =
     do checkWorkerCache wc
-       touchWorkerCacheEntry wc cursor
        cursor_prefix <- readIORef $ wce_history_entries cursor
        case stripSharedPrefix' [] cursor_prefix hist of
          (_, [], []) -> {- We've found the right place to do the insert. -}
@@ -844,10 +843,9 @@ addWorkerCacheEntry wc cursor hist worker =
                    addWorkerCacheEntry wc cursor hist worker
                                    
 
-getWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> ([HistoryEntry], Worker) -> IO ([HistoryEntry], Worker)
+getWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> [HistoryEntry] -> ([HistoryEntry], Worker, WorkerCacheEntry) -> IO ([HistoryEntry], Worker, WorkerCacheEntry)
 getWorkerCacheEntry wc cursor hist bestSoFar =
     do checkWorkerCache wc
-       touchWorkerCacheEntry wc cursor
        cursor_prefix <- readIORef $ wce_history_entries cursor
        cursor_worker <- readIORef $ wce_worker cursor
        case stripSharedPrefix' undefined cursor_prefix hist of
@@ -856,12 +854,12 @@ getWorkerCacheEntry wc cursor hist bestSoFar =
              do cworker <- readIORef $ wce_worker cursor
                 return $ case cworker of
                            Nothing -> bestSoFar
-                           Just w -> ([], w)             
+                           Just w -> ([], w, cursor)             
          (_, [], rh@(rhHead:remainingHist)) ->
                {- Search children -}
                let newBest = case cursor_worker of
                                Nothing -> bestSoFar
-                               Just w -> (rh, w)
+                               Just w -> (rh, w, cursor)
                in do childs <- readIORef $ wce_children cursor
                      let r =  foldr (\(key, child) rest ->
                                          if key == rhHead
@@ -935,7 +933,8 @@ getWorker' is_pure target =
 
     do wc <- workerCache
        checkWorkerCache wc
-       (fixup, worker) <- getWorkerCacheEntry wc (wc_cache_root wc) target undefined
+       (fixup, worker, wce) <- getWorkerCacheEntry wc (wc_cache_root wc) target undefined
+       touchWorkerCacheEntry wc wce
        let reallySnapshot x = liftM (maybe (error $ "cannot snapshot " ++ (show x)) id) $ takeSnapshot x
            doFixup currentWorker [] = return currentWorker
            doFixup currentWorker (x:xs) = do doHistoryEntry currentWorker x
