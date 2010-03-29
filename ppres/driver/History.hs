@@ -739,7 +739,13 @@ assert msg False = error $ "assertion failure: " ++ msg
 
 killWorkerTree :: WorkerCache -> WorkerCacheEntry -> IO ()
 killWorkerTree wc wce =
-    do w <- readIORef $ wce_worker wce
+    do {- Remove from the LRU list -} 
+       prev <- readIORef $ wce_prev_lru wce
+       next <- readIORef $ wce_next_lru wce
+       writeIORef (wce_next_lru prev) next
+       writeIORef (wce_prev_lru next) prev
+
+       w <- readIORef $ wce_worker wce
        case w of
          Nothing -> return ()
          Just w' -> do modifyIORef (wc_nr_workers wc) $ \x -> x - 1
@@ -751,16 +757,10 @@ killWorkerTree wc wce =
 removeWorkerCacheEntry :: WorkerCache -> WorkerCacheEntry -> IO ()
 removeWorkerCacheEntry wc wce =
     assert "remove root WCE" (not $ wce_is_root wce) $
-       do {- First, remove from the linked list. -}
-          prev <- readIORef $ wce_prev_lru wce
-          next <- readIORef $ wce_next_lru wce
-          writeIORef (wce_next_lru prev) next
-          writeIORef (wce_prev_lru next) prev
-
-          {- Next, remove from the parent -}
+       do {- Remove from the parent -}
           modifyIORef (wce_children $ wce_parent wce) $ filter (\(_,x) -> wce_id x /= wce_id wce)
 
-          {- Finally, kill all the workers which we just unhooked -}
+          {- Kill all the workers which we just unhooked -}
           killWorkerTree wc wce
 
           checkWorkerCache wc
