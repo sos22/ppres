@@ -1273,46 +1273,50 @@ runThread logfile hist tid acc =
                                                 Nothing ->
                                                     error "unexpected end of log when worker thought there was more?"
                                                 Just (logrecord, nextLogPtr) ->
-                                                    let justAdvance = Right (advanceLog newHist nextLogPtr, True)
+                                                    let success = return . Right
+                                                        justAdvance = success (advanceLog newHist nextLogPtr, True)
+                                                        failed = return . Left
                                                         res =
                                                             case (trc_trc evt, lr_body logrecord) of
                                                               (TraceRdtsc, LogRdtsc tsc) ->
-                                                                  Right (advanceLog (setTsc newHist tid tsc) nextLogPtr, True)
+                                                                  success (advanceLog (setTsc newHist tid tsc) nextLogPtr, True)
                                                               (TraceRdtsc, r) ->
-                                                                  Left $ "rdtsc event with record " ++ (show r)
+                                                                  failed $ "rdtsc event with record " ++ (show r)
                                                               (TraceCalling _, LogClientCall) -> justAdvance
                                                               (TraceCalling n, r) ->
-                                                                  Left $ "calling " ++ n ++ " event with record " ++ (show r)
+                                                                  failed $ "calling " ++ n ++ " event with record " ++ (show r)
                                                               (TraceCalled _, LogClientReturn) -> justAdvance
                                                               (TraceCalled n, r) ->
-                                                                  Left $ "called " ++ n ++ " event with record " ++ (show r)
+                                                                  failed $ "called " ++ n ++ " event with record " ++ (show r)
                                                               (TraceLoad val sz ptr _ _, LogAccess True val' sz' ptr') |
                                                                   sz == sz' && ptr == ptr' && val == val' ->
                                                                   justAdvance
                                                               (TraceLoad _ _ _ _ _, _) | useMemoryRecords ->
-                                                                  Left $ "load event " ++ (show evt) ++ " against record " ++ (show logrecord)
+                                                                  failed $ "load event " ++ (show evt) ++ " against record " ++ (show logrecord)
                                                               (TraceStore val sz ptr _ _, LogAccess False val' sz' ptr') |
                                                                   sz == sz' && ptr == ptr' && val == val' ->
                                                                   justAdvance
                                                               (TraceStore _ _ _ _ _, _) | useMemoryRecords ->
-                                                                  Left $ "store event " ++ (show evt) ++ " against record " ++ (show logrecord)
+                                                                  failed $ "store event " ++ (show evt) ++ " against record " ++ (show logrecord)
                                                               (TraceSignal rip signr err va, LogSignal rip' signr' err' va') |
                                                                   and [rip == rip', signr == (fromIntegral signr'), err == err', va == va'] ->
                                                                   justAdvance
                                                               (TraceSignal _ _ _ _, _) ->
-                                                                  Left $ "signal event " ++ (show evt) ++ " against record " ++ (show logrecord)
-                                                              _ -> Right (newHist, False)
-                                                    in case res of
-                                                         Left e -> Left e
-                                                         Right (res', checkThread) ->
+                                                                  failed $ "signal event " ++ (show evt) ++ " against record " ++ (show logrecord)
+                                                              _ -> success (newHist, False)
+                                                    in do r <- res
+                                                          case r of
+                                                            Left e -> failed e
+                                                            Right (res', checkThread) ->
                                                              if checkThread && trc_tid evt /= lr_tid logrecord
-                                                             then Left $ "wrong thread: wanted " ++ (show logrecord) ++ ", got " ++ (show evt)
-                                                             else Right res'
-                                       return $ case fixedHist of
+                                                             then failed $ "wrong thread: wanted " ++ (show logrecord) ++ ", got " ++ (show evt)
+                                                             else success res'
+                                       fixedHist' <- fixedHist
+                                       return $ case fixedHist' of
                                                   Left e -> Left e
                                                   Right fh' ->
                                                       if Finite acc' == acc
-                                                      then fixedHist
+                                                      then fixedHist'
                                                       else runThread logfile fh' tid acc
                                else return $ Right newHist
                            _ -> return $ Right newHist
