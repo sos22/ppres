@@ -673,6 +673,7 @@ hDumpWorkerCache wc h =
           nrWorkers <- readIORef $ wc_nr_workers wc
           hPutStrLn h $ "nrWorkers " ++ (show nrWorkers)
           dumpWceTree 0 $ wc_cache_root wc
+          hPutStrLn h "finished dumpWorkerCache"
 
 dumpWorkerCache :: WorkerCache -> IO ()
 dumpWorkerCache wc =
@@ -809,8 +810,22 @@ foldOnlyChild wce =
                 childEntries <- readIORef $ wce_history_entries childc
                 childChildren <- readIORef $ wce_children childc
                 pEntries <- readIORef $ wce_history_entries wce
-                let newEntries = case childe of
-                                   HistoryRun _ _ -> pEntries ++ childEntries
+                let dropLast [] ys = ys
+                    dropLast [_] ys = ys
+                    dropLast (x:xs) ys = x:(dropLast xs ys)
+                    newEntries = case childe of
+                                   HistoryRun _ _ ->
+                                       case pEntries of
+                                         [] -> childEntries
+                                         _ ->
+                                           case childEntries of
+                                             [] -> pEntries
+                                             _ ->
+                                                 case (last pEntries, head childEntries) of
+                                                   (HistoryRun pTid _, HistoryRun cTid _)
+                                                       | pTid == cTid ->
+                                                           dropLast pEntries childEntries
+                                                   _ -> pEntries ++ childEntries
                                    _ -> pEntries ++ [childe] ++ childEntries
                 writeIORef (wce_worker wce) childWorker
                 writeIORef (wce_history_entries wce) newEntries
