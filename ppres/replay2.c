@@ -597,14 +597,16 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 	}
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
-	    (trace_mode))
+	     (trace_mode)) {
 		ALWAYS_TRACE(LOAD,
 		       size == 8 ?
 		       *(unsigned long *)read_bytes :
 		       *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
 		       size,
 		       (unsigned long)ptr,
-		       current_thread->in_monitor);
+		       current_thread->in_monitor,
+		       rip);
+	}
 	now.access_nr++;
 	event(EVENT_load, (unsigned long)ptr, size,
 	      (unsigned long)read_bytes);
@@ -633,14 +635,16 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 	}
 	if ( (ptr <= (const void *)trace_address &&
 	      ptr + size > (const void *)trace_address) ||
-	    (trace_mode))
+	     (trace_mode)) {
 		ALWAYS_TRACE(STORE,
 		       size == 8 ?
 		       *(unsigned long *)written_bytes :
 		       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
 		       size,
 		       (unsigned long)ptr,
-		       current_thread->in_monitor);
+		       current_thread->in_monitor,
+		       rip);
+	}
 	now.access_nr++;
 	event(EVENT_store, (unsigned long)ptr, size,
 	      (unsigned long)written_bytes);

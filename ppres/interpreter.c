@@ -1068,6 +1068,8 @@ do_helper_load_cswitch(struct interpret_state *is,
 	interpreter_do_load(&res, size, addr, rip, IS_STACK((void *)addr.v, rsp.v));
 
 	ref_expression_result(is, &res);
+	if (is->registers[REG_RIP].v == 0)
+		VG_(printf)("helper load with rip 0? (%lx)\n", rip);
 	load_event((const void *)addr.v, size, dummy_buf, rsp.v,
 		   is->registers[REG_RIP].v);
 	deref_expression_result(is, &res);

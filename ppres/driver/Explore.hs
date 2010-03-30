@@ -1,6 +1,9 @@
 module Explore(enumerateHistories, findSomeHistory,
                findNeighbouringHistories) where
 
+import Numeric
+import Data.Word
+
 import History
 import Types
 import Timing
@@ -16,7 +19,7 @@ live_threads hist =
     [a | (a, b) <- threadState hist, not (ts_dead b)]
 
 rescheduleOnEveryAccess :: Bool
-rescheduleOnEveryAccess = True
+rescheduleOnEveryAccess = False
 
 findNeighbouringHistories :: History -> [History]
 findNeighbouringHistories start =
@@ -68,19 +71,19 @@ findNeighbouringHistories start =
                          filteredTrace = filter (isInteresting . trc_trc) stoppedTrace
                          isInteresting (TraceFootstep _ _ _ _) = False
                          isInteresting _ = True
-                         stop_at_syscall [] = (False, [])
+                         stop_at_syscall [] = tlog "trace didn't stop" (False, [])
                          stop_at_syscall (x:xs) =
                              if should_stop_here $ trc_trc x
                              then (True, [x])
                              else let (s, r) = stop_at_syscall xs
                                   in (s, x:r)
-                         should_stop_here (TraceSyscall _) = True
-                         should_stop_here (TraceCalling _) = True
-                         should_stop_here (TraceCalled _) = True
-                         should_stop_here (TraceSignal _ _ _ _) = tlog "stopping on signal" True
-                         should_stop_here TraceRdtsc = True
-                         should_stop_here (TraceLoad _ _ _ _) = rescheduleOnEveryAccess
-                         should_stop_here (TraceStore _ _ _ _) = rescheduleOnEveryAccess
+                         should_stop_here (TraceSyscall _) = tlog "trace stopped for system call" True
+                         should_stop_here (TraceCalling _) = tlog "trace stopped for calling event" True
+                         should_stop_here (TraceCalled _) = tlog "trace stopped for called event" True
+                         should_stop_here (TraceSignal _ _ _ _) = tlog "trace stopped for signal event" True
+                         should_stop_here TraceRdtsc = tlog "trace stopped for rdtsc event" True
+                         should_stop_here (TraceLoad _ _ _ _ _) = rescheduleOnEveryAccess
+                         should_stop_here (TraceStore _ _ _ _ _) = rescheduleOnEveryAccess
                          should_stop_here _ = False
                      in case replayState postTraceHist of
                           ReplayStateFailed _ _ _ _ -> (True, filteredTrace)
@@ -92,22 +95,28 @@ findNeighbouringHistories start =
                          tt x = (maybe (error "1") id) $ lookup x traces
                          thread_events t = filter (isTargetEvent . trc_trc) $ snd $ tt t
                                            where 
-                                                 isTargetEvent (TraceLoad _ _ p _) =
-                                                     rescheduleOnEveryAccess || existsStoreNotInThread t p
-                                                 isTargetEvent (TraceStore _ _ p _) =
-                                                     rescheduleOnEveryAccess || existsAccessNotInThread t p
-                                                 isTargetEvent _ = True
+                                                 isTargetEvent (TraceLoad _ _ p _ rip) =
+                                                     rescheduleOnEveryAccess || existsStoreNotInThread t p rip
+                                                 isTargetEvent (TraceStore _ _ p _ rip) =
+                                                     rescheduleOnEveryAccess || existsAccessNotInThread t p rip
+                                                 isTargetEvent _ = tlog "resched on non-race" True
+                         racemsg :: ThreadId -> Word64 -> ThreadId -> Word64 -> Word64 -> a -> a
+                         racemsg tid1 rip1 tid2 rip2 ptr = tlog $ "race between " ++ (show tid1) ++ ":" ++
+                                                           (showHex rip1 $
+                                                            " and " ++ (show tid2) ++ ":" ++
+                                                            (showHex rip2 $ "on " ++ (showHex ptr "")))
+                                                                                                               
                          {- True if any thread other than t accesses ptr -}
-                         existsAccessNotInThread t ptr =
+                         existsAccessNotInThread t ptr rip =
                              or [case trc_trc evt of
-                                   TraceLoad _ _ ptr' _ | ptr == ptr' -> True
-                                   TraceStore _ _ ptr' _ | ptr == ptr' -> True
+                                   TraceLoad _ _ ptr' _ rip' | ptr == ptr' -> racemsg t rip (trc_tid evt) rip' ptr True
+                                   TraceStore _ _ ptr' _ rip' | ptr == ptr' -> racemsg t rip (trc_tid evt) rip' ptr True
                                    _ -> False
                                  | other_t <- threads', other_t /= t, evt <- snd $ tt other_t]
                          {- True if any thread other than t stores to ptr -}
-                         existsStoreNotInThread t ptr =
+                         existsStoreNotInThread t ptr rip =
                              or [case trc_trc evt of
-                                   TraceStore _ _ ptr' _ | ptr == ptr' -> True
+                                   TraceStore _ _ ptr' _ rip' | ptr == ptr' -> racemsg t rip (trc_tid evt) rip' ptr True
                                    _ -> False
                                  | other_t <- threads', other_t /= t, evt <- snd $ tt other_t]
                          thread_event t = case thread_events t of

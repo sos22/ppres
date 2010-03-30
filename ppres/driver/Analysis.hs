@@ -27,11 +27,11 @@ byteListToCString bl = '"':(concatMap word8ToCChar bl) ++ "\""
 memTraceTo :: History -> History -> Either String [(Bool, MemAccess)]
 memTraceTo start end =
     let worker [] = return []
-        worker ((TraceRecord (TraceLoad _ _ ptr _) tid acc):others) =
+        worker ((TraceRecord (TraceLoad _ _ ptr _ _) tid acc):others) =
             do rest <- worker others
                rip <- getRipAtAccess end acc
                return $ (False, (tid, (rip, ptr))):rest
-        worker ((TraceRecord (TraceStore _ _ ptr _) tid acc):others) =
+        worker ((TraceRecord (TraceStore _ _ ptr _ _) tid acc):others) =
             do rest <- worker others
                rip <- getRipAtAccess end acc
                return $ (True, (tid, (rip, ptr))):rest

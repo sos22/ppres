@@ -334,11 +334,13 @@ ancillaryDataToTrace ((ResponseDataAncillary code (loc':tid':other_args)):rs) =
               4 -> (TraceLoad { trc_load_val = fromIntegral $ other_args!!0,
                                 trc_load_size = fromIntegral $ other_args!!1,
                                 trc_load_ptr = fromIntegral $ other_args!!2,
-                                trc_load_in_monitor = other_args!!3 /= 0 }, rs)
+                                trc_load_in_monitor = other_args!!3 /= 0,
+                                trc_rip = other_args!!4 }, rs)
               5 -> (TraceStore { trc_store_val = fromIntegral $ other_args!!0,
                                  trc_store_size = fromIntegral $ other_args!!1,
                                  trc_store_ptr = fromIntegral $ other_args!!2,
-                                 trc_store_in_monitor = other_args!!3 /= 0 }, rs)
+                                 trc_store_in_monitor = other_args!!3 /= 0,
+                                 trc_rip = other_args!!4 }, rs)
               6 -> (case head rs of
                       ResponseDataString s -> TraceCalling s
                       _ -> error $ "mangled trace calling: " ++ (show other_args) ++ ", " ++ (show rs), tail rs)

@@ -32,11 +32,13 @@ data TraceEntry = TraceFootstep { trc_foot_rip :: Word64,
                 | TraceLoad { trc_load_val :: Word64,
                               trc_load_size :: Int,
                               trc_load_ptr :: Word64,
-                              trc_load_in_monitor :: Bool }
+                              trc_load_in_monitor :: Bool,
+                              trc_rip :: Word64 }
                 | TraceStore { trc_store_val :: Word64,
                                trc_store_size :: Int,
                                trc_store_ptr :: Word64,
-                               trc_store_in_monitor :: Bool }
+                               trc_store_in_monitor :: Bool,
+                               trc_rip :: Word64 }
                 | TraceCalling { trc_calling :: String }
                 | TraceCalled { trc_called :: String }
                 | TraceEnterMonitor
@@ -51,10 +53,10 @@ instance Show TraceEntry where
     show (TraceFootstep rip _ _ _ ) = "footstep " ++ (showHex rip "")
     show (TraceSyscall nr) = "syscall " ++ (show nr)
     show (TraceRdtsc) = "rdtsc"
-    show (TraceLoad val _ ptr mon) =
+    show (TraceLoad val _ ptr mon _) =
         "load " ++ (showHex ptr $ " -> " ++ (showHex val (if mon then " monitor"
                                                           else "")))
-    show (TraceStore val _ ptr mon) =
+    show (TraceStore val _ ptr mon _) =
         "store " ++ (showHex ptr $ " -> " ++ (showHex val (if mon then " monitor"
                                                            else "")))
     show (TraceCalling c) = "calling " ++ c
@@ -89,8 +91,8 @@ instance Read TraceEntry where
                         else do (val, trail4) <- reads trail3
                                 (m, trail5) <- lex trail4
                                 if m == "monitor"
-                                 then return (c val 0 ptr True, trail5)
-                                 else return (c val 0 ptr False, trail4)
+                                 then return (c val 0 ptr True 0, trail5)
+                                 else return (c val 0 ptr False 0, trail4)
              _ -> []
 
 data TraceRecord = TraceRecord { trc_trc :: TraceEntry,
