@@ -950,6 +950,8 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			break;
 		case WORKER_SET_LOG_PTR:
 			logfile_seek(&logfile, cmd.u.set_log_ptr.ptr, cmd.u.set_log_ptr.record);
+			history_append(WORKER_SET_LOG_PTR, cmd.u.set_log_ptr.ptr,
+				       cmd.u.set_log_ptr.record);
 			next_record();
 			send_okay();
 			break;
@@ -1028,98 +1030,9 @@ validate_event(const struct record_header *rec,
 	}
 	case EVENT_rdtsc:
 	case EVENT_client_request:
+	case EVENT_load:
+	case EVENT_store:
 		return;
-	case EVENT_load: {
-		const struct mem_read_record *mrr = payload;
-		const void *mp = mrr + 1;
-		replay_assert_eq(reason_control(), rec->cls, RECORD_mem_read);
-		replay_assert_eq(reason_other(), mrr->ptr, args[0]);
-		replay_assert_eq(reason_control(),
-				 rec->size - sizeof(*rec) - sizeof(*mrr),
-				 args[1]);
-		switch (args[1]) {
-#define do_case(sz, typ)						\
-			case sz: {					\
-				typ *seen = (typ *)args[2];		\
-				typ *wanted = (typ *)mp;		\
-				replay_assert_eq(			\
-					reason_data(			\
-						expr_load(sz,		\
-							expr_const(mrr->ptr), \
-							expr_imported(*seen)), \
-						expr_const(*wanted)),	\
-					*seen,				\
-					*wanted);			\
-				break;					\
-			}
-			do_case(1, unsigned char)
-			do_case(2, unsigned short)
-			do_case(4, unsigned)
-			do_case(8, unsigned long)
-#undef do_case
-		case 16: {
-				unsigned long *_args = (unsigned long *)args[2];
-				unsigned long *_buf = (unsigned long *)mp;
-				replay_assert_eq(reason_data(expr_load(8,
-								       expr_const(mrr->ptr),
-								       expr_imported(_args[1])),
-							     expr_const(_buf[0])),
-						 _args[0],
-						 _buf[0]);
-				replay_assert_eq(reason_data(expr_load(8,
-								       expr_const(mrr->ptr+8),
-								       expr_imported(_args[1])),
-							     expr_const(_buf[1])),
-						 _args[1],
-						 _buf[1]);
-				break;
-			}
-		default:
-			ASSUME(0);
-		}
-		return;
-	}
-	case EVENT_store: {
-		const struct mem_read_record *mwr = payload;
-		replay_assert_eq(reason_control(), rec->cls, RECORD_mem_write);
-		replay_assert_eq(reason_other(), mwr->ptr, args[0]);
-		replay_assert_eq(reason_control(),
-				 rec->size - sizeof(*rec) - sizeof(*mwr),
-				 args[1]);
-		switch (args[1]) {
-		case 1:
-			replay_assert_eq(reason_other(),
-					 *(unsigned char *)(mwr + 1),
-					 *(unsigned char *)args[2]);
-			break;
-		case 2:
-			replay_assert_eq(reason_other(),
-					 *(unsigned short *)(mwr + 1),
-					 *(unsigned short *)args[2]);
-			break;
-		case 4:
-			replay_assert_eq(reason_other(),
-					 *(unsigned *)(mwr + 1),
-					 *(unsigned *)args[2]);
-			break;
-		case 8:
-			replay_assert_eq(reason_other(),
-					 *(unsigned long *)(mwr + 1),
-					 *(unsigned long *)args[2]);
-			break;
-		case 16:
-			replay_assert_eq(reason_other(),
-					 ((unsigned long *)(mwr + 1))[0],
-					 ((unsigned long *)args[2])[0]);
-			replay_assert_eq(reason_other(),
-					 ((unsigned long *)(mwr + 1))[1],
-					 ((unsigned long *)args[2])[1]);
-			break;
-		default:
-			ASSUME(0);
-		}
-		return;
-	}
 	case EVENT_signal: {
 		const struct signal_record *sr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_signal);
@@ -1322,6 +1235,8 @@ replay_record(const struct record_header *rec,
 	switch (rec->cls) {
 	case RECORD_rdtsc:
 	case RECORD_client:
+	case RECORD_mem_read:
+	case RECORD_mem_write:
 		break;
 	case RECORD_syscall: {
 		const struct syscall_record *sr = payload;
@@ -1587,6 +1502,8 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		return;
 	case WORKER_SET_LOG_PTR:
 		logfile_seek(logfile, cmd->u.set_log_ptr.ptr, cmd->u.set_log_ptr.record);
+		history_append(WORKER_SET_LOG_PTR, cmd->u.set_log_ptr.ptr,
+			       cmd->u.set_log_ptr.record);
 		next_record();
 		send_okay();
 		return;

@@ -26,13 +26,15 @@ import Data.List
 import System.Posix.Signals
 import IO
 
+import qualified Debug.Trace
+
 import Types
 import Util
 import Socket
 import Logfile
 import Debug
+import Config
 
---import qualified Debug.Trace
 dt :: String -> a -> a
 dt = const id
 
@@ -600,7 +602,7 @@ validateHistoryWorker worker desired_hist =
                 case (Finite $ AccessNr $ toInteger acc) `compare` acc' of
                   LT -> validateHistory o o's
                   EQ -> validateHistory o o'
-                  GT -> dt ("history validation failed because worker was at " ++ (show acc) ++ " and we only wanted " ++ (show acc') ++ ", rest " ++ (show o')) False
+                  GT -> Debug.Trace.trace ("history validation failed because worker was at " ++ (show acc) ++ " and we only wanted " ++ (show acc') ++ ", rest " ++ (show o')) False
         validateHistory ((ResponseDataAncillary 19 [0x1244, tid, reg, val]):o)
                         ((HistorySetRegister tid' reg' val'):o')
             | (ThreadId $ toInteger tid) == tid' && (parseRegister reg) == reg' && val == val' = validateHistory o o'
@@ -616,8 +618,10 @@ validateHistoryWorker worker desired_hist =
         validateHistory ((ResponseDataAncillary 19 [0x1248, tid, tsc]):o)
                         ((HistorySetTsc (ThreadId tid') tsc'):o')
             | toInteger tid == tid' && tsc == tsc' = validateHistory o o'
-        validateHistory o ((HistoryAdvanceLog _):o') = validateHistory o o'
-        validateHistory o o' = dt ("history validation failed: " ++ (show o) ++ " vs " ++ (show o')) False
+        validateHistory ((ResponseDataAncillary 19 [0x124b, p, n]):o)
+                        ((HistoryAdvanceLog (LogfilePtr p' n')):o')
+            | p == (fromIntegral p') && n == (fromInteger n') = validateHistory o o'
+        validateHistory o o' = Debug.Trace.trace ("history validation failed: " ++ (show o) ++ " vs " ++ (show o')) False
     in do (ResponsePacket _ params) <- sendWorkerCommand worker getHistoryPacket
           let r = validateHistory params desired_hist
           when (not r) $ putStrLn $ "validation of " ++ (show desired_hist) ++ " against " ++ (show params) ++ " in " ++ (show worker) ++ " failed"
@@ -1283,6 +1287,16 @@ runThread logfile hist tid acc =
                                                                   Right (advanceLog newHist nextLogPtr, True)
                                                               (TraceCalled n, r) ->
                                                                   Left $ "called " ++ n ++ " event with record " ++ (show r)
+                                                              (TraceLoad val sz ptr _ _, LogAccess True val' sz' ptr') |
+                                                                  sz == sz' && ptr == ptr' && val == val' ->
+                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                              (TraceLoad _ _ _ _ _, _) | useMemoryRecords ->
+                                                                  Left $ "load event " ++ (show evt) ++ " against record " ++ (show logrecord)
+                                                              (TraceStore val sz ptr _ _, LogAccess False val' sz' ptr') |
+                                                                  sz == sz' && ptr == ptr' && val == val' ->
+                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                              (TraceStore _ _ _ _ _, _) | useMemoryRecords ->
+                                                                  Left $ "store event " ++ (show evt) ++ " against record " ++ (show logrecord)
                                                               _ -> Right (newHist, False)
                                                     in case res of
                                                          Left e -> Left e

@@ -42,8 +42,9 @@ data LogRecordBody = LogSyscall { ls_nr :: Word32,
                                  ls_err :: Word64,
                                  ls_va :: Word64 }
                    | LogAccess { ls_read :: Bool,
-                                 ls_ptr :: Word64,
-                                 ls_content :: [Word8] }
+                                 ls_val :: Word64,
+                                 ls_size :: Int,
+                                 ls_ptr :: Word64 }
                      deriving Show
 
 data LogRecord = LogRecord {lr_tid :: ThreadId,
@@ -100,9 +101,12 @@ getByte = ByteParser $ \contents -> case contents of
                                       [] -> []
                                       (x:xs) -> [(x, xs)]
 
+byteListToInteger :: [Word8] -> Integer
+byteListToInteger = foldr (\a b -> b * 256 + a) 0 . (map toInteger)
+
 byteParseInteger :: Int -> ByteParser Integer
 byteParseInteger nrBytes = do bytes <- byteParseByteList nrBytes
-                              return $ foldr (\a b -> b * 256 + a) 0 $ map toInteger bytes
+                              return $ byteListToInteger bytes
 
 byteParseUnsigned :: ByteParser Word32
 byteParseUnsigned = fmap fromInteger $ byteParseInteger 4
@@ -180,7 +184,10 @@ byteParseAccessRecord nrBytes is_read =
     then return Nothing
     else do ptr <- byteParseULong
             body <- byteParseByteList $ nrBytes - 8
-            return $ Just $ LogAccess { ls_read = is_read, ls_ptr = ptr, ls_content = body }
+            return $ Just $ LogAccess { ls_read = is_read,
+                                        ls_ptr = ptr,
+                                        ls_size = length body,
+                                        ls_val = fromInteger $ byteListToInteger body }
 
 byteParseTaggedUnion :: (Eq a, Show a) => a -> [(a, ByteParser b)] -> ByteParser b
 byteParseTaggedUnion key lkup =
