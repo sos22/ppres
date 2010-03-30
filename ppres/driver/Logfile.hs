@@ -16,6 +16,7 @@ import Control.Monad
 
 import Types
 import Util
+import Config
 
 newtype Logfile = Logfile Fd
 data LogfilePtr = LogfilePtr FileOffset Integer deriving (Show, Read, Eq)
@@ -39,7 +40,11 @@ data LogRecordBody = LogSyscall { ls_nr :: Word32,
                    | LogSignal { ls_rip :: Word64,
                                  ls_signo :: Word32,
                                  ls_err :: Word64,
-                                 ls_va :: Word64 } deriving Show
+                                 ls_va :: Word64 }
+                   | LogAccess { ls_read :: Bool,
+                                 ls_ptr :: Word64,
+                                 ls_content :: [Word8] }
+                     deriving Show
 
 data LogRecord = LogRecord {lr_tid :: ThreadId,
                             lr_body :: LogRecordBody} deriving Show
@@ -169,6 +174,14 @@ byteParseSysres = do code <- byteParseULong
                               then 0 - code
                               else code
                          
+byteParseAccessRecord :: Int -> Bool -> ByteParser (Maybe LogRecordBody)
+byteParseAccessRecord nrBytes is_read =
+    if not useMemoryRecords
+    then return Nothing
+    else do ptr <- byteParseULong
+            body <- byteParseByteList $ nrBytes - 8
+            return $ Just $ LogAccess { ls_read = is_read, ls_ptr = ptr, ls_content = body }
+
 byteParseTaggedUnion :: (Eq a, Show a) => a -> [(a, ByteParser b)] -> ByteParser b
 byteParseTaggedUnion key lkup =
     case lookup key lkup of
@@ -191,8 +204,8 @@ nextRecord' lf@(Logfile fd) (LogfilePtr offset record_nr) =
                                                                                  (2, fmap Just $ byteParseSyscallRecord),
                                                                                  (3, fmap Just $ byteParseMemoryRecord $ fromIntegral $ size - 12),
                                                                                  (4, fmap Just $ byteParseRdtscRecord),
-                                                                                 (5, return Nothing),
-                                                                                 (6, return Nothing),
+                                                                                 (5, byteParseAccessRecord (fromIntegral $ size - 12) True),
+                                                                                 (6, byteParseAccessRecord (fromIntegral $ size - 12) False),
                                                                                  (7, return Nothing),
                                                                                  (8, return Nothing),
                                                                                  (9, return Nothing),
