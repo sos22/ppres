@@ -574,6 +574,11 @@ signal_event(ThreadId tid, Int signal, Bool alt_stack,
 			     * with FPU control flags.  Put them
 			     * back. */
 
+	/* XXX This isn't, strictly speaking, valid (the signal might
+	   be caught and recovered from), but it's a reasonable
+	   approximation for the time being. */
+	current_thread->crashed = True;
+
 	VG_(in_generated_code) = True;
 	TRACE(SIGNAL, rip, signal, err, virtaddr);
 	event(EVENT_signal, rip, signal, err, virtaddr);
@@ -1032,31 +1037,8 @@ validate_event(const struct record_header *rec,
 	case EVENT_client_request:
 	case EVENT_load:
 	case EVENT_store:
+	case EVENT_signal:
 		return;
-	case EVENT_signal: {
-		const struct signal_record *sr = payload;
-		replay_assert_eq(reason_control(), rec->cls, RECORD_signal);
-		replay_assert_eq(reason_other(),
-				 args[0],
-				 sr->rip);
-		replay_assert_eq(reason_other(),
-				 args[1],
-				 sr->signo);
-		replay_assert_eq(reason_other(),
-				 args[3],
-				 sr->virtaddr);
-
-
-		/* XXX This isn't, strictly speaking, valid (the
-		   signal might be caught and recovered from), but
-		   it's a reasonable approximation for the time
-		   being. */
-		/* This is also the wrong place to do this from.  Oh
-		   well. */
-		current_thread->crashed = True;
-
-		return;
-	}
 	case EVENT_nothing:
 		VG_(tool_panic)((Char *)"validate event when no event present?");
 	}
@@ -1237,6 +1219,7 @@ replay_record(const struct record_header *rec,
 	case RECORD_client:
 	case RECORD_mem_read:
 	case RECORD_mem_write:
+	case RECORD_signal:
 		break;
 	case RECORD_syscall: {
 		const struct syscall_record *sr = payload;

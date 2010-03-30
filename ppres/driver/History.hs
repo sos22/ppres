@@ -1273,30 +1273,34 @@ runThread logfile hist tid acc =
                                                 Nothing ->
                                                     error "unexpected end of log when worker thought there was more?"
                                                 Just (logrecord, nextLogPtr) ->
-                                                    let res =
+                                                    let justAdvance = Right (advanceLog newHist nextLogPtr, True)
+                                                        res =
                                                             case (trc_trc evt, lr_body logrecord) of
                                                               (TraceRdtsc, LogRdtsc tsc) ->
                                                                   Right (advanceLog (setTsc newHist tid tsc) nextLogPtr, True)
                                                               (TraceRdtsc, r) ->
                                                                   Left $ "rdtsc event with record " ++ (show r)
-                                                              (TraceCalling _, LogClientCall) ->
-                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                              (TraceCalling _, LogClientCall) -> justAdvance
                                                               (TraceCalling n, r) ->
                                                                   Left $ "calling " ++ n ++ " event with record " ++ (show r)
-                                                              (TraceCalled _, LogClientReturn) ->
-                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                              (TraceCalled _, LogClientReturn) -> justAdvance
                                                               (TraceCalled n, r) ->
                                                                   Left $ "called " ++ n ++ " event with record " ++ (show r)
                                                               (TraceLoad val sz ptr _ _, LogAccess True val' sz' ptr') |
                                                                   sz == sz' && ptr == ptr' && val == val' ->
-                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                                  justAdvance
                                                               (TraceLoad _ _ _ _ _, _) | useMemoryRecords ->
                                                                   Left $ "load event " ++ (show evt) ++ " against record " ++ (show logrecord)
                                                               (TraceStore val sz ptr _ _, LogAccess False val' sz' ptr') |
                                                                   sz == sz' && ptr == ptr' && val == val' ->
-                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                                  justAdvance
                                                               (TraceStore _ _ _ _ _, _) | useMemoryRecords ->
                                                                   Left $ "store event " ++ (show evt) ++ " against record " ++ (show logrecord)
+                                                              (TraceSignal rip signr err va, LogSignal rip' signr' err' va') |
+                                                                  and [rip == rip', signr == (fromIntegral signr'), err == err', va == va'] ->
+                                                                  justAdvance
+                                                              (TraceSignal _ _ _ _, _) ->
+                                                                  Left $ "signal event " ++ (show evt) ++ " against record " ++ (show logrecord)
                                                               _ -> Right (newHist, False)
                                                     in case res of
                                                          Left e -> Left e
