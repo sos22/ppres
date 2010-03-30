@@ -218,8 +218,8 @@ initialWorldState fd =
                                             ("regs", mkUIFunction getRegisters),
                                             ("defootstep", mkUIFunction defootstep),
                                             ("replay_state", mkUIFunction replayState),
-                                            ("enum", mkUIFunction enumerateHistories),
-                                            ("findhist", mkUIFunction findSomeHistory),
+                                            ("enum", mkUIFunction $ enumerateHistories l),
+                                            ("findhist", mkUIFunction $ findSomeHistory l),
                                             ("pair", mkUIFunction2 ((,) :: UIValue -> UIValue -> (UIValue, UIValue))),
                                             ("ct2", mkUIFunction2 controlTraceTo),
                                             ("t2", mkUIFunction2 traceTo),
@@ -244,11 +244,11 @@ initialWorldState fd =
                                             ("e2cs", mkUIFunction exprToCriticalSections),
                                             ("cs2bp", mkUIFunction3 criticalSectionToBinpatch),
                                             ("mkenforcer", mkUIFunction3 mkEnforcer),
-                                            ("clsfutures", mkUIFunction classifyFutures),
-                                            ("autofix", mkUIFunction autoFix),
+                                            ("clsfutures", mkUIFunction $ classifyFutures l),
+                                            ("autofix", mkUIFunction $ autoFix l),
                                             ("tracetoevent", mkUIFunction3 traceToEvent),
                                             ("setreg", mkUIFunction4 setRegister),
-                                            ("fnh", mkUIFunction findNeighbouringHistories)
+                                            ("fnh", mkUIFunction $ findNeighbouringHistories l)
                                            ] }
 
 lookupVariable :: WorldState -> VariableName -> UIValue

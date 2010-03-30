@@ -12,6 +12,7 @@ import Util
 import Explore
 import Classifier
 import Reassembly
+import Logfile
 
 import Data.Word
 import Data.List
@@ -175,9 +176,9 @@ mkEnforcer hist bad_histories good_histories =
           g <- good_origins
           return $ loToBinpatch hist b g
 
-classifyFutures :: History -> ([History], [History])
-classifyFutures start =
-    let allFutures = enumerateHistories start
+classifyFutures :: Logfile -> History -> ([History], [History])
+classifyFutures logfile start =
+    let allFutures = enumerateHistories logfile start
         allFutureStates = zip allFutures $ map replayState allFutures
         interestingFutureStates = filter (isInteresting . snd) allFutureStates
                                   where isInteresting (ReplayStateOkay _) = False
@@ -200,13 +201,13 @@ classifyFutures start =
 
 {- Given a history which crashes, generate a binpatch which would make
    it not crash. -}
-autoFix :: History -> Either String String
-autoFix hist =
+autoFix :: Logfile -> History -> Either String String
+autoFix logfile hist =
     let baseThreshold = rs_access_nr $ replayState hist
         tryThreshold thresh =
             tlog ("tryThreshold " ++ (show thresh)) $ 
             let t = deError $ truncateHistory hist $ Finite thresh in
-            case classifyFutures t of
+            case classifyFutures logfile t of
               ([], _) ->
                   {- hist's truncation doesn't have any crashing
                      futures -> hist didn't crash -> we can't fix

@@ -32,9 +32,9 @@ import Socket
 import Logfile
 import Debug
 
---import qualified Debug.Trace
+import qualified Debug.Trace
 dt :: String -> a -> a
-dt = const id
+dt = Debug.Trace.trace
 
 data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistorySetRegister !ThreadId !RegisterName !Word64
@@ -188,8 +188,9 @@ traceTo' work tracer ((HistorySetMemoryProtection addr size prot):rest) =
 traceTo' work tracer ((HistorySetTsc tid tsc):rest) =
     do setTscWorker work tid tsc
        traceTo' work tracer rest
-traceTo' worker tracer ((HistoryAdvanceLog _):rest) =
-    traceTo' worker tracer rest
+traceTo' worker tracer ((HistoryAdvanceLog ptr):rest) =
+    do setLogPtrWorker worker ptr
+       traceTo' worker tracer rest
 
 {- Take a worker and a history representing its current state and run
    it forwards to some other history, logging control expressions as
@@ -613,8 +614,8 @@ validateHistoryWorker worker desired_hist =
                         ((HistorySetMemoryProtection addr' size' prot'):o')
             | addr == addr' && size == size' && prot == prot' = validateHistory o o'
         validateHistory ((ResponseDataAncillary 19 [0x1248, tid, tsc]):o)
-                        ((HistorySetTsc tid' tsc'):o')
-            | (ThreadId $ toInteger tid) == tid' && tsc == tsc' = validateHistory o o'
+                        ((HistorySetTsc (ThreadId tid') tsc'):o')
+            | toInteger tid == tid' && tsc == tsc' = validateHistory o o'
         validateHistory o ((HistoryAdvanceLog _):o') = validateHistory o o'
         validateHistory o o' = dt ("history validation failed: " ++ (show o) ++ " vs " ++ (show o')) False
     in do (ResponsePacket _ params) <- sendWorkerCommand worker getHistoryPacket
@@ -1246,15 +1247,36 @@ traceToEvent start tid limit =
                                do when needkill $ registerWorker finalHist worker
                                   return $ Right (trc, finalHist)
 
-runThread :: History -> ThreadId -> Topped AccessNr -> Either String History
-runThread hist tid acc =
-    do res <- appendHistory hist $ HistoryRun tid acc
-       return $ unsafePerformIO $ do (worker, needkill) <- getWorker False hist
-                                     mustBeThawed "runThread" worker
-                                     setThreadWorker worker tid
-                                     runWorker "runThread" worker acc
-                                     when needkill $ registerWorker res worker
-                                     return res
+runThreadToEventWorker :: Worker -> History -> ThreadId -> Topped AccessNr -> IO (TraceRecord, History, ReplayState)
+runThreadToEventWorker worker start tid limit =
+    do trc <- traceToEventWorker worker tid limit
+       rs <- replayStateWorker worker
+       let newHist = deError $ appendHistory start $ HistoryRun tid $ Finite $ rs_access_nr rs
+       return (last trc, newHist, rs)
+
+runThread :: Logfile -> History -> ThreadId -> Topped AccessNr -> Either String History
+runThread logfile hist tid acc =
+    unsafePerformIO $ do (worker, needkill) <- getWorker False hist
+                         mustBeThawed "runThread" worker
+                         (evt, newHist, rs) <- runThreadToEventWorker worker hist tid acc
+                         case rs of
+                           ReplayStateOkay acc' ->
+                               if Finite acc' < acc
+                               then case trc_trc evt of
+                                      TraceRdtsc ->
+                                          do lp <- getLogPtrWorker worker
+                                             case nextRecord logfile lp of
+                                               Nothing ->
+                                                   error "unexpected end of log when worker thought there was more?"
+                                               Just ((LogRecord _ (LogRdtsc t)), np) ->
+                                                   do when needkill $ registerWorker newHist worker
+                                                      return $ runThread logfile (advanceLog (setTsc newHist tid t) np) tid acc
+                                               r -> return $ Left $ "replay failed: wanted a rdtsc record, got "  ++ (show r)
+                                      _ -> error "worker stopped unexpectedly"
+                               else do when needkill $ registerWorker newHist worker
+                                       return $ Right newHist
+                           _ -> do when needkill $ registerWorker newHist worker
+                                   return $ Right newHist
 
 setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
 setRegister hist tid reg val =
@@ -1295,3 +1317,12 @@ setTsc hist tid tsc =
                             setTscWorker worker tid tsc
                             when needkill $ registerWorker res worker
                             return res
+
+advanceLog :: History -> LogfilePtr -> History
+advanceLog hist lp =
+    let res = deError $ appendHistory hist $ HistoryAdvanceLog lp
+    in unsafePerformIO $ do (worker, needkill) <- getWorker False hist
+                            setLogPtrWorker worker lp
+                            when needkill $ registerWorker res worker
+                            return res
+    

@@ -1026,7 +1026,7 @@ validate_event(const struct record_header *rec,
 		return;
 	}
 	case EVENT_rdtsc: {
-		replay_assert_eq(reason_control(), rec->cls, RECORD_rdtsc);
+		//replay_assert_eq(reason_control(), rec->cls, RECORD_rdtsc);
 		return;
 	}
 	case EVENT_load: {
@@ -1305,9 +1305,9 @@ replay_record(const struct record_header *rec,
 	const void *payload = rec + 1;
 	switch (rec->cls) {
 	case RECORD_rdtsc: {
-		const struct rdtsc_record *rr = payload;
-		current_thread->rdtsc_result = rr->stashed_tsc;
-		finish_this_record(logfile);
+		//const struct rdtsc_record *rr = payload;
+		//current_thread->rdtsc_result = rr->stashed_tsc;
+		//finish_this_record(logfile);
 		break;
 	}
 	case RECORD_syscall: {
@@ -1560,6 +1560,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		} else {
 			rt->rdtsc_result = cmd->u.set_tsc.tsc;
 			history_append(WORKER_SET_TSC,
+				       cmd->u.set_tsc.tid,
 				       cmd->u.set_tsc.tsc);
 			send_okay();
 		}

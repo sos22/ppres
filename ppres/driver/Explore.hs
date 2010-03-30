@@ -8,6 +8,7 @@ import History
 import Types
 import Timing
 import Util
+import Logfile
 
 import qualified Debug.Trace
 
@@ -21,8 +22,8 @@ live_threads hist =
 rescheduleOnEveryAccess :: Bool
 rescheduleOnEveryAccess = False
 
-findNeighbouringHistories :: History -> [History]
-findNeighbouringHistories start =
+findNeighbouringHistories :: Logfile -> History -> [History]
+findNeighbouringHistories logfile start =
     let threads = live_threads start
         nThread = nextThread start
         threads' = nThread:(filter ((/=) nThread) threads)
@@ -46,7 +47,7 @@ findNeighbouringHistories start =
                                          [] -> 1 + (rs_access_nr $ replayState nextEvent)
                                          (x:_) -> x + 1
              in dt ("run single-threaded to " ++ (show runToCoord) ++ " " ++ (show syscallLocs))
-                    [deError $ runThread start t runToCoord]
+                    [deError $ runThread logfile start t runToCoord]
 
          (ReplayStateOkay now, _) ->
 
@@ -142,7 +143,7 @@ findNeighbouringHistories start =
                  targets = real_targets (now + 1000)
                            -- [(t, ReplayCoord $ now + 1) | t <- threads']
              in
-               [deError $ runThread start tid $ Finite targ
+               [deError $ runThread logfile start tid $ Finite targ
                 | (tid, targ) <- targets]
 
 data ExploreState a = ExploreState { es_white :: [a],
@@ -185,12 +186,12 @@ exploreTo start advance prd =
                      else exploreState next_state
     in exploreState startState
 
-enumerateHistories :: History -> [History]
-enumerateHistories start = exhaustiveExplore start findNeighbouringHistories
+enumerateHistories :: Logfile -> History -> [History]
+enumerateHistories logfile start = exhaustiveExplore start (findNeighbouringHistories logfile)
 
-findSomeHistory :: History -> Maybe History
-findSomeHistory start =
-    exploreTo start findNeighbouringHistories succeeds
+findSomeHistory :: Logfile -> History -> Maybe History
+findSomeHistory logfile start =
+    exploreTo start (findNeighbouringHistories logfile) succeeds
     where succeeds x = case replayState x of
                          ReplayStateFinished _ -> True
                          _ -> False
