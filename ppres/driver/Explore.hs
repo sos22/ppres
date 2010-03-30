@@ -9,6 +9,7 @@ import Types
 import Timing
 import Util
 import Logfile
+import Config
 
 import qualified Debug.Trace
 
@@ -18,9 +19,6 @@ dt = Debug.Trace.trace
 live_threads :: History -> [ThreadId]
 live_threads hist =
     [a | (a, b) <- threadState hist, not (ts_dead b)]
-
-rescheduleOnEveryAccess :: Bool
-rescheduleOnEveryAccess = False
 
 findNeighbouringHistories :: Logfile -> History -> [History]
 findNeighbouringHistories logfile start =
