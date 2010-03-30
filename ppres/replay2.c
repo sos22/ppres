@@ -1189,6 +1189,11 @@ replay_syscall(const struct syscall_record *sr,
 	       struct record_consumer *logfile)
 {
 	VexGuestAMD64State *state = (VexGuestAMD64State *)event->args[4];
+	ThreadId tid;
+
+	/* Keep valgrind happy */
+	tid = VG_(running_tid);
+	VG_(running_tid) = current_thread->id;
 
 	switch (event->args[0]) {
 		/* Very easy syscalls: don't bother running them, and
@@ -1212,6 +1217,17 @@ replay_syscall(const struct syscall_record *sr,
 
 	case __NR_exit:
 		current_thread->dead = True;
+		finish_this_record(logfile);
+		break;
+
+	case __NR_write:
+		/* Hack: if the program was writing to stdout or
+		 * stderr, repeat the action here.  Otherwise, don't.
+		 * This makes it easier to tell whether the replay
+		 * actually worked. */
+		if (event->args[1] == 1 || event->args[1] == 2)
+			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
+		state->guest_RAX = sysres_to_eax(sr->syscall_res);
 		finish_this_record(logfile);
 		break;
 
@@ -1295,6 +1311,8 @@ replay_syscall(const struct syscall_record *sr,
 	}
 
 	process_memory_records(logfile);
+
+	VG_(running_tid) = tid;
 }
 
 /* This finishes the current record */
