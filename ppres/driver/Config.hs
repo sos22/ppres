@@ -1,7 +1,7 @@
 module Config(rescheduleOnEveryAccess, useMemoryRecords) where
 
 useMemoryRecords :: Bool
-useMemoryRecords = True
+useMemoryRecords = False
 
 rescheduleOnEveryAccess :: Bool
 rescheduleOnEveryAccess = useMemoryRecords
