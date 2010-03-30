@@ -1,5 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface, ScopedTypeVariables #-}
-module Logfile(Logfile, LogfilePtr, openLogfile, nextRecord,
+module Logfile(Logfile, LogfilePtr(..), openLogfile, nextRecord,
                LogRecord(..),LogRecordBody(..)) where
 
 import System.Posix.IO
@@ -18,13 +18,13 @@ import Types
 import Util
 
 newtype Logfile = Logfile Fd
-newtype LogfilePtr = LogfilePtr FileOffset deriving (Show, Read, Eq)
+data LogfilePtr = LogfilePtr FileOffset Integer deriving (Show, Read, Eq)
 
 instance Forcable COff where
     force = seq
 
 instance Forcable LogfilePtr where
-    force (LogfilePtr x) = force x
+    force (LogfilePtr x y) = force x . force y
 
 data LogRecordBody = LogSyscall { ls_nr :: Word32,
                                   ls_res :: Word64,
@@ -47,7 +47,7 @@ data LogRecord = LogRecord {lr_tid :: ThreadId,
 openLogfile :: FilePath -> IO (Logfile, LogfilePtr)
 openLogfile path =
     do h <- openFd path ReadOnly Nothing defaultFileFlags
-       return (Logfile h, LogfilePtr 0)
+       return (Logfile h, LogfilePtr 0 0)
 
 bufferToList :: Storable a => Ptr a -> Int -> IO [a]
 bufferToList _ 0 = return []
@@ -176,7 +176,7 @@ byteParseTaggedUnion key lkup =
       Just worker -> worker
 
 nextRecord' :: Logfile -> LogfilePtr -> IO (Maybe (LogRecord, LogfilePtr))
-nextRecord' lf@(Logfile fd) (LogfilePtr offset) =
+nextRecord' lf@(Logfile fd) (LogfilePtr offset record_nr) =
     do hdr' <- fdPReadBytes fd offset 12
        case hdr' of
          Nothing -> return Nothing
@@ -198,7 +198,7 @@ nextRecord' lf@(Logfile fd) (LogfilePtr offset) =
                                                                                  (9, return Nothing),
                                                                                  (10, fmap Just $ byteParseClientRecord),
                                                                                  (11, fmap Just $ byteParseSignalRecord)]) bodyBytes
-                             nextPtr = LogfilePtr $ offset + fromIntegral size
+                             nextPtr = LogfilePtr (offset + fromIntegral size) (record_nr + 1)
                          in case body of
                               Nothing -> nextRecord' lf nextPtr
                               Just b -> return $ Just (LogRecord { lr_tid = ThreadId $ toInteger tid,

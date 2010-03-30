@@ -45,6 +45,7 @@ extern void VG_(client_syscall)(ThreadId tid, UInt trc);
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
 static void run_to(struct record_consumer *logfile, replay_coord_t to, Bool stop_on_event);
+static void next_record(void);
 
 struct failure_reason {
 	unsigned reason;
@@ -398,6 +399,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_GET_THREAD:
 	case WORKER_GET_REGISTERS:
 	case WORKER_GET_HISTORY:
+	case WORKER_GET_LOG_PTR:
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
@@ -412,6 +414,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_GET_MEMORY:
 	case WORKER_SET_MEMORY:
 	case WORKER_SET_TSC:
+	case WORKER_SET_LOG_PTR:
 		tl_assert(ch.nr_args == 2);
 		break;
 	case WORKER_SET_REGISTER:
@@ -939,6 +942,15 @@ replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
 			break;
 		case WORKER_GET_HISTORY:
 			do_get_history_command();
+			break;
+		case WORKER_GET_LOG_PTR:
+			send_ancillary(ANCILLARY_LOG_PTR, logfile_tell(&logfile), logfile.record_nr);
+			send_okay();
+			break;
+		case WORKER_SET_LOG_PTR:
+			logfile_seek(&logfile, cmd.u.set_log_ptr.ptr, cmd.u.set_log_ptr.record);
+			next_record();
+			send_okay();
 			break;
 		default:
 			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
@@ -1555,7 +1567,17 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 	case WORKER_GET_HISTORY:
 		do_get_history_command();
 		return;
+	case WORKER_GET_LOG_PTR:
+		send_ancillary(ANCILLARY_LOG_PTR, logfile_tell(logfile), logfile->record_nr);
+		send_okay();
+		return;
+	case WORKER_SET_LOG_PTR:
+		logfile_seek(logfile, cmd->u.set_log_ptr.ptr, cmd->u.set_log_ptr.record);
+		next_record();
+		send_okay();
+		return;
 	}
+	VG_(printf)("Worker command %x\n", cmd->cmd);
 	VG_(tool_panic)((Char *)"Bad worker command");
 }
 

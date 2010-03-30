@@ -154,3 +154,13 @@ logfile_reset_file_ptr(struct record_consumer *lf)
 	VG_(lseek)(lf->fd, lf->offset_in_file, VKI_SEEK_SET);
 }
 
+void
+logfile_seek(struct record_consumer *lf, OffT off, unsigned record_nr)
+{
+	lf->avail_in_current_chunk = 0;
+	lf->offset_in_current_chunk = 0;
+	lf->record_nr = record_nr;
+	lf->offset_in_file = off;
+	lf->peek_chunk_size = 0;
+	logfile_reset_file_ptr(lf);
+}

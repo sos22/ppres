@@ -22,7 +22,9 @@ enum command_number {
 	WORKER_SET_MEMORY = 0x1246,
 	WORKER_SET_MEMORY_PROTECTION = 0x1247,
 	WORKER_SET_TSC = 0x1248,
-	WORKER_GET_HISTORY = 0x1249
+	WORKER_GET_HISTORY = 0x1249,
+	WORKER_GET_LOG_PTR = 0x124a,
+	WORKER_SET_LOG_PTR = 0x124b
 };
 
 struct command_header {
@@ -58,6 +60,7 @@ struct response_message {
 #define ANCILLARY_TRACE_SIGNAL 17
 #define ANCILLARY_WANTED_THREAD 18
 #define ANCILLARY_HISTORY_ENTRY 19
+#define ANCILLARY_LOG_PTR 20
 struct response_ancillary {
 	unsigned code;
 	unsigned nr_args;
@@ -293,6 +296,10 @@ struct control_command {
 			long tid;
 			unsigned long tsc;
 		} set_tsc;
+		struct {
+			unsigned long ptr;
+			unsigned long record;
+		} set_log_ptr;
 		unsigned long args[4];
 	} u;
 };

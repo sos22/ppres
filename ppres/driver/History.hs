@@ -100,7 +100,9 @@ doHistoryEntry w (HistorySetMemoryProtection addr size prot) =
 doHistoryEntry w (HistorySetTsc tid tsc) =
     do setTscWorker w tid tsc
        return 1
-doHistoryEntry _ (HistoryAdvanceLog _) = return 0
+doHistoryEntry w (HistoryAdvanceLog p) =
+    do setLogPtrWorker w p
+       return 0
 
 stripSharedPrefix' :: [HistoryEntry] -> [HistoryEntry] -> [HistoryEntry] -> ([HistoryEntry], [HistoryEntry], [HistoryEntry])
 stripSharedPrefix' x a [] = (reverse x, a, [])
@@ -286,6 +288,12 @@ setTscPacket (ThreadId tid) tsc = ControlPacket 0x1248 [fromInteger tid, tsc]
 
 getHistoryPacket :: ControlPacket
 getHistoryPacket = ControlPacket 0x1249 []
+
+getLogPtrPacket :: ControlPacket
+getLogPtrPacket = ControlPacket 0x124a []
+
+setLogPtrPacket :: LogfilePtr -> ControlPacket
+setLogPtrPacket (LogfilePtr p n) = ControlPacket 0x124b [fromIntegral p, fromInteger n]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -613,6 +621,14 @@ validateHistoryWorker worker desired_hist =
           let r = validateHistory params desired_hist
           when (not r) $ putStrLn $ "validation of " ++ (show desired_hist) ++ " against " ++ (show params) ++ " in " ++ (show worker) ++ " failed"
           return r
+
+getLogPtrWorker :: Worker -> IO LogfilePtr
+getLogPtrWorker w = do (ResponsePacket _ [ResponseDataAncillary 20 [p, n]]) <- sendWorkerCommand w getLogPtrPacket
+                       return $ LogfilePtr (fromIntegral p) (toInteger n)
+
+setLogPtrWorker :: Worker -> LogfilePtr -> IO ()
+setLogPtrWorker w p = do trivCommand w $ setLogPtrPacket p
+                         return ()
 
 {- The worker cache.  The cache is structured as an n-ary tree.  Each
    edge is labelled with a history entry.  Each node is labelled with
