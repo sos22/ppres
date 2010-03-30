@@ -788,17 +788,6 @@ reason_data(const struct expression *e1, const struct expression *e2)
 	return fr;
 }
 
-static struct failure_reason *
-reason_other(void)
-{
-	struct failure_reason *fr;
-	fr = VG_(malloc)("reason_other", sizeof(*fr));
-	VG_(memset)(fr, 0, sizeof(*fr));
-	fr->reason = REASON_OTHER;
-	fr->tid = current_thread->id;
-	return fr;
-}
-
 static void
 do_vg_intermediate_command(unsigned long addr)
 {
@@ -990,24 +979,6 @@ validate_event(const struct record_header *rec,
 
 	replay_assert_eq(reason_wrong_thread(rec->tid), rec->tid, current_thread->id);
 	switch (event->type) {
-	case EVENT_footstep: {
-		const struct footstep_record *fr = payload;
-		replay_assert_eq(reason_control(), rec->cls, RECORD_footstep);
-		replay_assert_eq(reason_control(), fr->rip, args[0]);
-#define CHECK_REG(i)							\
-		replay_assert_eq(					\
-				 reason_data(expr_imported(args[i+1]),	\
-					     expr_const(fr-> FOOTSTEP_REG_ ## i ## _NAME ) ), \
-				 fr-> FOOTSTEP_REG_ ## i ## _NAME,	\
-				 args[i+1])
-		CHECK_REG(0);
-		CHECK_REG(1);
-		CHECK_REG(2);
-		CHECK_REG(3);
-		CHECK_REG(4);
-#undef CHECK_REG
-		return;
-	}
 	case EVENT_syscall: {
 		const struct syscall_record *sr = payload;
 		replay_assert_eq(reason_control(), rec->cls, RECORD_syscall);
