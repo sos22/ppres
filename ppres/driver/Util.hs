@@ -21,3 +21,8 @@ pairM :: (Monad m) => m t -> m t1 -> m (t, t1)
 pairM a b = do a' <- a
                b' <- b
                return (a', b')
+
+deNothingList :: [Maybe a] -> [a]
+deNothingList [] = []
+deNothingList (Nothing:xs) = deNothingList xs
+deNothingList (Just x : xs) = x:(deNothingList xs)

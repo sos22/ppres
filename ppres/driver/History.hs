@@ -32,9 +32,9 @@ import Socket
 import Logfile
 import Debug
 
-import qualified Debug.Trace
+--import qualified Debug.Trace
 dt :: String -> a -> a
-dt = Debug.Trace.trace
+dt = const id
 
 data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistorySetRegister !ThreadId !RegisterName !Word64
@@ -1259,24 +1259,45 @@ runThread logfile hist tid acc =
     unsafePerformIO $ do (worker, needkill) <- getWorker False hist
                          mustBeThawed "runThread" worker
                          (evt, newHist, rs) <- runThreadToEventWorker worker hist tid acc
+                         when needkill $ registerWorker newHist worker
                          case rs of
                            ReplayStateOkay acc' ->
-                               if Finite acc' < acc
-                               then case trc_trc evt of
-                                      TraceRdtsc ->
-                                          do lp <- getLogPtrWorker worker
-                                             case nextRecord logfile lp of
-                                               Nothing ->
-                                                   error "unexpected end of log when worker thought there was more?"
-                                               Just ((LogRecord _ (LogRdtsc t)), np) ->
-                                                   do when needkill $ registerWorker newHist worker
-                                                      return $ runThread logfile (advanceLog (setTsc newHist tid t) np) tid acc
-                                               r -> return $ Left $ "replay failed: wanted a rdtsc record, got "  ++ (show r)
-                                      _ -> error "worker stopped unexpectedly"
-                               else do when needkill $ registerWorker newHist worker
-                                       return $ Right newHist
-                           _ -> do when needkill $ registerWorker newHist worker
-                                   return $ Right newHist
+                               if Finite acc' <= acc
+                               then do lp <- getLogPtrWorker worker
+                                       let fixedHist =
+                                              case nextRecord logfile lp of
+                                                Nothing ->
+                                                    error "unexpected end of log when worker thought there was more?"
+                                                Just (logrecord, nextLogPtr) ->
+                                                    let res =
+                                                            case (trc_trc evt, lr_body logrecord) of
+                                                              (TraceRdtsc, LogRdtsc tsc) ->
+                                                                  Right (advanceLog (setTsc newHist tid tsc) nextLogPtr, True)
+                                                              (TraceRdtsc, r) ->
+                                                                  Left $ "rdtsc event with record " ++ (show r)
+                                                              (TraceCalling _, LogClientCall) ->
+                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                              (TraceCalling n, r) ->
+                                                                  Left $ "calling " ++ n ++ " event with record " ++ (show r)
+                                                              (TraceCalled _, LogClientReturn) ->
+                                                                  Right (advanceLog newHist nextLogPtr, True)
+                                                              (TraceCalled n, r) ->
+                                                                  Left $ "called " ++ n ++ " event with record " ++ (show r)
+                                                              _ -> Right (newHist, False)
+                                                    in case res of
+                                                         Left e -> Left e
+                                                         Right (res', checkThread) ->
+                                                             if checkThread && trc_tid evt /= lr_tid logrecord
+                                                             then Left $ "wrong thread: wanted " ++ (show logrecord) ++ ", got " ++ (show evt)
+                                                             else Right res'
+                                       return $ case fixedHist of
+                                                  Left e -> Left e
+                                                  Right fh' ->
+                                                      if Finite acc' == acc
+                                                      then fixedHist
+                                                      else runThread logfile fh' tid acc
+                               else return $ Right newHist
+                           _ -> return $ Right newHist
 
 setRegister :: History -> ThreadId -> RegisterName -> Word64 -> History
 setRegister hist tid reg val =

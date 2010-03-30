@@ -556,6 +556,7 @@ rdtsc_event(void)
 		return (((ULong)edx) << 32) | ((ULong)eax);
 	} else {
 		TRACE(RDTSC);
+		VG_(printf)("rdtsc event in access number %ld\n", now.access_nr);
 		now.access_nr++;
 		event(EVENT_rdtsc);
 		check_fpu_control();
@@ -1025,10 +1026,9 @@ validate_event(const struct record_header *rec,
 				 sr->arg3, args[3]);
 		return;
 	}
-	case EVENT_rdtsc: {
-		//replay_assert_eq(reason_control(), rec->cls, RECORD_rdtsc);
+	case EVENT_rdtsc:
+	case EVENT_client_request:
 		return;
-	}
 	case EVENT_load: {
 		const struct mem_read_record *mrr = payload;
 		const void *mp = mrr + 1;
@@ -1118,12 +1118,6 @@ validate_event(const struct record_header *rec,
 		default:
 			ASSUME(0);
 		}
-		return;
-	}
-	case EVENT_client_request: {
-		const struct client_req_record *crr = payload;
-		replay_assert_eq(reason_control(), rec->cls, RECORD_client);
-		replay_assert_eq(reason_control(), args[0], crr->flavour);
 		return;
 	}
 	case EVENT_signal: {
@@ -1297,8 +1291,12 @@ replay_syscall(const struct syscall_record *sr,
 		/* Try to issue the syscall.  This gets caught in
 		   replay_clone_syscall() and turned into a coroutine
 		   create. */
-		if (!sr_isError(sr->syscall_res))
+		if (!sr_isError(sr->syscall_res)) {
+			VG_(printf)("Replaying clone syscall in %d:%ld\n",
+				    logfile->record_nr, now.access_nr);
+			VG_(running_tid) = tid;
 			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
+		}
 
 		state->guest_RAX = sysres_to_eax(sr->syscall_res);
 		finish_this_record(logfile);
@@ -1322,12 +1320,9 @@ replay_record(const struct record_header *rec,
 {
 	const void *payload = rec + 1;
 	switch (rec->cls) {
-	case RECORD_rdtsc: {
-		//const struct rdtsc_record *rr = payload;
-		//current_thread->rdtsc_result = rr->stashed_tsc;
-		//finish_this_record(logfile);
+	case RECORD_rdtsc:
+	case RECORD_client:
 		break;
-	}
 	case RECORD_syscall: {
 		const struct syscall_record *sr = payload;
 		replay_syscall(sr, event, logfile);

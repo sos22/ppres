@@ -46,8 +46,10 @@ findNeighbouringHistories logfile start =
                  runToCoord = Finite $ case syscallLocs of
                                          [] -> 1 + (rs_access_nr $ replayState nextEvent)
                                          (x:_) -> x + 1
-             in dt ("run single-threaded to " ++ (show runToCoord) ++ " " ++ (show syscallLocs))
-                    [deError $ runThread logfile start t runToCoord]
+             in dt ("run single-threaded to " ++ (show runToCoord) ++ " " ++ (show syscallLocs)) $
+                    case runThread logfile start t runToCoord of
+                      Right h -> [h]
+                      Left err -> dt ("run single-threaded gave error " ++ err) []
 
          (ReplayStateOkay now, _) ->
 
@@ -143,8 +145,10 @@ findNeighbouringHistories logfile start =
                  targets = real_targets (now + 1000)
                            -- [(t, ReplayCoord $ now + 1) | t <- threads']
              in
-               [deError $ runThread logfile start tid $ Finite targ
-                | (tid, targ) <- targets]
+               deNothingList [case runThread logfile start tid $ Finite targ of
+                                Left _ -> Nothing
+                                Right x -> Just x
+                              | (tid, targ) <- targets]
 
 data ExploreState a = ExploreState { es_white :: [a],
                                      es_grey :: [a] }
