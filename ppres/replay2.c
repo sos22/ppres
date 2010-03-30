@@ -56,9 +56,6 @@ struct failure_reason {
 };
 
 static Bool
-use_footsteps;
-
-static Bool
 use_memory;
 
 struct client_event_record *
@@ -510,11 +507,6 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
 	if (!current_thread->in_monitor) {
 		current_thread->last_rip = rip;
 		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
-		if (use_footsteps) {
-			now.access_nr++;
-			event(EVENT_footstep, rip, rdx, rcx, rax, xmm3a,
-			      xmm0a);
-		}
 	}
 	check_fpu_control();
 }
@@ -1243,8 +1235,7 @@ next_record(void)
 	while (rec->cls == RECORD_new_thread ||
 	       rec->cls == RECORD_thread_blocking ||
 	       rec->cls == RECORD_thread_unblocked ||
-	       (!use_footsteps &&
-		rec->cls == RECORD_footstep) ||
+	       rec->cls == RECORD_footstep ||
 	       (!use_memory &&
 		(rec->cls == RECORD_mem_read ||
 		 rec->cls == RECORD_mem_write))) {
@@ -1612,10 +1603,6 @@ fini(Int ignore)
 static Bool
 process_cmd_line(Char *argv)
 {
-	if (!VG_(strcmp)(argv, (Char *)"--use-footsteps")) {
-		use_footsteps = True;
-		return True;
-	}
 	if (!VG_(strcmp)(argv, (Char *)"--use-memory")) {
 		use_memory = True;
 		return True;
