@@ -270,10 +270,11 @@ log_cas_stmt(IRSB *sb, IRCAS *details)
 	}
 #undef HLP
 
-	args = mkIRExprVec_4(log_reads_expr(sb, details->addr),
+	args = mkIRExprVec_5(log_reads_expr(sb, details->addr),
 			     log_reads_expr(sb, cast_expdLo),
 			     log_reads_expr(sb, cast_dataLo),
-			     IRExpr_Get(OFFSET_amd64_RSP, Ity_I64));
+			     IRExpr_Get(OFFSET_amd64_RSP, Ity_I64),
+			     IRExpr_Get(OFFSET_amd64_RIP, Ity_I64));
 	f = unsafeIRDirty_1_N(details->oldLo,
 			      0,
 			      helper_name,
