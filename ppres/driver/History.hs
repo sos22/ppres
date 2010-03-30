@@ -25,6 +25,8 @@ import Network.Socket
 import Data.List
 import System.Posix.Signals
 import IO
+import Numeric
+import Data.Bits
 
 import qualified Debug.Trace
 
@@ -297,6 +299,9 @@ getLogPtrPacket = ControlPacket 0x124a []
 
 setLogPtrPacket :: LogfilePtr -> ControlPacket
 setLogPtrPacket (LogfilePtr p n) = ControlPacket 0x124b [fromIntegral p, fromInteger n]
+
+runSyscallPacket :: ThreadId -> ControlPacket
+runSyscallPacket (ThreadId tid) = ControlPacket 0x124c [fromInteger tid]
 
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
@@ -1258,6 +1263,11 @@ runThreadToEventWorker worker start tid limit =
        let newHist = deError $ appendHistory start $ HistoryRun tid $ Finite $ rs_access_nr rs
        return (last trc, newHist, rs)
 
+runSyscallWorker :: Worker -> ThreadId -> IO ()
+runSyscallWorker worker tid =
+    do trivCommand worker $ runSyscallPacket tid
+       return ()
+
 runThread :: Logfile -> History -> ThreadId -> Topped AccessNr -> Either String History
 runThread logfile hist tid acc =
     unsafePerformIO $ do (worker, needkill) <- getWorker False hist
@@ -1276,6 +1286,59 @@ runThread logfile hist tid acc =
                                                     let success = return . Right
                                                         justAdvance = success (advanceLog newHist nextLogPtr, True)
                                                         failed = return . Left
+                                                        
+                                                        {- Go and process all the populate memory records which come
+                                                           after logptr. -}
+
+                                                        processPopMemRecords pphist logptr =
+                                                            case nextRecord logfile logptr of
+                                                              Just (LogRecord _ (LogMemory ptr contents), nlp) ->
+                                                                  processPopMemRecords (setMemory pphist ptr contents) nlp
+                                                              _ -> (pphist, logptr)
+
+                                                        {- syscalls which we handle by just re-running them -}
+                                                        replaySyscall (LogSyscall sysnr sysres _ _ _)
+                                                            | sysnr `elem` [10, 11, 12, 13, 14, 158, 273] =
+                                                               do runSyscallWorker worker $ trc_tid evt
+                                                                  regs <- getRegistersWorker worker
+                                                                  assert "deterministic syscall return value" (getRegister' regs REG_RAX == sysres) $
+                                                                    justAdvance
+
+                                                        {- syscalls which we handle by just imposing the return value -}
+                                                        replaySyscall (LogSyscall sysnr sysres _ _ _)
+                                                            | sysnr `elem` [0, 2, 3, 4, 5, 21, 63, 79, 97, 102, 202] =
+                                                                success (advanceLog (setRegister newHist (trc_tid evt) REG_RAX sysres) nextLogPtr, True)
+
+                                                        {- mmap -}
+                                                        replaySyscall (LogSyscall 9 sysres _ len prot) =
+                                                            let (doneMmapHist, finalLogPtr) =
+                                                                    if sysres > 0xffffffffffff8000
+                                                                    then {- syscall failed -> just replay the failure -}
+                                                                        (newHist, nextLogPtr)
+                                                                    else {- syscall succeeded -> have to replay it properly -}
+                                                                        let addr = sysres
+                                                                            allocMem = allocateMemory newHist addr len (prot .|. 2) {- Turn on write access -}
+                                                                            (populateMem, ptrAfterPopulateMem) =
+                                                                                processPopMemRecords allocMem nextLogPtr
+                                                                            resetProt =
+                                                                                if prot .&. 2 == 0
+                                                                                then populateMem
+                                                                                else setMemoryProtection populateMem addr len prot
+                                                                        in (resetProt, ptrAfterPopulateMem)
+                                                            in success (advanceLog (setRegister doneMmapHist (trc_tid evt) REG_RAX sysres) finalLogPtr, True)
+
+                                                        replaySyscall (LogSyscall sysnr _ _ _ _) =
+                                                            error $ "don't know how to replay syscall " ++ (show sysnr)
+
+                                                        replaySyscall _ = error "replaySyscall called on non-syscall?"
+
+                                                        replaySyscall' x =
+                                                            do r <- replaySyscall x
+                                                               return $ case r of
+                                                                          Left e -> Left e
+                                                                          Right (h, checkTid) ->
+                                                                              let (h', np) = processPopMemRecords h nextLogPtr
+                                                                              in Right (advanceLog h' np, checkTid)
                                                         res =
                                                             case (trc_trc evt, lr_body logrecord) of
                                                               (TraceRdtsc, LogRdtsc tsc) ->
@@ -1303,7 +1366,23 @@ runThread logfile hist tid acc =
                                                                   justAdvance
                                                               (TraceSignal _ _ _ _, _) ->
                                                                   failed $ "signal event " ++ (show evt) ++ " against record " ++ (show logrecord)
-                                                              _ -> success (newHist, False)
+                                                              (TraceSyscall sysnr, LogSyscall sysnr' _ arg1 arg2 arg3) ->
+                                                                  Debug.Trace.trace ("validate syscall " ++ (show evt)) $
+                                                                  do regs <- getRegistersWorker worker
+                                                                     let rdi = getRegister' regs REG_RDI
+                                                                         rsi = getRegister' regs REG_RSI
+                                                                         rdx = getRegister' regs REG_RDX
+                                                                     if rdi == arg1 && rsi == arg2 && rdx == arg3 && sysnr == (fromIntegral sysnr')
+                                                                      then replaySyscall' $ lr_body logrecord
+                                                                      else failed $ "syscall record " ++ (show logrecord) ++ " against trace event " ++ (show evt) ++ " " ++
+                                                                                    (showHex rdi $ " " ++ (showHex rsi $ " " ++ (showHex rdx "")))
+                                                              (TraceSyscall _, _) ->
+                                                                  failed $ "syscall event " ++ (show evt) ++ " against record " ++ (show logrecord)
+                                                              (TraceEnterMonitor, _) -> success (newHist, False)
+                                                              (TraceExitMonitor, _) -> success (newHist, False)
+                                                              (TraceFootstep _ _ _ _, _) -> success (newHist, False)
+                                                              (TraceLoad _ _ _ _ _, _) -> success (newHist, False)
+                                                              (TraceStore _ _ _ _ _, _) -> success (newHist, False)
                                                     in do r <- res
                                                           case r of
                                                             Left e -> failed e

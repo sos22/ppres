@@ -1,4 +1,7 @@
 #include "coroutines.h"
+#include "pub_tool_vki.h"
+#include "../coregrind/pub_core_basics.h"
+#include "../coregrind/pub_core_threadstate.h"
 
 enum command_number {
 	WORKER_SNAPSHOT = 0x1234,
@@ -24,7 +27,8 @@ enum command_number {
 	WORKER_SET_TSC = 0x1248,
 	WORKER_GET_HISTORY = 0x1249,
 	WORKER_GET_LOG_PTR = 0x124a,
-	WORKER_SET_LOG_PTR = 0x124b
+	WORKER_SET_LOG_PTR = 0x124b,
+	WORKER_RUN_SYSCALL = 0x124c
 };
 
 struct command_header {
@@ -300,12 +304,14 @@ struct control_command {
 			unsigned long ptr;
 			unsigned long record;
 		} set_log_ptr;
+		struct {
+			unsigned long tid;
+		} run_syscall;
 		unsigned long args[4];
 	} u;
 };
 
 enum event_type { EVENT_nothing = 0xf001,
-		  EVENT_footstep,
 		  EVENT_syscall,
 		  EVENT_rdtsc,
 		  EVENT_load,
@@ -400,6 +406,11 @@ void ref_expression_result(struct interpret_state *is,
 			   const struct expression_result *er);
 void deref_expression_result(struct interpret_state *is,
 			     const struct expression_result *er);
+
+void commit_is_to_vex_state(struct interpret_state *is,
+			    VexGuestArchState *state);
+void initialise_is_for_vex_state(struct interpret_state *is,
+				 const VexGuestAMD64State *state);
 
 void _send_ancillary(unsigned code, unsigned nr_args, const unsigned long *args);
 #define send_ancillary(_code, ...)                         \

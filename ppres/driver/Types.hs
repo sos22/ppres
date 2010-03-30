@@ -136,6 +136,9 @@ getRegister (RegisterFile rf) rn = case lookup rn rf of
                                      Nothing -> Left $ "huh? register file didn't have " ++ (show rn)
                                      Just x -> Right x
 
+getRegister' :: RegisterFile -> RegisterName -> Word64
+getRegister' rf rn = deError $ getRegister rf rn
+
 data Binop = BinopCombine
            | BinopSub
            | BinopAdd

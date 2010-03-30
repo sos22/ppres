@@ -291,15 +291,6 @@ void deactivate_bad_coroutine(struct coroutine *src, struct coroutine *dest)
 	VG_(tool_panic)((Char *)"Coroutine error");
 }
 
-static ULong
-sysres_to_eax(SysRes sr)
-{
-	if (sr_isError(sr))
-		return -sr_Err(sr);
-	else
-		return sr_Res(sr);
-}
-
 static void
 send_okay(void)
 {
@@ -405,6 +396,7 @@ get_control_command(struct control_command *cmd)
 	case WORKER_CONTROL_TRACE:
 	case WORKER_VG_INTERMEDIATE:
 	case WORKER_SET_THREAD:
+	case WORKER_RUN_SYSCALL:
 		tl_assert(ch.nr_args == 1);
 		break;
 	case WORKER_TRACE_ADDRESS:
@@ -730,64 +722,6 @@ do_get_registers_command(void)
 	send_okay();
 }
 
-static char *
-my_vasprintf(const char *fmt, va_list args)
-{
-	char *buffer;
-	unsigned buffer_size;
-	va_list a;
-	UInt res;
-
-	buffer_size = 128;
-	while (1) {
-		buffer = VG_(malloc)("vasprintf", buffer_size);
-		va_copy(a, args);
-		res = VG_(vsnprintf)((Char *)buffer, buffer_size, fmt,
-				     a);
-		va_end(a);
-		if (res < buffer_size && res != 0)
-			return buffer;
-		VG_(free)(buffer);
-		buffer_size *= 2;
-	}
-}
-
-static struct failure_reason *
-reason_control(void)
-{
-	struct failure_reason *fr;
-	fr = VG_(malloc)("reason_control", sizeof(*fr));
-	VG_(memset)(fr, 0, sizeof(*fr));
-	fr->reason = REASON_CONTROL;
-	fr->tid = current_thread->id;
-	return fr;
-}
-
-static struct failure_reason *
-reason_wrong_thread(ThreadId wanted)
-{
-	struct failure_reason *fr;
-	fr = VG_(malloc)("reason_control", sizeof(*fr));
-	VG_(memset)(fr, 0, sizeof(*fr));
-	fr->reason = REASON_WRONG_THREAD;
-	fr->tid = current_thread->id;
-	fr->wanted_tid = wanted;
-	return fr;
-}
-
-static struct failure_reason *
-reason_data(const struct expression *e1, const struct expression *e2)
-{
-	struct failure_reason *fr;
-	fr = VG_(malloc)("reason_data", sizeof(*fr));
-	VG_(memset)(fr, 0, sizeof(*fr));
-	fr->reason = REASON_DATA;
-	fr->arg1 = e1;
-	fr->arg2 = e2;
-	fr->tid = current_thread->id;
-	return fr;
-}
-
 static void
 do_vg_intermediate_command(unsigned long addr)
 {
@@ -856,185 +790,9 @@ do {							        \
 			sizeof(params)/sizeof(params[0]));	\
 } while (0)
 
-static void
-replay_failed(struct failure_reason *failure_reason, const char *fmt, ...)
-{
-	va_list args;
-	struct control_command cmd;
-	char *msg;
-	struct replay_thread *rt;
-
-	history_append(WORKER_RUN, current_thread->id, now.access_nr);
-	history_append(0);
-
-	va_start(args, fmt);
-	msg = my_vasprintf(fmt, args);
-	va_end(args);
-
-	VG_(printf)("FAILED %d %s\n", current_thread->id, msg);
-
-	send_error();
-	while (1) {
-		get_control_command(&cmd);
-		switch (cmd.cmd) {
-		case WORKER_SNAPSHOT:
-			control_process_socket = do_snapshot(control_process_socket);
-			break;
-		case WORKER_KILL:
-			send_okay();
-			my__exit(0);
-		case WORKER_TRACE:
-			trace_mode = True;
-			run_to(&logfile, cmd.u.trace.when, False);
-			trace_mode = False;
-			send_okay();
-			break;
-		case WORKER_THREAD_STATE:
-			do_thread_state_command();
-			break;
-		case WORKER_REPLAY_STATE:
-			send_ancillary(ANCILLARY_REPLAY_FAILED, failure_reason->reason, failure_reason->tid,
-				       now.access_nr);
-			send_string(msg);
-			if (failure_reason->reason == REASON_WRONG_THREAD)
-				send_ancillary(ANCILLARY_WANTED_THREAD, failure_reason->wanted_tid);
-			if (failure_reason->arg1)
-				send_expression(failure_reason->arg1);
-			if (failure_reason->arg2)
-				send_expression(failure_reason->arg2);
-			send_okay();
-			break;
-		case WORKER_GET_MEMORY:
-			send_bytes(cmd.u.get_memory.size, (const void *)cmd.u.get_memory.addr);
-			break;
-		case WORKER_VG_INTERMEDIATE:
-			do_vg_intermediate_command(cmd.u.vg_intermediate.addr);
-			break;
-		case WORKER_GET_THREAD:
-			send_ancillary(ANCILLARY_NEXT_THREAD, current_thread->id);
-			send_okay();
-			break;
-		case WORKER_SET_THREAD:
-			rt = get_thread_by_id(cmd.u.set_thread.tid);
-			if (!rt) {
-				VG_(printf)("Cannot find thread %ld\n", cmd.u.set_thread.tid);
-				send_error();
-			} else {
-				current_thread = rt;
-				send_okay();
-			}
-			break;
-		case WORKER_GET_REGISTERS:
-			do_get_registers_command();
-			break;
-		case WORKER_GET_HISTORY:
-			do_get_history_command();
-			break;
-		case WORKER_GET_LOG_PTR:
-			send_ancillary(ANCILLARY_LOG_PTR, logfile_tell(&logfile), logfile.record_nr);
-			send_okay();
-			break;
-		case WORKER_SET_LOG_PTR:
-			logfile_seek(&logfile, cmd.u.set_log_ptr.ptr, cmd.u.set_log_ptr.record);
-			history_append(WORKER_SET_LOG_PTR, cmd.u.set_log_ptr.ptr,
-				       cmd.u.set_log_ptr.record);
-			next_record();
-			send_okay();
-			break;
-		default:
-			VG_(printf)("Only the kill, trace thread, and snapshot commands are valid after replay fails (got %x)\n",
-				cmd.cmd);
-			send_error();
-			break;
-		}
-	}
-}
-
-#define STR2(x) #x
-#define STR(x) STR2(x)
-
-#define replay_assert_eq(reason, a, b)					\
-	do {								\
-		if ((a) != (b)) {					\
-			replay_failed(reason,				\
-				      "%ld:%ld Replay failed at %d: %s(%lx) != %s(%lx)", \
-				      record_nr,			\
-				      now.access_nr,			\
-				      __LINE__,				\
-				      STR(a),				\
-				      (unsigned long)(a),		\
-				      STR(b),				\
-				      (unsigned long)(b));		\
-		}							\
-	} while (0)
-
-
-static void
-validate_event(const struct record_header *rec,
-	       const struct client_event_record *event,
-	       unsigned long record_nr)
-{
-	const void *payload = rec + 1;
-	const unsigned long *args = event->args;
-
-	replay_assert_eq(reason_wrong_thread(rec->tid), rec->tid, current_thread->id);
-	switch (event->type) {
-	case EVENT_syscall: {
-		const struct syscall_record *sr = payload;
-		replay_assert_eq(reason_control(), rec->cls, RECORD_syscall);
-		replay_assert_eq(reason_data(expr_reg(REG_RAX, args[0]),
-					     expr_const(sr->syscall_nr)),
-				 sr->syscall_nr, args[0]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDI, args[1]),
-					     expr_const(sr->arg1)),
-				 sr->arg1, args[1]);
-		replay_assert_eq(reason_data(expr_reg(REG_RSI, args[2]),
-					     expr_const(sr->arg2)),
-				 sr->arg2, args[2]);
-		replay_assert_eq(reason_data(expr_reg(REG_RDX, args[3]),
-					     expr_const(sr->arg3)),
-				 sr->arg3, args[3]);
-		return;
-	}
-	case EVENT_rdtsc:
-	case EVENT_client_request:
-	case EVENT_load:
-	case EVENT_store:
-	case EVENT_signal:
-		return;
-	case EVENT_nothing:
-		VG_(tool_panic)((Char *)"validate event when no event present?");
-	}
-	VG_(tool_panic)((Char *)"bad event type");
-}
-
-static void
-replay_memory_record(struct record_header *rh,
-		     struct memory_record *mr)
-{
-	if (!safe_memcpy(mr->ptr,
-			 mr + 1,
-			 rh->size - sizeof(*rh) - sizeof(*mr))) {
-		VG_(printf)("Signal trying to replay memory at %p -> thread failed\n",
-			    mr->ptr);
-		my__exit(1);
-	}
-}
-
-static void
-process_memory_records(struct record_consumer *logfile)
-{
-	struct record_header *rh;
-
-	rh = get_current_record(logfile);
-	while (rh && rh->cls == RECORD_memory) {
-		replay_memory_record(rh, (struct memory_record *)(rh + 1));
-		finish_this_record(logfile);
-		rh = get_current_record(logfile);
-	}
-}
-
-/* This finishes the current record */
+#if 0
+/* This is the bit of syscall replay which we haven't replicated into
+   the driver yet. */
 static void
 replay_syscall(const struct syscall_record *sr,
 	       struct client_event_record *event,
@@ -1048,25 +806,6 @@ replay_syscall(const struct syscall_record *sr,
 	VG_(running_tid) = current_thread->id;
 
 	switch (event->args[0]) {
-		/* Very easy syscalls: don't bother running them, and
-		   just drop in the recorded return value. */
-	case __NR_access:
-	case __NR_close:
-	case __NR_fstat:
-	case __NR_getcwd:
-	case __NR_getuid:
-	case __NR_open:
-	case __NR_read:
-	case __NR_stat:
-	case __NR_uname:
-	case __NR_getrlimit:
-
-	case __NR_futex: /* XXX not even slightly right */
-
-		state->guest_RAX = sysres_to_eax(sr->syscall_res);
-		finish_this_record(logfile);
-		break;
-
 	case __NR_exit:
 		current_thread->dead = True;
 		finish_this_record(logfile);
@@ -1083,20 +822,6 @@ replay_syscall(const struct syscall_record *sr,
 		finish_this_record(logfile);
 		break;
 
-		/* Moderately easy syscalls: run them and assert that
-		   the result is the same. */
-	case __NR_arch_prctl:
-	case __NR_brk:
-	case __NR_mprotect:
-	case __NR_munmap:
-	case __NR_rt_sigaction:
-	case __NR_rt_sigprocmask:
-	case __NR_set_robust_list:
-		VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
-		tl_assert(sysres_to_eax(sr->syscall_res) == state->guest_RAX);
-		finish_this_record(logfile);
-		break;
-
 	case __NR_set_tid_address:
 		if (!sr_isError(sr->syscall_res))
 			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
@@ -1107,33 +832,6 @@ replay_syscall(const struct syscall_record *sr,
 	case __NR_exit_group:
 		finish_this_record(logfile);
 		break;
-
-	case __NR_mmap: {
-		Addr addr;
-		ULong length;
-		SysRes map_res;
-		Word prot;
-
-		if (sr_isError(sr->syscall_res)) {
-			state->guest_RAX = sysres_to_eax(sr->syscall_res);
-			break;
-		}
-		addr = sr_Res(sr->syscall_res);
-		length = event->args[2];
-		prot = event->args[3];
-		map_res = VG_(am_mmap_anon_fixed_client)(addr,
-							 length,
-							 prot | VKI_PROT_WRITE);
-		tl_assert(!sr_isError(map_res));
-
-		finish_this_record(logfile);
-
-		process_memory_records(logfile);
-		if (!(prot & VKI_PROT_WRITE))
-			my_mprotect((void *)addr, length, prot);
-		state->guest_RAX = addr;
-		break;
-	}
 
 	case __NR_clone:
 		/* Because of the way we turn syscall exits into calls
@@ -1170,30 +868,7 @@ replay_syscall(const struct syscall_record *sr,
 
 	VG_(running_tid) = tid;
 }
-
-/* This finishes the current record */
-static void
-replay_record(const struct record_header *rec,
-	      struct client_event_record *event, struct record_consumer *logfile)
-{
-	const void *payload = rec + 1;
-	switch (rec->cls) {
-	case RECORD_rdtsc:
-	case RECORD_client:
-	case RECORD_mem_read:
-	case RECORD_mem_write:
-	case RECORD_signal:
-		break;
-	case RECORD_syscall: {
-		const struct syscall_record *sr = payload;
-		replay_syscall(sr, event, logfile);
-		break;
-	}
-	default:
-		finish_this_record(logfile);
-		break;
-	}
-}
+#endif
 
 static void
 next_record(void)
@@ -1229,16 +904,9 @@ replay_coord_lt(replay_coord_t l, replay_coord_t r)
 static void
 run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 {
-	const struct record_header *rec;
 	struct client_event_record thread_event;
 
 	while (replay_coord_lt(now, when)) {
-		rec = get_current_record(logfile);
-		if (!rec)
-			break;
-
-		tl_assert(rec->cls != RECORD_memory);
-
 		while (1) {
 			run_thread(&thread_event);
 			if ((thread_event.type != EVENT_load &&
@@ -1252,10 +920,6 @@ run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 				return;
 			}
 		}
-
-		validate_event(rec, &thread_event, logfile->record_nr);
-
-		replay_record(rec, &thread_event, logfile); /* Finishes the record */
 
 		current_thread->last_run = now;
 
@@ -1406,11 +1070,11 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 					      recved_this_time);
 		}
 		if (worked) {
-			send_okay();
-		} else {
 			history_append(WORKER_SET_MEMORY,
 				       cmd->u.set_memory.addr,
 				       cmd->u.set_memory.size);
+			send_okay();
+		} else {
 			send_error();
 		}
 		return;
@@ -1418,6 +1082,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 	case WORKER_SET_MEMORY_PROTECTION:
 		history_append(WORKER_SET_MEMORY_PROTECTION,
 			       cmd->u.set_memory_protection.addr,
+			       cmd->u.set_memory_protection.size,
 			       cmd->u.set_memory_protection.prot);
 		my_mprotect((void *)cmd->u.set_memory_protection.addr,
 			    cmd->u.set_memory_protection.size,
@@ -1451,6 +1116,28 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			       cmd->u.set_log_ptr.record);
 		next_record();
 		send_okay();
+		return;
+	case WORKER_RUN_SYSCALL:
+		rt = get_thread_by_id(cmd->u.run_syscall.tid);
+		if (!rt) {
+			VG_(printf)("Cannot find thread %ld\n", cmd->u.run_syscall.tid);
+			send_error();
+		} else {
+			ThreadId tid;
+			tid = VG_(running_tid);
+			VG_(running_tid) = rt->id;
+			if (rt->interpret_state.live) {
+				commit_is_to_vex_state(&rt->interpret_state,
+						       &VG_(get_ThreadState)(rt->id)->arch.vex);
+				VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
+				initialise_is_for_vex_state(&rt->interpret_state,
+							    &VG_(get_ThreadState)(rt->id)->arch.vex);
+			} else {
+				VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
+			}
+			VG_(running_tid) = tid;
+			send_okay();
+		}
 		return;
 	}
 	VG_(printf)("Worker command %x\n", cmd->cmd);

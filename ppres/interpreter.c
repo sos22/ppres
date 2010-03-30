@@ -43,7 +43,7 @@ init_register(struct abstract_interpret_value *aiv,
 	aiv->origin = expr_reg(name, value);
 }
 
-static void
+void
 initialise_is_for_vex_state(struct interpret_state *is,
 			    const VexGuestAMD64State *state)
 {
@@ -61,7 +61,7 @@ commit_register(struct abstract_interpret_value *aiv)
 	return aiv->v;
 }
 
-static void
+void
 commit_is_to_vex_state(struct interpret_state *is,
 		       VexGuestArchState *state)
 {
