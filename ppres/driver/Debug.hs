@@ -18,16 +18,22 @@ globalLog =
     unsafePerformIO $ newIORef (take nrLogBuffers $ repeat $ LogBuffer { lb_strings = [], lb_nr_strings = 0 },
                                 0)
 
+{- You need to be quite careful about stack and heap usage here,
+   because the log can build up for several hours and then got forced
+   in one big go, which can lead to memory leaks and stack overflows.
+   The seqs fix it. -}
 ioLogMsg :: String -> IO ()
 ioLogMsg msg =
     do (b@(buffer:buffers), ident) <- readIORef globalLog
-       writeIORef globalLog
-        (if lb_nr_strings buffer < nrStringsPerBuffer
-         then ((LogBuffer { lb_strings = (ident, msg):(lb_strings buffer),
-                            lb_nr_strings = 1 + (lb_nr_strings buffer)}):buffers)
-         else ((LogBuffer { lb_strings = [(ident, msg)],
-                            lb_nr_strings = 1 }):(take (nrLogBuffers - 1) b)),
-         ident + 1)
+       writeIORef globalLog $ let nextId = ident + 1
+                                  x = seq nextId (if lb_nr_strings buffer < nrStringsPerBuffer
+                                                  then let s = (ident, msg):(lb_strings buffer)
+                                                       in seq s ((LogBuffer { lb_strings = s,
+                                                                              lb_nr_strings = 1 + (lb_nr_strings buffer)}):buffers)
+                                                  else ((LogBuffer { lb_strings = [(ident, msg)],
+                                                                     lb_nr_strings = 1 }):(take (nrLogBuffers - 1) b)),
+                                                  nextId)
+                              in x
 
 logMsg :: String -> a -> a
 logMsg msg val =
