@@ -1017,12 +1017,9 @@ runThread logfile hist tid acc =
                                                               _ -> (pphist, logptr)
 
                                                         {- syscalls which we handle by just re-running them -}
-                                                        replaySyscall (LogSyscall sysnr sysres _ _ _)
+                                                        replaySyscall (LogSyscall sysnr _ _ _ _)
                                                             | sysnr `elem` [10, 11, 12, 13, 14, 158, 273] =
-                                                               do runSyscallWorker worker $ trc_tid evt
-                                                                  regs <- getRegistersWorker worker
-                                                                  assert "deterministic syscall return value" (getRegister' regs REG_RAX == sysres) $
-                                                                    success (advanceLog (runSyscall newHist $ trc_tid evt) nextLogPtr, True)
+                                                                success (advanceLog (runSyscall newHist $ trc_tid evt) nextLogPtr, True)
 
                                                         {- syscalls which we handle by just imposing the return value -}
                                                         replaySyscall (LogSyscall sysnr sysres _ _ _)
