@@ -1003,18 +1003,25 @@ run_control_command(struct control_command *cmd)
 			send_error();
 		} else {
 			ThreadId tid;
+			Bool interpreting;
+
 			history_append(WORKER_RUN_SYSCALL, cmd->u.run_syscall.tid);
 			tid = VG_(running_tid);
 			VG_(running_tid) = rt->id;
-			if (rt->interpret_state.live) {
+			interpreting = rt->interpret_state.live;
+			if (interpreting)
 				commit_is_to_vex_state(&rt->interpret_state,
 						       &VG_(get_ThreadState)(rt->id)->arch.vex);
-				VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
+
+			/* Not sure why clone is special, but it
+			 * apparently is. */
+			if (VG_(get_ThreadState)(rt->id)->arch.vex.guest_RAX == __NR_clone)
+				VG_(running_tid) = VG_INVALID_THREADID;
+
+			VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
+			if (interpreting)
 				initialise_is_for_vex_state(&rt->interpret_state,
 							    &VG_(get_ThreadState)(rt->id)->arch.vex);
-			} else {
-				VG_(client_syscall)(rt->id, VEX_TRC_JMP_SYS_SYSCALL);
-			}
 			VG_(running_tid) = tid;
 			send_okay();
 		}
