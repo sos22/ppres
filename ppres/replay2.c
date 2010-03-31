@@ -818,13 +818,6 @@ replay_syscall(const struct syscall_record *sr,
 		finish_this_record(logfile);
 		break;
 
-	case __NR_set_tid_address:
-		if (!sr_isError(sr->syscall_res))
-			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
-		state->guest_RAX = sysres_to_eax(sr->syscall_res);;
-		finish_this_record(logfile);
-		break;
-
 	case __NR_clone:
 		/* Because of the way we turn syscall exits into calls
 		   to syscall_event(), the rip points to the start of
@@ -855,8 +848,6 @@ replay_syscall(const struct syscall_record *sr,
 			    state->guest_RAX);
 		ASSUME(0);
 	}
-
-	process_memory_records(logfile);
 
 	VG_(running_tid) = tid;
 }

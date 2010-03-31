@@ -1029,6 +1029,12 @@ runThread logfile hist tid acc =
                                                             | sysnr `elem` [0, 1, 2, 3, 4, 5, 21, 63, 79, 97, 102, 202] =
                                                                 success (advanceLog (setRegister newHist (trc_tid evt) REG_RAX sysres) nextLogPtr, True)
 
+                                                        {- set_tid_address is special: run it and impose a pre-record
+                                                           return value. -}
+                                                        replaySyscall (LogSyscall 218 sysres _ _ _) =
+                                                            success (advanceLog (setRegister (runSyscall newHist $ trc_tid evt) (trc_tid evt) REG_RAX sysres) nextLogPtr,
+                                                                     True)
+
                                                         {- exit_group.  Ignore it and move to the next record, which should
                                                            immediately finish the log. -}
                                                         replaySyscall (LogSyscall 231 _ _ _ _) =
