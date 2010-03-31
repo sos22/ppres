@@ -108,10 +108,26 @@ define dump_control_command
 			  if $cmd == 0x1241
 			    printf "set thread %d\n", ($arg0)->u.set_thread.tid
 			  else
-			    if $cmd == 0x1249
-			      printf "get history\n"
+			    if $cmd == 0x1243
+			      printf "get registers"
 			    else
-			      inspect /x $arg0
+			      if $cmd == 0x1244
+				printf "set thread %d register %d = %lx\n", ($arg0)->u.set_register.tid, ($arg0)->u.set_register.reg, ($arg0)->u.set_register.val
+			      else
+				if $cmd == 0x1246
+				  printf "set memory ptr %lx length %lx\n", ($arg0)->u.set_memory.addr, ($arg0)->u.set_memory.size
+				else
+				  if $cmd == 0x1249
+				    printf "get history\n"
+				  else
+				    if $cmd == 0x124b
+				      printf "set log ptr %lx record %d\n", ($arg0)->u.set_log_ptr.ptr, ($arg0)->u.set_log_ptr.record
+				    else
+				      inspect /x $arg0
+				    end
+				  end
+				end
+			      end
 			    end
 			  end
 			end
