@@ -507,6 +507,11 @@ void
 syscall_event(VexGuestAMD64State *state)
 {
 	check_fpu_control();
+	/* Because of the way we turn syscall exits into calls to
+	   syscall_event(), the rip points to the start of the syscall
+	   instruction rather than the end.  Fix it up. */
+	state->guest_RIP += 2;
+
 	/* sys futex needs special handling so that we
 	   generate block and unblock events in the right
 	   places. */
@@ -796,62 +801,6 @@ do {							        \
 	_history_append(key, params,				\
 			sizeof(params)/sizeof(params[0]));	\
 } while (0)
-
-#if 0
-/* This is the bit of syscall replay which we haven't replicated into
-   the driver yet. */
-static void
-replay_syscall(const struct syscall_record *sr,
-	       struct client_event_record *event,
-	       struct record_consumer *logfile)
-{
-	VexGuestAMD64State *state = (VexGuestAMD64State *)event->args[4];
-	ThreadId tid;
-
-	/* Keep valgrind happy */
-	tid = VG_(running_tid);
-	VG_(running_tid) = current_thread->id;
-
-	switch (event->args[0]) {
-	case __NR_exit:
-		current_thread->dead = True;
-		finish_this_record(logfile);
-		break;
-
-	case __NR_clone:
-		/* Because of the way we turn syscall exits into calls
-		   to syscall_event(), the rip points to the start of
-		   the syscall instruction rather than the end.
-		   That's fine in the parent thread, because we'll
-		   finish the IRSB and advance it immediately, but
-		   it's no good in the child, which will immediately
-		   issue another clone system call and set off a fork
-		   bomb.  Fix it up by just manually bumping RIP. */
-		state->guest_RIP += 2;
-
-		/* Try to issue the syscall.  This gets caught in
-		   replay_clone_syscall() and turned into a coroutine
-		   create. */
-		if (!sr_isError(sr->syscall_res)) {
-			VG_(printf)("Replaying clone syscall in %d:%ld\n",
-				    logfile->record_nr, now.access_nr);
-			VG_(running_tid) = tid;
-			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
-		}
-
-		state->guest_RAX = sysres_to_eax(sr->syscall_res);
-		finish_this_record(logfile);
-		break;
-
-	default:
-		VG_(printf)("Don't yet support syscall %lld\n",
-			    state->guest_RAX);
-		ASSUME(0);
-	}
-
-	VG_(running_tid) = tid;
-}
-#endif
 
 static void
 next_record(void)

@@ -1025,9 +1025,10 @@ runThread logfile hist tid acc =
                                                             | sysnr `elem` [0, 1, 2, 3, 4, 5, 21, 63, 79, 97, 102, 202] =
                                                                 (setRegister newHist (trc_tid evt) REG_RAX sysres, nextLogPtr)
 
-                                                        {- set_tid_address is special: run it and impose a pre-record
-                                                           return value. -}
-                                                        replaySyscall (LogSyscall 218 sysres _ _ _) =
+                                                        {- syscalls which we handle by re-running and then imposing the
+                                                           recorded return value. -}
+                                                        replaySyscall (LogSyscall sysnr sysres _ _ _)
+                                                            | sysnr `elem` [56, 218] =
                                                             (setRegister (runSyscall newHist $ trc_tid evt) (trc_tid evt) REG_RAX sysres,
                                                              nextLogPtr)
 
