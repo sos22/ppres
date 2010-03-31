@@ -738,8 +738,8 @@ setTscWorker :: Worker -> ThreadId -> Word64 -> IO Bool
 setTscWorker worker tid tsc =
     trivCommand worker $ setTscPacket tid tsc
 
-validateHistoryWorker :: Worker -> [HistoryEntry] -> IO Bool
-validateHistoryWorker worker desired_hist =
+validateHistoryWorker' :: Worker -> [HistoryEntry] -> IO Bool
+validateHistoryWorker' worker desired_hist =
     let validateHistory [] [] = True
         validateHistory [ResponseDataAncillary 19 [0]] _ = True
         validateHistory ((ResponseDataAncillary 19 [0x1236, tid, acc]):o) o's@((HistoryRun tid' acc'):o')
@@ -773,6 +773,11 @@ validateHistoryWorker worker desired_hist =
           let r = validateHistory params desired_hist
           when (not r) $ putStrLn $ "validation of " ++ (show desired_hist) ++ " against " ++ (show params) ++ " in " ++ (show worker) ++ " failed"
           return r
+
+validateHistoryWorker :: Worker -> [HistoryEntry] -> IO Bool
+validateHistoryWorker w he = if validateHistories
+                             then validateHistoryWorker' w he
+                             else return True
 
 {- Pull a WCE to the front of the LRU list -}
 touchWorkerCacheEntry :: HistoryWorker -> IO ()
