@@ -65,8 +65,14 @@ data HistoryWorker = HistoryWorker { hw_dead :: TVar Bool,
 data History = HistoryRoot HistoryWorker
              | History { hs_parent :: History,
                          hs_entry :: HistoryEntry,
-                         hs_worker :: HistoryWorker }
+                         hs_worker :: HistoryWorker,
+                         hs_ident :: Integer }
 
+allocateHistoryIdent :: IO Integer
+allocateHistoryIdent = do wc <- workerCache
+                          (res:newIdents) <- readIORef $ wc_idents wc
+                          writeIORef (wc_idents wc) newIdents
+                          return res
 heListToHistory :: [HistoryEntry] -> History
 heListToHistory [] = HistoryRoot rootHistory
 heListToHistory (x:xs) =
@@ -74,6 +80,7 @@ heListToHistory (x:xs) =
                           ww <- newIORef Nothing
                           p <- newTVarIO worker
                           n <- newTVarIO worker
+                          ident <- allocateHistoryIdent
                           let worker = HistoryWorker { hw_dead = d,
                                                        hw_worker = ww,
                                                        hw_prev_lru = p,
@@ -81,7 +88,8 @@ heListToHistory (x:xs) =
                                                        hw_is_root = False }
                           return $ History { hs_parent = heListToHistory xs,
                                              hs_entry = x,
-                                             hs_worker = worker }
+                                             hs_worker = worker,
+                                             hs_ident = ident }
 instance Show History where
     show = show . historyGetHeList
 instance Render History where
@@ -102,7 +110,8 @@ instance Eq History where
 
 data WorkerCache = WorkerCache { wc_logfile :: Logfile,
                                  wc_root :: HistoryWorker,
-                                 wc_nr_workers :: TVar Int }
+                                 wc_nr_workers :: TVar Int,
+                                 wc_idents :: IORef [Integer] }
                                  
 historyFold :: (a -> HistoryEntry -> a) -> a -> History -> a
 historyFold _ base (HistoryRoot _) = base
@@ -155,7 +164,8 @@ initialHistory lf w =
        atomically $ writeTVar p wrk
        atomically $ writeTVar n wrk
        nr <- newTVarIO 0
-       let wc = WorkerCache { wc_logfile = lf, wc_root = wrk, wc_nr_workers = nr}
+       idents <- newIORef [1..]
+       let wc = WorkerCache { wc_logfile = lf, wc_root = wrk, wc_nr_workers = nr, wc_idents = idents}
        writeIORef globalWorkerCache wc
        return $ HistoryRoot wrk
                
@@ -193,8 +203,7 @@ killHistoryWorker wc hw =
 historyDead :: WorkerCache -> History -> IO ()
 historyDead _ (HistoryRoot _) = error "root worker was garbage collected?"
 historyDead wc hist =
-    do putStrLn $ "killing history " ++ (render hist)
-       killHistoryWorker wc $ hs_worker hist
+    killHistoryWorker wc $ hs_worker hist
 
 mkSimpleHistory :: History -> HistoryEntry -> History
 mkSimpleHistory parent he =
@@ -203,6 +212,7 @@ mkSimpleHistory parent he =
                           p <- newTVarIO newWH
                           n <- newTVarIO newWH
                           wc <- workerCache
+                          ident <- allocateHistoryIdent
                           let newWH = HistoryWorker { hw_dead = dead,
                                                       hw_worker = w,
                                                       hw_prev_lru = p,
@@ -210,7 +220,8 @@ mkSimpleHistory parent he =
                                                       hw_is_root = False }
                               newHist = History { hs_parent = parent,
                                                   hs_entry = he,
-                                                  hs_worker = newWH }
+                                                  hs_worker = newWH,
+                                                  hs_ident = ident }
                           addFinalizer newHist (historyDead wc newHist)
                           return newHist
 
@@ -324,6 +335,7 @@ getDeltaScript start end =
          Nothing ->
              {- start isn't on the path from the root to end.  Do it
                 the hard way. -}
+             Debug.Trace.trace "getDeltaScript on slow path..." $
              let start' = historyGetHeList start
                  end' = historyGetHeList end
                  worker [] xs = Just xs
@@ -355,14 +367,6 @@ controlTraceToWorker = traceTo'' controlTraceWorker
 
 traceToWorker :: Worker -> History -> History -> IO (Either String [TraceRecord])
 traceToWorker = traceTo'' traceWorker
-
-instance Forcable x => Forcable (IORef x) where
-    force ref res =
-        unsafePerformIO $ do x <- readIORef ref
-                             return $ force x res
-
-instance Forcable Worker where
-    force (Worker fd alive thawed) = force fd . force alive . force thawed
 
 sendWorkerCommand :: Worker -> ControlPacket -> IO ResponsePacket
 sendWorkerCommand worker cp =
@@ -452,6 +456,7 @@ killWorker worker =
        if s
           then do sClose $ worker_fd worker
                   writeIORef (worker_alive worker) False
+                  modifyIORef nrForkedWorkers $ \x -> x - 1
           else error "can't kill worker?"
 
 freezeWorker :: Worker -> IO ()
@@ -532,6 +537,7 @@ takeSnapshot worker =
         then do newFd <- recvSocket (worker_fd worker)
                 newAlive <- newIORef True
                 newFrozen <- newIORef False
+                modifyIORef nrForkedWorkers $ (+) 1
                 return $ Just $ Worker {worker_fd = newFd, worker_alive = newAlive, worker_frozen = newFrozen }
         else return Nothing
 
@@ -807,9 +813,7 @@ assert msg False = unsafePerformIO $ dumpLog >> (error $ "assertion failure: " +
 
 fixupWorkerCache :: WorkerCache -> IO ()
 fixupWorkerCache wc =
-    do n' <- atomically $ readTVar $ wc_nr_workers wc
-       putStrLn $ "have " ++ (show n') ++ " official workers"
-       w <- atomically $ do n <- readTVar $ wc_nr_workers wc
+    do w <- atomically $ do n <- readTVar $ wc_nr_workers wc
                             if n <= cacheSize
                              then return Nothing
                              else do targ <- readTVar $ hw_prev_lru $ wc_root wc
@@ -829,6 +833,10 @@ globalWorkerCache :: IORef WorkerCache
 {-# NOINLINE globalWorkerCache #-}
 globalWorkerCache =
     unsafePerformIO $ newIORef $ error "use of worker cache before it was ready?"
+
+nrForkedWorkers :: IORef Int
+nrForkedWorkers =
+    unsafePerformIO $ newIORef 1
 
 workerCache :: IO WorkerCache
 workerCache =
@@ -902,6 +910,8 @@ getWorker' pure hist =
                 doHistoryEntry worker (hs_entry hist)
                 freezeWorker worker
                 addWorkerToLRU (hs_worker hist) worker
+                wc <- workerCache
+                fixupWorkerCache wc
                 if pure
                  then return worker
                  else reallySnapshot worker
