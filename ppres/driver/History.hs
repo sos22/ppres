@@ -1009,7 +1009,6 @@ runThread logfile hist tid acc =
                                                         
                                                         {- Go and process all the populate memory records which come
                                                            after logptr. -}
-
                                                         processPopMemRecords pphist logptr =
                                                             case nextRecord logfile logptr of
                                                               Just (LogRecord _ (LogMemory ptr contents), nlp) ->
@@ -1019,23 +1018,23 @@ runThread logfile hist tid acc =
                                                         {- syscalls which we handle by just re-running them -}
                                                         replaySyscall (LogSyscall sysnr _ _ _ _)
                                                             | sysnr `elem` [10, 11, 12, 13, 14, 158, 273] =
-                                                                success (advanceLog (runSyscall newHist $ trc_tid evt) nextLogPtr, True)
+                                                                (runSyscall newHist $ trc_tid evt, nextLogPtr)
 
                                                         {- syscalls which we handle by just imposing the return value -}
                                                         replaySyscall (LogSyscall sysnr sysres _ _ _)
                                                             | sysnr `elem` [0, 1, 2, 3, 4, 5, 21, 63, 79, 97, 102, 202] =
-                                                                success (advanceLog (setRegister newHist (trc_tid evt) REG_RAX sysres) nextLogPtr, True)
+                                                                (setRegister newHist (trc_tid evt) REG_RAX sysres, nextLogPtr)
 
                                                         {- set_tid_address is special: run it and impose a pre-record
                                                            return value. -}
                                                         replaySyscall (LogSyscall 218 sysres _ _ _) =
-                                                            success (advanceLog (setRegister (runSyscall newHist $ trc_tid evt) (trc_tid evt) REG_RAX sysres) nextLogPtr,
-                                                                     True)
+                                                            (setRegister (runSyscall newHist $ trc_tid evt) (trc_tid evt) REG_RAX sysres,
+                                                             nextLogPtr)
 
                                                         {- exit_group.  Ignore it and move to the next record, which should
                                                            immediately finish the log. -}
                                                         replaySyscall (LogSyscall 231 _ _ _ _) =
-                                                            justAdvance
+                                                            (newHist, nextLogPtr)
 
                                                         {- mmap -}
                                                         replaySyscall (LogSyscall 9 sysres _ len prot) =
@@ -1053,7 +1052,7 @@ runThread logfile hist tid acc =
                                                                                 then populateMem
                                                                                 else setMemoryProtection populateMem addr len prot
                                                                         in (resetProt, ptrAfterPopulateMem)
-                                                            in success (advanceLog (setRegister doneMmapHist (trc_tid evt) REG_RAX sysres) finalLogPtr, True)
+                                                            in (setRegister doneMmapHist (trc_tid evt) REG_RAX sysres, finalLogPtr)
 
                                                         replaySyscall (LogSyscall sysnr _ _ _ _) =
                                                             error $ "don't know how to replay syscall " ++ (show sysnr)
@@ -1061,12 +1060,9 @@ runThread logfile hist tid acc =
                                                         replaySyscall _ = error "replaySyscall called on non-syscall?"
 
                                                         replaySyscall' x =
-                                                            do r <- replaySyscall x
-                                                               return $ case r of
-                                                                          Left e -> Left e
-                                                                          Right (h, checkTid) ->
-                                                                              let (h', np) = processPopMemRecords h nextLogPtr
-                                                                              in Right (advanceLog h' np, checkTid)
+                                                            let (h, np) = replaySyscall x
+                                                                (h', np') = processPopMemRecords h np
+                                                            in advanceLog h' np'
                                                         res =
                                                             case (trc_trc evt, lr_body logrecord) of
                                                               (TraceRdtsc, LogRdtsc tsc) ->
@@ -1101,7 +1097,7 @@ runThread logfile hist tid acc =
                                                                          rsi = getRegister' regs REG_RSI
                                                                          rdx = getRegister' regs REG_RDX
                                                                      if rdi == arg1 && rsi == arg2 && rdx == arg3 && sysnr == (fromIntegral sysnr')
-                                                                      then replaySyscall' $ lr_body logrecord
+                                                                      then return $ Right (replaySyscall' $ lr_body logrecord, True)
                                                                       else failed $ "syscall record " ++ (show logrecord) ++ " against trace event " ++ (show evt) ++ " " ++
                                                                                     (showHex rdi $ " " ++ (showHex rsi $ " " ++ (showHex rdx "")))
                                                               (TraceSyscall _, _) ->
