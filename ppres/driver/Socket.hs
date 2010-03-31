@@ -18,7 +18,7 @@ import Types
 foreign import ccall unsafe "send"
   c_send :: CInt -> Ptr a -> CSize -> CInt -> IO CInt
 
-data ControlPacket = ControlPacket Word32 [Word64]
+data ControlPacket = ControlPacket Word32 [Word64] deriving Show
 data ResponseData = ResponseDataString String
                   | ResponseDataBytes [Word8]
                   | ResponseDataAncillary Word32 [Word64]

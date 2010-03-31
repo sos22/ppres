@@ -757,16 +757,23 @@ _history_append(unsigned key, const unsigned long *params,
 {
 	struct history_entry *he;
 	if (last_history_entry &&
-	    last_history_entry->params[0] == key &&
-	    key == WORKER_RUN) {
-		if (params[0] == last_history_entry->params[1]) {
-			/* Run the same thread -> merge into previous
-			 * entry */
-			last_history_entry->params[2] = params[1];
-			return;
+	    last_history_entry->params[0] == key) {
+		if (key == WORKER_RUN) {
+			if (params[0] == last_history_entry->params[1]) {
+				/* Run the same thread -> merge into previous
+				 * entry */
+				last_history_entry->params[2] = params[1];
+				return;
+			}
+			if (params[1] == last_history_entry->params[2]) {
+				/* Running for zero operations -> drop */
+				return;
+			}
 		}
-		if (params[1] == last_history_entry->params[2]) {
-			/* Running for zero operations -> drop */
+		if (key == WORKER_SET_LOG_PTR &&
+		    params[0] == last_history_entry->params[1] &&
+		    params[1] == last_history_entry->params[2]) {
+			/* Set to where we already were -> drop */
 			return;
 		}
 	}
@@ -1124,6 +1131,7 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 			send_error();
 		} else {
 			ThreadId tid;
+			history_append(WORKER_RUN_SYSCALL, cmd->u.run_syscall.tid);
 			tid = VG_(running_tid);
 			VG_(running_tid) = rt->id;
 			if (rt->interpret_state.live) {

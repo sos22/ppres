@@ -89,6 +89,7 @@ instance Read UIValue where
     readsPrec _ x | isDigit (head x) = map (first UIValueInteger) $ reads x
     readsPrec _ ('{':t) = simpleWrappedReadsPrec UIValueReplayCoord t $
                           simpleWrappedReadsPrec UIValueRegisterName t $
+                          simpleWrappedReadsPrec UIValueSnapshot t $
                           []
     readsPrec _ ('[':t) =
         let readListBody tt =

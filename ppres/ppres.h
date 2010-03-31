@@ -7,10 +7,10 @@ struct record_header {
 	unsigned tid;
 };
 
-#define FOOTSTEP_REG_0_NAME cc_op
-#define FOOTSTEP_REG_0_OFFSET 128
-#define FOOTSTEP_REG_1_NAME cc_dep1
-#define FOOTSTEP_REG_1_OFFSET 136
+#define FOOTSTEP_REG_0_NAME rdi
+#define FOOTSTEP_REG_0_OFFSET 0x38
+#define FOOTSTEP_REG_1_NAME rdx
+#define FOOTSTEP_REG_1_OFFSET 0x10
 #define FOOTSTEP_REG_2_NAME cc_dep2
 #define FOOTSTEP_REG_2_OFFSET 144
 #define FOOTSTEP_REG_3_NAME cc_ndep
