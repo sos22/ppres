@@ -801,7 +801,9 @@ assert msg False = unsafePerformIO $ dumpLog >> (error $ "assertion failure: " +
 
 fixupWorkerCache :: WorkerCache -> IO ()
 fixupWorkerCache wc =
-    do w <- atomically $ do n <- readTVar $ wc_nr_workers wc
+    do n' <- atomically $ readTVar $ wc_nr_workers wc
+       putStrLn $ "have " ++ (show n') ++ " official workers"
+       w <- atomically $ do n <- readTVar $ wc_nr_workers wc
                             if n <= cacheSize
                              then return Nothing
                              else do targ <- readTVar $ hw_prev_lru $ wc_root wc
@@ -855,6 +857,11 @@ reallySnapshot w =
          Nothing -> error "cannot take a snapshot"
          Just w'' -> return w''
 
+modifyTVar :: TVar a -> (a -> a) -> STM ()
+modifyTVar v f =
+    do v' <- readTVar v
+       writeTVar v $ f v'
+
 addWorkerToLRU :: HistoryWorker -> Worker -> IO ()
 addWorkerToLRU hw worker =
     do wc <- workerCache
@@ -866,6 +873,7 @@ addWorkerToLRU hw worker =
                        writeTVar (hw_prev_lru newNext) hw
                        writeTVar (hw_next_lru hw) newNext
                        writeTVar (hw_prev_lru hw) newPrev
+                       modifyTVar (wc_nr_workers wc) ((+) 1)
 
 getWorker' :: Bool -> History -> IO Worker
 getWorker' pure (HistoryRoot w) =
