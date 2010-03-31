@@ -1002,8 +1002,13 @@ runThread logfile hist tid acc =
 
                                                         {- syscalls which we handle by just imposing the return value -}
                                                         replaySyscall (LogSyscall sysnr sysres _ _ _)
-                                                            | sysnr `elem` [0, 2, 3, 4, 5, 21, 63, 79, 97, 102, 202] =
+                                                            | sysnr `elem` [0, 1, 2, 3, 4, 5, 21, 63, 79, 97, 102, 202] =
                                                                 success (advanceLog (setRegister newHist (trc_tid evt) REG_RAX sysres) nextLogPtr, True)
+
+                                                        {- exit_group.  Ignore it and move to the next record, which should
+                                                           immediately finish the log. -}
+                                                        replaySyscall (LogSyscall 231 _ _ _ _) =
+                                                            justAdvance
 
                                                         {- mmap -}
                                                         replaySyscall (LogSyscall 9 sysres _ len prot) =

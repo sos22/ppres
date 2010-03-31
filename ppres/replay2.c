@@ -818,25 +818,10 @@ replay_syscall(const struct syscall_record *sr,
 		finish_this_record(logfile);
 		break;
 
-	case __NR_write:
-		/* Hack: if the program was writing to stdout or
-		 * stderr, repeat the action here.  Otherwise, don't.
-		 * This makes it easier to tell whether the replay
-		 * actually worked. */
-		if (event->args[1] == 1 || event->args[1] == 2)
-			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
-		state->guest_RAX = sysres_to_eax(sr->syscall_res);
-		finish_this_record(logfile);
-		break;
-
 	case __NR_set_tid_address:
 		if (!sr_isError(sr->syscall_res))
 			VG_(client_syscall)(current_thread->id, VEX_TRC_JMP_SYS_SYSCALL);
 		state->guest_RAX = sysres_to_eax(sr->syscall_res);;
-		finish_this_record(logfile);
-		break;
-
-	case __NR_exit_group:
 		finish_this_record(logfile);
 		break;
 
