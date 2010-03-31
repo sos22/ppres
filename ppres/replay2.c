@@ -387,7 +387,6 @@ get_control_command(struct control_command *cmd)
 	case WORKER_GET_THREAD:
 	case WORKER_GET_REGISTERS:
 	case WORKER_GET_HISTORY:
-	case WORKER_GET_LOG_PTR:
 		tl_assert(ch.nr_args == 0);
 		break;
 	case WORKER_RUN:
@@ -1037,10 +1036,6 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		return;
 	case WORKER_GET_HISTORY:
 		do_get_history_command();
-		return;
-	case WORKER_GET_LOG_PTR:
-		send_ancillary(ANCILLARY_LOG_PTR, logfile_tell(logfile), logfile->record_nr);
-		send_okay();
 		return;
 	case WORKER_SET_LOG_PTR:
 		logfile_seek(logfile, cmd->u.set_log_ptr.ptr, cmd->u.set_log_ptr.record);

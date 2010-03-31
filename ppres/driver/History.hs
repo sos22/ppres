@@ -436,9 +436,6 @@ setTscPacket (ThreadId tid) tsc = ControlPacket 0x1248 [fromInteger tid, tsc]
 getHistoryPacket :: ControlPacket
 getHistoryPacket = ControlPacket 0x1249 []
 
-getLogPtrPacket :: ControlPacket
-getLogPtrPacket = ControlPacket 0x124a []
-
 setLogPtrPacket :: LogfilePtr -> ControlPacket
 setLogPtrPacket (LogfilePtr p n) = ControlPacket 0x124b [fromIntegral p, fromInteger n]
 
@@ -779,10 +776,6 @@ validateHistoryWorker worker desired_hist =
           when (not r) $ putStrLn $ "validation of " ++ (show desired_hist) ++ " against " ++ (show params) ++ " in " ++ (show worker) ++ " failed"
           return r
 
-getLogPtrWorker :: Worker -> IO LogfilePtr
-getLogPtrWorker w = do (ResponsePacket _ [ResponseDataAncillary 20 [p, n]]) <- sendWorkerCommand w getLogPtrPacket
-                       return $ LogfilePtr (fromIntegral p) (toInteger n)
-
 setLogPtrWorker :: Worker -> LogfilePtr -> IO ()
 setLogPtrWorker w p = do trivCommand w $ setLogPtrPacket p
                          return ()
@@ -997,8 +990,8 @@ runThread logfile hist tid acc =
                          case rs of
                            ReplayStateOkay acc' ->
                                if Finite acc' <= acc
-                               then do lp <- getLogPtrWorker worker
-                                       let fixedHist =
+                               then do let lp = history_logfile_ptr hist
+                                           fixedHist =
                                               case nextRecord logfile lp of
                                                 Nothing ->
                                                     error "unexpected end of log when worker thought there was more?"
