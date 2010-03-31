@@ -49,6 +49,10 @@ data HistoryEntry = HistoryRun !ThreadId !(Topped AccessNr)
                   | HistoryAdvanceLog !LogfilePtr
                   | HistoryRunSyscall !ThreadId
                     deriving (Eq, Show, Read)
+instance Render HistoryEntry where
+    renderS (HistorySetMemory ptr bytes) suffix =
+        ("HistorySetMemory 0x" ++ (showHex ptr "") ++ " " ++ (show $ length bytes)) ++ suffix
+    renderS x s = shows x s
 
 {- It is important that there be no references from HistoryWorker back
    to the matching History, so that the finalisers run at the right
@@ -80,6 +84,8 @@ heListToHistory (x:xs) =
                                              hs_worker = worker }
 instance Show History where
     show = show . historyGetHeList
+instance Render History where
+    render = render . historyGetHeList
 instance Read History where
     readsPrec _ s = do (hes, trailer) <- reads s
                        return (heListToHistory $ reverse hes, trailer)
@@ -187,7 +193,7 @@ killHistoryWorker wc hw =
 historyDead :: WorkerCache -> History -> IO ()
 historyDead _ (HistoryRoot _) = error "root worker was garbage collected?"
 historyDead wc hist =
-    do putStrLn $ "killing history " ++ (show hist)
+    do putStrLn $ "killing history " ++ (render hist)
        killHistoryWorker wc $ hs_worker hist
 
 mkSimpleHistory :: History -> HistoryEntry -> History

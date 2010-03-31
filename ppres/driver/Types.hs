@@ -365,3 +365,12 @@ type MemAccess = (ThreadId, (Word64, Word64))
 {- A constraint a b means that a must happen before b -}
 data SchedulingConstraint = SchedulingConstraint MemAccess MemAccess deriving Show
 
+class Render a where
+    render :: a -> String
+    renderS :: a -> String -> String
+
+    render x = renderS x ""
+    renderS x suffix = render x ++ suffix
+
+instance Render a => Render [a] where
+    renderS x suffix = "[" ++ (foldr (\item suff -> renderS item $ ", " ++ suff) (']':suffix) x)
