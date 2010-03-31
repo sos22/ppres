@@ -145,8 +145,8 @@ doHistoryEntry w (HistorySetMemoryProtection addr size prot) =
     setMemoryProtectionWorker w addr size prot
 doHistoryEntry w (HistorySetTsc tid tsc) =
     ioAssertTrue $ setTscWorker w tid tsc
-doHistoryEntry w (HistoryAdvanceLog p) =
-    setLogPtrWorker w p
+doHistoryEntry _ (HistoryAdvanceLog _) =
+    return ()
 doHistoryEntry w (HistoryRunSyscall t) =
     runSyscallWorker w t
 
@@ -307,9 +307,8 @@ traceTo' work tracer ((HistorySetMemoryProtection addr size prot):rest) =
 traceTo' work tracer ((HistorySetTsc tid tsc):rest) =
     do setTscWorker work tid tsc
        traceTo' work tracer rest
-traceTo' worker tracer ((HistoryAdvanceLog ptr):rest) =
-    do setLogPtrWorker worker ptr
-       traceTo' worker tracer rest
+traceTo' worker tracer ((HistoryAdvanceLog _):rest) =
+    traceTo' worker tracer rest
 traceTo' worker tracer ((HistoryRunSyscall tid):rest) =
     do runSyscallWorker worker tid
        traceTo' worker tracer rest
@@ -435,9 +434,6 @@ setTscPacket (ThreadId tid) tsc = ControlPacket 0x1248 [fromInteger tid, tsc]
 
 getHistoryPacket :: ControlPacket
 getHistoryPacket = ControlPacket 0x1249 []
-
-setLogPtrPacket :: LogfilePtr -> ControlPacket
-setLogPtrPacket (LogfilePtr p n) = ControlPacket 0x124b [fromIntegral p, fromInteger n]
 
 runSyscallPacket :: ThreadId -> ControlPacket
 runSyscallPacket (ThreadId tid) = ControlPacket 0x124c [fromInteger tid]
@@ -764,9 +760,8 @@ validateHistoryWorker worker desired_hist =
         validateHistory ((ResponseDataAncillary 19 [0x1248, tid, tsc]):o)
                         ((HistorySetTsc (ThreadId tid') tsc'):o')
             | toInteger tid == tid' && tsc == tsc' = validateHistory o o'
-        validateHistory ((ResponseDataAncillary 19 [0x124b, p, n]):o)
-                        ((HistoryAdvanceLog (LogfilePtr p' n')):o')
-            | p == (fromIntegral p') && n == (fromInteger n') = validateHistory o o'
+        validateHistory o ((HistoryAdvanceLog _):o')
+            = validateHistory o o'
         validateHistory ((ResponseDataAncillary 19 [0x124c, t]):o)
                         ((HistoryRunSyscall (ThreadId t')):o')
             | t == (fromIntegral t') = validateHistory o o'
@@ -775,10 +770,6 @@ validateHistoryWorker worker desired_hist =
           let r = validateHistory params desired_hist
           when (not r) $ putStrLn $ "validation of " ++ (show desired_hist) ++ " against " ++ (show params) ++ " in " ++ (show worker) ++ " failed"
           return r
-
-setLogPtrWorker :: Worker -> LogfilePtr -> IO ()
-setLogPtrWorker w p = do trivCommand w $ setLogPtrPacket p
-                         return ()
 
 {- Pull a WCE to the front of the LRU list -}
 touchWorkerCacheEntry :: HistoryWorker -> IO ()

@@ -26,7 +26,6 @@
 
 #include "ppres.h"
 #include "ppres_client.h"
-#include "replay.h"
 #include "replay2.h"
 
 extern ThreadId VG_(running_tid);
@@ -44,8 +43,7 @@ extern UInt (*VG_(interpret))(VexGuestArchState *state);
 extern void VG_(client_syscall)(ThreadId tid, UInt trc);
 extern SysRes VG_(am_mmap_anon_fixed_client)( Addr start, SizeT length, UInt prot );
 
-static void run_to(struct record_consumer *logfile, replay_coord_t to, Bool stop_on_event);
-static void next_record(void);
+static void run_to(replay_coord_t to, Bool stop_on_event);
 
 struct failure_reason {
 	unsigned reason;
@@ -84,9 +82,6 @@ head_interpret_mem_lookaside;
 
 Bool
 want_to_interpret;
-
-struct record_consumer
-logfile;
 
 replay_coord_t
 now;
@@ -402,7 +397,6 @@ get_control_command(struct control_command *cmd)
 	case WORKER_GET_MEMORY:
 	case WORKER_SET_MEMORY:
 	case WORKER_SET_TSC:
-	case WORKER_SET_LOG_PTR:
 		tl_assert(ch.nr_args == 2);
 		break;
 	case WORKER_SET_REGISTER:
@@ -774,12 +768,6 @@ _history_append(unsigned key, const unsigned long *params,
 				return;
 			}
 		}
-		if (key == WORKER_SET_LOG_PTR &&
-		    params[0] == last_history_entry->params[1] &&
-		    params[1] == last_history_entry->params[2]) {
-			/* Set to where we already were -> drop */
-			return;
-		}
 	}
 	he = VG_(malloc)("history_entry",
 			 sizeof(*he) + (nr_params+1) * sizeof(unsigned long));
@@ -801,29 +789,6 @@ do {							        \
 			sizeof(params)/sizeof(params[0]));	\
 } while (0)
 
-static void
-next_record(void)
-{
-	const struct record_header *rec;
-
-	rec = get_current_record(&logfile);
-	if (!rec)
-		return;
-	while (rec->cls == RECORD_new_thread ||
-	       rec->cls == RECORD_thread_blocking ||
-	       rec->cls == RECORD_thread_unblocked ||
-	       rec->cls == RECORD_footstep ||
-	       (!use_memory &&
-		(rec->cls == RECORD_mem_read ||
-		 rec->cls == RECORD_mem_write))) {
-		finish_this_record(&logfile);
-		rec = get_current_record(&logfile);
-	}
-
-//	current_thread = get_thread_by_id(rec->tid);
-	tl_assert(current_thread != NULL);
-}
-
 static Bool
 replay_coord_lt(replay_coord_t l, replay_coord_t r)
 {
@@ -833,7 +798,7 @@ replay_coord_lt(replay_coord_t l, replay_coord_t r)
 }
 
 static void
-run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
+run_to(replay_coord_t when, Bool stop_on_event)
 {
 	struct client_event_record thread_event;
 
@@ -854,8 +819,6 @@ run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 
 		current_thread->last_run = now;
 
-		next_record();
-
 		if (stop_on_event)
 			break;
 	}
@@ -863,34 +826,33 @@ run_to(struct record_consumer *logfile, replay_coord_t when, Bool stop_on_event)
 }
 
 static void
-run_control_command(struct control_command *cmd, struct record_consumer *logfile)
+run_control_command(struct control_command *cmd)
 {
 	struct replay_thread *rt;
 
-	logfile_reset_file_ptr(logfile);
 	switch (cmd->cmd) {
 	case WORKER_KILL:
 		send_okay();
 		my__exit(0);
 	case WORKER_RUN:
-		run_to(logfile, cmd->u.run.when, False);
+		run_to(cmd->u.run.when, False);
 		send_okay();
 		return;
 	case WORKER_TRACE_TO_EVENT:
 		trace_mode = True;
-		run_to(logfile, cmd->u.run.when, True);
+		run_to(cmd->u.run.when, True);
 		trace_mode = False;
 		send_okay();
 		return;
 	case WORKER_TRACE:
 		trace_mode = True;
-		run_to(logfile, cmd->u.trace.when, False);
+		run_to(cmd->u.trace.when, False);
 		trace_mode = False;
 		send_okay();
 		return;
 	case WORKER_CONTROL_TRACE:
 		want_to_interpret = True;
-		run_to(logfile, cmd->u.control_trace.when, False);
+		run_to(cmd->u.control_trace.when, False);
 		want_to_interpret = False;
 		send_okay();
 		return;
@@ -899,17 +861,14 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 		return;
 	case WORKER_TRACE_ADDRESS:
 		trace_address = cmd->u.trace_mem.address;
-		run_to(logfile, cmd->u.trace_mem.when, False);
+		run_to(cmd->u.trace_mem.when, False);
 		send_okay();
 		return;
 	case WORKER_THREAD_STATE:
 		do_thread_state_command();
 		return;
 	case WORKER_REPLAY_STATE:
-		if (logfile->finished)
-			send_ancillary(ANCILLARY_REPLAY_FINISHED, now.access_nr);
-		else
-			send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.access_nr);
+		send_ancillary(ANCILLARY_REPLAY_SUCCESS, now.access_nr);
 		send_okay();
 		return;
 	case WORKER_GET_MEMORY:
@@ -1037,13 +996,6 @@ run_control_command(struct control_command *cmd, struct record_consumer *logfile
 	case WORKER_GET_HISTORY:
 		do_get_history_command();
 		return;
-	case WORKER_SET_LOG_PTR:
-		logfile_seek(logfile, cmd->u.set_log_ptr.ptr, cmd->u.set_log_ptr.record);
-		history_append(WORKER_SET_LOG_PTR, cmd->u.set_log_ptr.ptr,
-			       cmd->u.set_log_ptr.record);
-		next_record();
-		send_okay();
-		return;
 	case WORKER_RUN_SYSCALL:
 		rt = get_thread_by_id(cmd->u.run_syscall.tid);
 		if (!rt) {
@@ -1079,14 +1031,9 @@ replay_machine_fn(void)
 {
 	struct control_command cmd;
 
-	open_logfile(&logfile, (Char *)"logfile1");
-
-	/* Prime the machine */
-	next_record();
-
 	while (1) {
 		get_control_command(&cmd);
-		run_control_command(&cmd, &logfile);
+		run_control_command(&cmd);
 	}
 
 	my__exit(0);
