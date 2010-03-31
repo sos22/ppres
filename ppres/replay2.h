@@ -27,7 +27,7 @@ enum command_number {
 	WORKER_SET_TSC = 0x1248,
 	WORKER_GET_HISTORY = 0x1249,
 
-	WORKER_SET_LOG_PTR = 0x124b,
+
 	WORKER_RUN_SYSCALL = 0x124c
 };
 
@@ -301,10 +301,6 @@ struct control_command {
 			unsigned long tsc;
 		} set_tsc;
 		struct {
-			unsigned long ptr;
-			unsigned long record;
-		} set_log_ptr;
-		struct {
 			unsigned long tid;
 		} run_syscall;
 		unsigned long args[4];
@@ -333,7 +329,6 @@ extern struct replay_thread *head_thread;
 extern struct replay_thread *current_thread;
 extern struct interpret_mem_lookaside *head_interpret_mem_lookaside;
 extern struct client_event_record *client_event;
-extern struct record_consumer logfile;
 extern replay_coord_t now;
 extern Bool want_to_interpret;
 

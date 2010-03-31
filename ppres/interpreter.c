@@ -25,8 +25,6 @@
 #include "replay2.h"
 #include "ppres.h"
 
-#include "replay.h"
-
 extern void VG_(init_vex)(void);
 extern void vexSetAllocModeTEMP_and_clear ( void );
 
@@ -1473,9 +1471,8 @@ interpret_log_control_flow(VexGuestAMD64State *state)
 		UWord *args;
 		args = (UWord *)istate->registers[0].v;
 		VG_(in_generated_code) = False;
-		VG_(printf)("Doing a client request in thread %d at %d:%ld (%lx, %lx).\n",
+		VG_(printf)("Doing a client request in thread %d at %ld (%lx, %lx).\n",
 			    VG_(running_tid),
-			    logfile.record_nr,
 			    now.access_nr,
 			    istate->registers[0].v,
 			    args[0]);

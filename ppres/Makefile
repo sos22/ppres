@@ -1,7 +1,7 @@
 CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef
 
 RECORD_OBJS=record.o
-REPLAY_OBJS=replay2.o coroutines.o replay_logfile.o ui.o expression.o interpreter.o debug.o
+REPLAY_OBJS=replay2.o coroutines.o ui.o expression.o interpreter.o debug.o
 VG_OBJS=../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a
 
 DEP_OBJS=$(RECORD_OBJS) $(REPLAY_OBJS) catch_pthread.o pplogfile.o

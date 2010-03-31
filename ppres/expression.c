@@ -8,7 +8,6 @@
 #include "pub_tool_tooliface.h"
 #include "libvex_guest_amd64.h"
 
-#include "replay.h"
 #include "replay2.h"
 
 struct maybe_expression {
