@@ -151,10 +151,10 @@ findNeighbouringHistories logfile start =
 data ExploreState a = ExploreState { es_white :: [a],
                                      es_grey :: [a] }
 
-pickNextItem :: Show a => ExploreState a -> Maybe (a, ExploreState a)
+pickNextItem :: Render a => ExploreState a -> Maybe (a, ExploreState a)
 pickNextItem state = case es_grey state of
                        [] -> Nothing
-                       (a:as) -> tlog ("explore " ++ (show a)) $ Just (a, state { es_grey = as, es_white = a:(es_white state) })
+                       (a:as) -> tlog ("explore " ++ (render a)) $ Just (a, state { es_grey = as, es_white = a:(es_white state) })
 
 discoverItem :: Eq a => a -> ExploreState a -> ExploreState a
 discoverItem item state =
@@ -162,7 +162,7 @@ discoverItem item state =
     then state
     else state { es_grey = item:(es_grey state)}
 
-exhaustiveExplore :: (Eq a, Show a) => a -> (a -> [a]) -> [a]
+exhaustiveExplore :: (Eq a, Render a) => a -> (a -> [a]) -> [a]
 exhaustiveExplore start advance =
     let startState = ExploreState [] [start]
         exploreState state =
@@ -174,7 +174,7 @@ exhaustiveExplore start advance =
                   in exploreState next_state
     in es_white $ exploreState startState
 
-exploreTo :: (Eq a, Show a) => a -> (a -> [a]) -> (a -> Bool) -> Maybe a
+exploreTo :: (Eq a, Render a) => a -> (a -> [a]) -> (a -> Bool) -> Maybe a
 exploreTo start advance prd =
     let startState = ExploreState [] [start]
         exploreState state =
