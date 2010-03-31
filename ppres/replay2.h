@@ -28,7 +28,8 @@ enum command_number {
 	WORKER_GET_HISTORY = 0x1249,
 
 
-	WORKER_RUN_SYSCALL = 0x124c
+	WORKER_RUN_SYSCALL = 0x124c,
+	WORKER_RUN_TO_EVENT = 0x124e
 };
 
 struct command_header {

@@ -70,6 +70,8 @@ control_process_socket;
 
 static Bool
 trace_mode;
+static Bool
+trace_events;
 
 static Addr
 trace_address;
@@ -386,6 +388,7 @@ get_control_command(struct control_command *cmd)
 		break;
 	case WORKER_RUN:
 	case WORKER_TRACE_TO_EVENT:
+	case WORKER_RUN_TO_EVENT:
 	case WORKER_TRACE:
 	case WORKER_CONTROL_TRACE:
 	case WORKER_VG_INTERMEDIATE:
@@ -415,18 +418,11 @@ get_control_command(struct control_command *cmd)
 		       current_thread->id,		  \
 		       ## args)
 
-#define TRACE(code, args...)						\
+#define TRACE(condition, code, args...)					\
 	do {								\
-		if (trace_mode) _TRACE(code, ## args);			\
+		if (condition) _TRACE(code, ## args);			\
 		debug_trace_data(ANCILLARY_TRACE_ ## code, ## args);	\
 	} while (0)
-
-#define ALWAYS_TRACE(code, args...)					\
-	do {								\
-		_TRACE(code, ## args);					\
-		debug_trace_data(ANCILLARY_TRACE_ ## code, ## args);	\
-	} while (0)
-
 
 /* Bits for managing the transitions between client code and the
    replay monitor. */
@@ -491,7 +487,7 @@ footstep_event(Addr rip, Word rdx, Word rcx, Word rax, unsigned long xmm3a,
 	check_fpu_control();
 	if (!current_thread->in_monitor) {
 		current_thread->last_rip = rip;
-		TRACE(FOOTSTEP, rip, rdx, rcx, rax);
+		TRACE(trace_mode, FOOTSTEP, rip, rdx, rcx, rax);
 	}
 	check_fpu_control();
 }
@@ -517,7 +513,7 @@ syscall_event(VexGuestAMD64State *state)
 			load_event((int *)state->guest_RDI, 4, &observed, 0, state->guest_RIP);
 		}
 	}
-	TRACE(SYSCALL, state->guest_RAX);
+	TRACE(trace_mode || trace_events, SYSCALL, state->guest_RAX);
 	now.access_nr++;
 	event(EVENT_syscall, state->guest_RAX, state->guest_RDI,
 	      state->guest_RSI, state->guest_RDX, (unsigned long)state);
@@ -537,7 +533,7 @@ rdtsc_event(void)
 		check_fpu_control();
 		return (((ULong)edx) << 32) | ((ULong)eax);
 	} else {
-		TRACE(RDTSC);
+		TRACE(trace_mode || trace_events, RDTSC);
 		VG_(printf)("rdtsc event in access number %ld\n", now.access_nr);
 		now.access_nr++;
 		event(EVENT_rdtsc);
@@ -562,7 +558,7 @@ signal_event(ThreadId tid, Int signal, Bool alt_stack,
 	current_thread->crashed = True;
 
 	VG_(in_generated_code) = True;
-	TRACE(SIGNAL, rip, signal, err, virtaddr);
+	TRACE(trace_mode || trace_events, SIGNAL, rip, signal, err, virtaddr);
 	event(EVENT_signal, rip, signal, err, virtaddr);
 	VG_(in_generated_code) = in_gen;
 }
@@ -586,18 +582,17 @@ load_event(const void *ptr, unsigned size, void *read_bytes,
 		check_fpu_control();
 		return;
 	}
-	if ( (ptr <= (const void *)trace_address &&
-	      ptr + size > (const void *)trace_address) ||
-	     (trace_mode)) {
-		ALWAYS_TRACE(LOAD,
-		       size == 8 ?
-		       *(unsigned long *)read_bytes :
-		       *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
-		       size,
-		       (unsigned long)ptr,
-		       current_thread->in_monitor,
-		       rip);
-	}
+	TRACE(((ptr <= (const void *)trace_address &&
+		ptr + size > (const void *)trace_address) ||
+	       trace_mode),
+	      LOAD,
+	      size == 8 ?
+	      *(unsigned long *)read_bytes :
+	      *(unsigned long *)read_bytes & ((1ul << (size * 8)) - 1),
+	      size,
+	      (unsigned long)ptr,
+	      current_thread->in_monitor,
+	      rip);
 	now.access_nr++;
 	event(EVENT_load, (unsigned long)ptr, size,
 	      (unsigned long)read_bytes);
@@ -624,18 +619,17 @@ store_event(void *ptr, unsigned size, const void *written_bytes,
 		check_fpu_control();
 		return;
 	}
-	if ( (ptr <= (const void *)trace_address &&
-	      ptr + size > (const void *)trace_address) ||
-	     (trace_mode)) {
-		ALWAYS_TRACE(STORE,
-		       size == 8 ?
-		       *(unsigned long *)written_bytes :
-		       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
-		       size,
-		       (unsigned long)ptr,
-		       current_thread->in_monitor,
-		       rip);
-	}
+	TRACE( ((ptr <= (const void *)trace_address &&
+		 ptr + size > (const void *)trace_address) ||
+		trace_mode),
+	       STORE,
+	       size == 8 ?
+	       *(unsigned long *)written_bytes :
+	       *(unsigned long *)written_bytes & ((1ul << (size * 8)) - 1),
+	       size,
+	       (unsigned long)ptr,
+	       current_thread->in_monitor,
+	       rip);
 	now.access_nr++;
 	event(EVENT_store, (unsigned long)ptr, size,
 	      (unsigned long)written_bytes);
@@ -650,11 +644,11 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		/* We are in generated code here, despite what
 		   Valgrind might think about it. */
 		VG_(in_generated_code) = True;
-		if (trace_mode) {
+		if (trace_mode || trace_events) {
 			if (arg_block[0] == VG_USERREQ_PPRES_CALL_LIBRARY)
-				ALWAYS_TRACE(CALLING);
+				TRACE(1, CALLING);
 			else
-				ALWAYS_TRACE(CALLED);
+				TRACE(1, CALLED);
 			send_string((const char *)arg_block[1]);
 		}
 		now.access_nr++;
@@ -662,10 +656,10 @@ client_request_event(ThreadId tid, UWord *arg_block, UWord *ret)
 		VG_(in_generated_code) = False;
 	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
 		if ((arg_block[0] & 0xffff) == 0) {
-			TRACE(ENTER_MONITOR);
+			TRACE(trace_mode, ENTER_MONITOR);
 			current_thread->in_monitor = True;
 		} else {
-			TRACE(EXIT_MONITOR);
+			TRACE(trace_mode, EXIT_MONITOR);
 			current_thread->in_monitor = False;
 		}
 	}
@@ -836,6 +830,12 @@ run_control_command(struct control_command *cmd)
 		my__exit(0);
 	case WORKER_RUN:
 		run_to(cmd->u.run.when, False);
+		send_okay();
+		return;
+	case WORKER_RUN_TO_EVENT:
+		trace_events = True;
+		run_to(cmd->u.run.when, True);
+		trace_events = False;
 		send_okay();
 		return;
 	case WORKER_TRACE_TO_EVENT:

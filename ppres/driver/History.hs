@@ -438,6 +438,9 @@ getHistoryPacket = ControlPacket 0x1249 []
 runSyscallPacket :: ThreadId -> ControlPacket
 runSyscallPacket (ThreadId tid) = ControlPacket 0x124c [fromInteger tid]
 
+runToEventPacket :: Topped AccessNr -> ControlPacket
+runToEventPacket x = ControlPacket 0x124e $ fromAN x
+
 trivCommand :: Worker -> ControlPacket -> IO Bool
 trivCommand worker cmd =
     do (ResponsePacket s _) <- sendWorkerCommand worker cmd
@@ -961,12 +964,16 @@ traceToEvent start tid limit =
                          return $ let finalHist = appendHistory start $ HistoryRun tid $ Finite $ rs_access_nr rs
                                   in Right (trc, finalHist)
 
-runThreadToEventWorker :: Worker -> History -> ThreadId -> Topped AccessNr -> IO (TraceRecord, History, ReplayState)
+runThreadToEventWorker :: Worker -> History -> ThreadId -> Topped AccessNr -> IO (Maybe TraceRecord, History, ReplayState)
 runThreadToEventWorker worker start tid limit =
-    do trc <- traceToEventWorker worker tid limit
+    do setThreadWorker worker tid
+       trc <- traceCmd worker $ runToEventPacket limit
        rs <- replayStateWorker worker
        let newHist = appendHistory start $ HistoryRun tid $ Finite $ rs_access_nr rs
-       return (last trc, newHist, rs)
+       return (case trc of
+                 [] -> Nothing
+                 [x] -> Just x
+                 _ -> error $ "runToEvent gave long trace " ++ (show trc), newHist, rs)
 
 runSyscallWorker :: Worker -> ThreadId -> IO ()
 runSyscallWorker worker tid =
@@ -977,9 +984,12 @@ runThread :: Logfile -> History -> ThreadId -> Topped AccessNr -> Either String 
 runThread logfile hist tid acc =
     unsafePerformIO $ do worker <- getWorker False hist
                          mustBeThawed "runThread" worker
-                         (evt, newHist, rs) <- runThreadToEventWorker worker hist tid acc
-                         case rs of
-                           ReplayStateOkay acc' ->
+                         (evt', newHist, rs) <- runThreadToEventWorker worker hist tid acc
+                         case (evt', rs) of
+                           (Nothing, _) ->
+                               {- nothing which requires special help -}
+                               return $ Right $ appendHistory hist $ HistoryRun tid acc
+                           (Just evt, ReplayStateOkay acc') ->
                                if Finite acc' <= acc
                                then do let lp = history_logfile_ptr hist
                                            fixedHist =
