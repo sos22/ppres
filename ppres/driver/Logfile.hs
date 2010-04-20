@@ -1,4 +1,5 @@
-{-# LANGUAGE ForeignFunctionInterface, ScopedTypeVariables #-}
+{-# LANGUAGE ForeignFunctionInterface, ScopedTypeVariables,
+  RecursiveDo #-}
 module Logfile(Logfile, LogfilePtr(..), openLogfile, nextRecord,
                LogRecord(..),LogRecordBody(..)) where
 
@@ -13,19 +14,80 @@ import Foreign.C.Types
 import Data.Word
 import Numeric
 import Control.Monad
+import Data.IORef
 
 import Types
-import Util
 import Config
 
-newtype Logfile = Logfile Fd
+data ByteFile = ByteFile { bf_fd :: Fd,
+                           bf_window :: Ptr Word8,
+                           bf_window_size :: IORef Int,
+                           bf_window_offset :: IORef FileOffset }
+
+{- Read this much from the log file at a time. -}
+windowSize :: ByteCount
+windowSize = 65536
+
+openByteFile :: FilePath -> IO ByteFile
+openByteFile path =
+    do h <- openFd path ReadOnly Nothing defaultFileFlags
+       window <- mallocBytes (fromIntegral windowSize)
+       sz <- newIORef 0
+       ofs <- newIORef 0
+       return $ ByteFile { bf_fd = h,
+                           bf_window = window,
+                           bf_window_size = sz,
+                           bf_window_offset = ofs }
+
+byteFile :: Int -> (Ptr Word8 -> Int -> IO a) -> ByteFile -> FileOffset -> IO (Maybe a)
+byteFile sz peeker bf ofs =
+    do winsize <- readIORef $ bf_window_size bf
+       winofs <- readIORef $ bf_window_offset bf
+       when (ofs < winofs || ofs + fromIntegral sz >= winofs + fromIntegral winsize) $
+            do fdSeek (bf_fd bf) AbsoluteSeek ofs
+               newWinSize <- fdReadBuf (bf_fd bf) (bf_window bf) windowSize
+               writeIORef (bf_window_offset bf) ofs
+               writeIORef (bf_window_size bf) $ fromIntegral newWinSize
+       winsize' <- readIORef $ bf_window_size bf
+       winofs' <- readIORef $ bf_window_offset bf       
+       if ofs < winofs' || ofs + fromIntegral sz >= winofs' + fromIntegral winsize'
+        then return Nothing
+        else liftM Just $ peeker (bf_window bf) (fromIntegral $ ofs - winofs')
+
+error' :: String -> a -> a
+error' msg = error msg
+
+byteFileStorable :: Storable a => ByteFile -> FileOffset -> IO (Maybe a)
+byteFileStorable bf ofs =
+    mdo res <- byteFile (sizeOf $ error' "sizeOf forced argument?" $ maybe undefined id res) peekByteOff bf ofs
+        return res
+
+bufferToList' :: Storable a => [a] -> Ptr a -> Int -> Int -> IO [a]
+bufferToList' acc _ _  0 = return $ reverse acc
+bufferToList' acc ptr offset cntr =
+    do item <- peekByteOff ptr offset
+       bufferToList' (item:acc) ptr (offset + 1) (cntr - 1)
+
+bufferToList :: Storable a => Ptr a -> Int -> Int -> IO [a]
+bufferToList = bufferToList' []
+
+byteFileByteList :: ByteFile -> FileOffset -> Int -> IO (Maybe [Word8])
+byteFileByteList bf ofs sz =
+    do winsize <- readIORef $ bf_window_size bf
+       winofs <- readIORef $ bf_window_offset bf
+       when (ofs < winofs || ofs + fromIntegral sz >= winofs + fromIntegral winsize) $
+            do fdSeek (bf_fd bf) AbsoluteSeek ofs
+               newWinSize <- fdReadBuf (bf_fd bf) (bf_window bf) windowSize
+               writeIORef (bf_window_offset bf) ofs
+               writeIORef (bf_window_size bf) $ fromIntegral newWinSize
+       winsize' <- readIORef $ bf_window_size bf
+       winofs' <- readIORef $ bf_window_offset bf       
+       if ofs < winofs' || ofs + fromIntegral sz >= winofs' + fromIntegral winsize'
+        then return Nothing
+        else liftM Just $ bufferToList (bf_window bf) (fromIntegral $ ofs - winofs') sz
+    
+newtype Logfile = Logfile ByteFile
 data LogfilePtr = LogfilePtr FileOffset Integer deriving (Show, Read, Eq)
-
-instance Forcable COff where
-    force = seq
-
-instance Forcable LogfilePtr where
-    force (LogfilePtr x y) = force x . force y
 
 data LogRecordBody = LogSyscall { ls_nr :: Word32,
                                   ls_res :: Word64,
@@ -52,67 +114,66 @@ data LogRecord = LogRecord {lr_tid :: ThreadId,
 
 openLogfile :: FilePath -> IO (Logfile, LogfilePtr)
 openLogfile path =
-    do h <- openFd path ReadOnly Nothing defaultFileFlags
+    do h <- openByteFile path
        return (Logfile h, LogfilePtr 0 0)
 
-bufferToList :: Storable a => Ptr a -> Int -> IO [a]
-bufferToList _ 0 = return []
-bufferToList ptr cntr =
-    do item <- peek ptr
-       rest <- bufferToList (plusPtr ptr $ sizeOf item) (cntr - 1)
-       return $ item:rest
-
-fdPReadBytes :: Fd -> FileOffset -> ByteCount -> IO (Maybe [Word8])
-fdPReadBytes fd offset size =
-    let size' = fromIntegral size in
-    do offset' <- fdSeek fd AbsoluteSeek offset
-       if offset' /= offset
-          then return Nothing
-          else allocaBytes size' $ \buf -> do bc <- fdReadBuf fd buf size
-                                              if bc == size
-                                                 then liftM Just $ bufferToList buf $ fromIntegral bc
-                                                 else return Nothing
-
-data ByteParser a = ByteParser { run_byte_parser :: [Word8] -> [(a, [Word8])] }
+data ByteParser a = ByteParser { run_byte_parser :: ByteFile -> FileOffset -> IO (Either String (a, FileOffset)) }
 
 instance Monad ByteParser where
-    return x = ByteParser $ \contents -> [(x, contents)]
+    return x = ByteParser $ \_ contents -> return $ Right (x, contents)
     (ByteParser a) >>= b =
-        ByteParser $ \contents ->
-            do (ares, atrail) <- a contents
-               run_byte_parser (b ares) atrail
+        ByteParser $ \file contents ->
+            do ls <- a file contents
+               case ls of
+                 Left x -> return $ Left x
+                 Right (ares, atrail) ->
+                     run_byte_parser (b ares) file atrail
 
 instance Functor ByteParser where
     fmap = liftM
 
-parseBytes :: String -> ByteParser a -> [Word8] -> a
-parseBytes n p c =
-    case run_byte_parser p c of
-      [] -> error $ "no parse for " ++ n
-      ((x,_):_) -> x
+parseByteFile :: ByteFile -> FileOffset -> ByteParser a -> IO (Maybe (a, FileOffset))
+parseByteFile bf startOffset bp =
+    do res <- run_byte_parser bp bf startOffset
+       return $ case res of
+                  Left _ -> Nothing
+                  Right x -> Just x
+
+byteParseSkipBytes :: Word32 -> ByteParser ()
+byteParseSkipBytes cntr =
+    ByteParser $ \_ o -> return $ Right ((), o + fromIntegral cntr)
+
+byteParseStorable :: Storable a => ByteParser a
+byteParseStorable = ByteParser $ \file offset ->
+                                    do v <- byteFileStorable file offset
+                                       return $ case v of
+                                                  Nothing -> Left "cannot parse storable"
+                                                  Just v' -> Right (v', offset + (fromIntegral $ sizeOf v'))
 
 byteParseByteList :: Int -> ByteParser [Word8]
-byteParseByteList nrBytes = ByteParser $ \contents -> let (result,rest) = splitAt nrBytes contents
-                                                      in if length result == nrBytes
-                                                         then [(result, rest)]
-                                                         else []
+byteParseByteList nrBytes =
+    ByteParser $ \file offset ->
+        do res <- byteFileByteList file offset nrBytes
+           return $ case res of
+                      Nothing -> Left "cannot parse byte list: end of file"
+                      Just v -> Right (v, offset + fromIntegral nrBytes)
+
 getByte :: ByteParser Word8
-getByte = ByteParser $ \contents -> case contents of
-                                      [] -> []
-                                      (x:xs) -> [(x, xs)]
+getByte =
+    ByteParser $ \file offset ->
+        do res <- byteFileStorable file offset
+           return $ case res of
+                      Nothing -> Left "getByte at EOF"
+                      Just b -> Right (b, offset + 1)
 
 byteListToInteger :: [Word8] -> Integer
 byteListToInteger = foldr (\a b -> b * 256 + a) 0 . (map toInteger)
 
-byteParseInteger :: Int -> ByteParser Integer
-byteParseInteger nrBytes = do bytes <- byteParseByteList nrBytes
-                              return $ byteListToInteger bytes
-
 byteParseUnsigned :: ByteParser Word32
-byteParseUnsigned = fmap fromInteger $ byteParseInteger 4
+byteParseUnsigned = byteParseStorable
 
 byteParseULong :: ByteParser Word64
-byteParseULong = fmap fromInteger $ byteParseInteger 8
+byteParseULong = byteParseStorable
 
 byteParseSyscallRecord :: ByteParser LogRecordBody
 byteParseSyscallRecord = do nr <- byteParseUnsigned
@@ -192,38 +253,39 @@ byteParseAccessRecord nrBytes is_read =
 byteParseTaggedUnion :: (Eq a, Show a) => a -> [(a, ByteParser b)] -> ByteParser b
 byteParseTaggedUnion key lkup =
     case lookup key lkup of
-      Nothing -> error "invalid tagged union"
+      Nothing -> error $ "invalid tagged union key " ++ (show key)
       Just worker -> worker
 
+byteParseRecord :: Integer -> ByteParser (LogRecord, Integer)
+byteParseRecord cntr =
+    do 
+       cls <- byteParseUnsigned
+       sz <- byteParseUnsigned
+       tid <- byteParseUnsigned
+       body <- byteParseTaggedUnion cls [(1, return Nothing),
+                                         (2, fmap Just $ byteParseSyscallRecord),
+                                         (3, fmap Just $ byteParseMemoryRecord $ fromIntegral $ sz - 12),
+                                         (4, fmap Just $ byteParseRdtscRecord),
+                                         (5, byteParseAccessRecord (fromIntegral $ sz - 12) True),
+                                         (6, byteParseAccessRecord (fromIntegral $ sz - 12) False),
+                                         (7, return Nothing),
+                                         (8, return Nothing),
+                                         (9, return Nothing),
+                                         (10, fmap Just $ byteParseClientRecord),
+                                         (11, fmap Just $ byteParseSignalRecord)]
+       case body of
+         Nothing -> byteParseSkipBytes (sz - 12) >> byteParseRecord (cntr + 1)
+         Just b -> return (LogRecord { lr_tid = ThreadId $ toInteger tid,
+                                       lr_body = b },
+                           cntr)
+
 nextRecord' :: Logfile -> LogfilePtr -> IO (Maybe (LogRecord, LogfilePtr))
-nextRecord' lf@(Logfile fd) (LogfilePtr offset record_nr) =
-    do hdr' <- fdPReadBytes fd offset 12
-       case hdr' of
+nextRecord' (Logfile lf) (LogfilePtr offset record_nr) =
+    do res <- parseByteFile lf offset (byteParseRecord record_nr)
+       case res of
          Nothing -> return Nothing
-         Just hdr ->
-             let ((cls::Word32, size), tid) = parseBytes "hdr" (pairM (pairM byteParseUnsigned byteParseUnsigned) byteParseUnsigned) hdr
-             in do bodyBytes' <- fdPReadBytes fd (offset + 12) (fromIntegral $ size - 12)
-                   case bodyBytes' of
-                     Nothing -> error "truncated logfile"
-                     Just bodyBytes ->
-                         let body :: Maybe LogRecordBody
-                             body = parseBytes "body "(byteParseTaggedUnion cls [(1, return Nothing),
-                                                                                 (2, fmap Just $ byteParseSyscallRecord),
-                                                                                 (3, fmap Just $ byteParseMemoryRecord $ fromIntegral $ size - 12),
-                                                                                 (4, fmap Just $ byteParseRdtscRecord),
-                                                                                 (5, byteParseAccessRecord (fromIntegral $ size - 12) True),
-                                                                                 (6, byteParseAccessRecord (fromIntegral $ size - 12) False),
-                                                                                 (7, return Nothing),
-                                                                                 (8, return Nothing),
-                                                                                 (9, return Nothing),
-                                                                                 (10, fmap Just $ byteParseClientRecord),
-                                                                                 (11, fmap Just $ byteParseSignalRecord)]) bodyBytes
-                             nextPtr = LogfilePtr (offset + fromIntegral size) (record_nr + 1)
-                         in case body of
-                              Nothing -> nextRecord' lf nextPtr
-                              Just b -> return $ Just (LogRecord { lr_tid = ThreadId $ toInteger tid,
-                                                                   lr_body = b },
-                                                       nextPtr)
+         Just ((lr, newRecordNr), newOffset) ->
+             return $ Just (lr, LogfilePtr newOffset newRecordNr)
 
 nextRecord :: Logfile -> LogfilePtr -> Maybe (LogRecord, LogfilePtr)
 nextRecord lf lp =

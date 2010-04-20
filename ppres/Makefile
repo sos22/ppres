@@ -39,7 +39,7 @@ catch_pthread.o: catch_pthread.c
 	gcc $(AUDIT_CFLAGS) -c catch_pthread.c
 
 driver/UI:
-	cd driver && ghc --make -Wall -fno-warn-orphans UI.hs
+	cd driver && ghc -prof -auto-all -caf-all --make -Wall -fno-warn-orphans UI.hs
 
 pplogfile: pplogfile.o
 	gcc -Wall pplogfile.o -o pplogfile

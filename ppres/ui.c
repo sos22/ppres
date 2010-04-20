@@ -116,7 +116,11 @@ ui_loop(void)
 	int fds[2];
 	int r;
 	Char buf[16];
-	Char *args[3] = { (Char *)"ppres/driver/UI",
+	Char *args[7] = { (Char *)"ppres/driver/UI",
+			  "+RTS",
+			  "-p",
+			  "-xc",
+			  "-RTS",
 			  buf,
 			  NULL };
 
