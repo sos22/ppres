@@ -26,6 +26,8 @@
 #include "libvex_guest_offsets.h"
 #include "valgrind.h"
 
+#include "../coregrind/pub_core_threadstate.h"
+
 #include "ppres.h"
 
 extern ULong (*tool_provided_rdtsc)(void);
@@ -623,7 +625,7 @@ process_proc_line(char *line, struct record_emitter *logfile)
 }
 
 static void
-dump_snapshot(struct record_emitter *logfile)
+dump_snapshot(void)
 {
 	int fd;
 	SysRes sr;
@@ -632,6 +634,10 @@ dump_snapshot(struct record_emitter *logfile)
 	unsigned buffer_line_start;
 	unsigned buffer_line_cursor;
 	Int read_this_time;
+	VexGuestAMD64State *regs;
+
+	regs = emit_record(&logfile, RECORD_initial_registers, sizeof(*regs));
+	*regs = VG_(threads)[1].arch.vex;
 
 	sr = VG_(open)((Char *)"/proc/self/maps", VKI_O_RDONLY, 0);
 	if (sr_isError(sr)) {
@@ -677,7 +683,7 @@ dump_snapshot(struct record_emitter *logfile)
 			}
 		}
 		buf[buffer_line_cursor] = 0;
-		process_proc_line(buf + buffer_line_start, logfile);
+		process_proc_line(buf + buffer_line_start, &logfile);
 		buffer_line_start = buffer_line_cursor + 1;
 	}
 	VG_(close)(fd);
@@ -687,8 +693,6 @@ static void
 init(void)
 {
 	open_logfile(&logfile, (signed char *)"logfile1");
-
-	dump_snapshot(&logfile);
 }
 
 static void
@@ -746,6 +750,8 @@ pre_deliver_signal(ThreadId tid, Int signal, Bool alt_stack,
 	sr->virtaddr = virtaddr;
 }
 
+extern void (*VG_(tool_about_to_start))(void);
+
 static void
 pre_clo_init(void)
 {
@@ -760,6 +766,8 @@ pre_clo_init(void)
 	VG_(needs_syscall_wrapper)(pre_syscall, post_syscall);
 	VG_(needs_client_requests)(handle_client_request);
 	VG_(track_pre_deliver_signal)(pre_deliver_signal);
+
+	VG_(tool_about_to_start) = dump_snapshot;
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)

@@ -90,7 +90,10 @@ struct allocate_memory_record {
 	UWord flags;
 };
 
-#define RECORD_MAX_CLASS RECORD_allocate_memory
+/* Uses VexGuestAMD64State as payload */
+#define RECORD_initial_registers 13
+
+#define RECORD_MAX_CLASS RECORD_initial_registers
 
 
 struct index_record {

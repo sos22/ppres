@@ -1371,6 +1371,8 @@ void shutdown_actions_NORETURN( ThreadId tid,
 /* --- end of Forwards decls to do with shutdown --- */
 
 
+void (*VG_(tool_about_to_start))(void);
+
 /* By the time we get to valgrind_main, the_iicii should already have
    been filled in with any important details as required by whatever
    OS we have been built for.
@@ -2327,6 +2329,9 @@ Int valgrind_main ( Int argc, HChar **argv, HChar **envp )
    /* Set continuation address. */
    VG_(address_of_m_main_shutdown_actions_NORETURN)
       = & shutdown_actions_NORETURN;
+
+   if (VG_(tool_about_to_start))
+      VG_(tool_about_to_start)();
 
    /* Run the first thread, eventually ending up at the continuation
       address. */
