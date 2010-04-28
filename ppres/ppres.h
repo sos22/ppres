@@ -82,7 +82,15 @@ struct signal_record {
 	UWord virtaddr;
 };
 
-#define RECORD_MAX_CLASS RECORD_signal
+struct allocate_memory_record {
+#define RECORD_allocate_memory 12
+	UWord start;
+	UWord size;
+	UWord prot;
+	UWord flags;
+};
+
+#define RECORD_MAX_CLASS RECORD_allocate_memory
 
 
 struct index_record {

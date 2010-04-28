@@ -489,10 +489,206 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	}
 }
 
+static char *
+parse_hex(char *start, unsigned long *outp)
+{
+	*outp = 0;
+	while (1) {
+		if (start[0] >= '0' && start[0] <= '9') {
+			*outp *= 16;
+			*outp += start[0] - '0';
+			start++;
+		} else if (start[0] >= 'a' && start[0] <= 'f') {
+			*outp *= 16;
+			*outp += start[0] - 'a' + 10;
+			start++;
+		} else if (start[0] >= 'A' && start[0] <= 'F') {
+			*outp *= 16;
+			*outp += start[0] - 'A' + 10;
+			start++;
+		} else
+			return start;
+	}
+}
+
+static char *
+parse_map_flags(char *line, unsigned *prot, unsigned *flags)
+{
+	*flags = MAP_PRIVATE;
+	*prot = 0;
+	switch (line[0]) {
+	case 'r':
+		*prot |= PROT_READ;
+		break;
+	case '-':
+		break;
+	default:
+		VG_(tool_panic)((Char *)"can't parse /proc/self/maps");
+	}
+	switch (line[1]) {
+	case 'w':
+		*prot |= PROT_WRITE;
+		break;
+	case '-':
+		break;
+	default:
+		VG_(tool_panic)((Char *)"can't parse /proc/self/maps");
+	}
+	switch (line[2]) {
+	case 'x':
+		*prot |= PROT_EXEC;
+		break;
+	case '-':
+		break;
+	default:
+		VG_(tool_panic)((Char *)"can't parse /proc/self/maps");
+	}
+	if (line[3] != 'p' && line[3] != 's')
+		VG_(tool_panic)((Char *)"can't parse /proc/self/maps");
+	return line + 4;
+}
+
+static char *
+skip_char(char *l, char c)
+{
+	if (l[0] != c)
+		VG_(tool_panic)((Char *)"can't parse /proc/self/maps");
+	return l + 1;
+}
+
+static char *
+skip_spaces(char *l)
+{
+	while (l[0] == ' ' || l[0] == '\t')
+		l++;
+	return l;
+}
+
+static void
+process_proc_line(char *line, struct record_emitter *logfile)
+{
+	unsigned long start, end;
+	unsigned long ign;
+	unsigned prot, flags;
+	char *path;
+	struct allocate_memory_record *amr;
+
+	line = parse_hex(line, &start);
+	line = skip_char(line, '-');
+	line = parse_hex(line, &end);
+	line = skip_spaces(line);
+	line = parse_map_flags(line, &prot, &flags);
+	line = skip_spaces(line);
+	line = parse_hex(line, &ign); /* offset */
+	line = skip_spaces(line);
+	line = parse_hex(line, &ign); /* major */
+	line = skip_char(line, ':');
+	line = parse_hex(line, &ign); /* minor */
+	line = skip_spaces(line);
+	line = parse_hex(line, &ign); /* inode */
+	path = skip_spaces(line);
+
+	/* This isn't really ideal, but I don't know any other way of
+	 * doing it. */
+	if (!VG_(strcmp)((Char *)path, (Char *)"[vsyscall]"))
+		return;
+	if (!VG_(strcmp)((Char *)path, (Char *)"[stack]"))
+		flags |= MAP_GROWSDOWN | MAP_STACK;
+
+	if (!(prot & PROT_READ)) {
+		/* Grant ourselves read access to the memory so that
+		 * we can dump it out */
+		/* This is kind of a stupid thing for a program to do
+		   on x86 (because no read implies no access at all),
+		   but it is technically valid, and the contents of
+		   the memory can make a difference if they mprotect()
+		   it later. */
+		my_mprotect((void *)start,
+			    end - start,
+			    PROT_READ);
+	}
+	amr = emit_record(logfile, RECORD_allocate_memory, sizeof(*amr));
+	amr->start = start;
+	amr->size = end - start;
+	amr->prot = prot;
+	amr->flags = flags;
+	capture_memory((void *)start, end - start);
+	if (!(prot & PROT_READ)) {
+		/* Put the protections back to what they were
+		 * again. */
+		my_mprotect((void *)start,
+			    end - start,
+			    prot);
+	}
+}
+
+static void
+dump_snapshot(struct record_emitter *logfile)
+{
+	int fd;
+	SysRes sr;
+	char buf[4097];
+	unsigned buffer_avail;
+	unsigned buffer_line_start;
+	unsigned buffer_line_cursor;
+	Int read_this_time;
+
+	sr = VG_(open)((Char *)"/proc/self/maps", VKI_O_RDONLY, 0);
+	if (sr_isError(sr)) {
+		VG_(printf)("cannot open /proc/self/maps: %ld\n",
+			    sr_Err(sr));
+		VG_(exit)(1);
+	}
+	fd = sr_Res(sr);
+	buffer_avail = 0;
+	buffer_line_start = 0;
+	while (1) {
+		for (buffer_line_cursor = buffer_line_start;
+		     buffer_line_cursor < buffer_avail &&
+			     buf[buffer_line_cursor] != '\n';
+		     buffer_line_cursor++)
+			;
+		if (buffer_line_cursor == buffer_avail) {
+			VG_(memmove)(buf,
+				     buf + buffer_line_start,
+				     buffer_avail - buffer_line_start);
+			buffer_avail -= buffer_line_start;
+			buffer_line_cursor -= buffer_line_start;
+			buffer_line_start = 0;
+			read_this_time = VG_(read)(fd,
+						   buf + buffer_avail,
+						   sizeof(buf) - buffer_avail - 1);
+			if (read_this_time == 0) {
+				if (buffer_avail == 0) {
+					break;
+				} else {
+					/* We've hit the end of the
+					   file, but still need to
+					   finish off the current
+					   line. */
+					buffer_line_cursor = buffer_avail;
+				}
+			} else if (read_this_time < 0) {
+				VG_(printf)("Error reading from /proc/self/maps\n");
+				VG_(exit)(1);
+			} else {
+				buffer_avail += read_this_time;
+				continue;
+			}
+		}
+		buf[buffer_line_cursor] = 0;
+		process_proc_line(buf + buffer_line_start, logfile);
+		buffer_line_start = buffer_line_cursor + 1;
+	}
+	VG_(close)(fd);
+}
+
 static void
 init(void)
 {
 	open_logfile(&logfile, (signed char *)"logfile1");
+
+	dump_snapshot(&logfile);
 }
 
 static void
