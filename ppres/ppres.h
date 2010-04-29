@@ -1,3 +1,16 @@
+#define FOOTSTEP_REG_0_NAME RDI
+#define FOOTSTEP_REG_0_OFFSET 0x38
+#define FOOTSTEP_REG_1_NAME RDX
+#define FOOTSTEP_REG_1_OFFSET 0x10
+#define FOOTSTEP_REG_2_NAME CC_DEP2
+#define FOOTSTEP_REG_2_OFFSET 144
+#define FOOTSTEP_REG_3_NAME CC_NDEP
+#define FOOTSTEP_REG_3_OFFSET 152
+#define FOOTSTEP_REG_4_NAME RAX
+#define FOOTSTEP_REG_4_OFFSET 0
+
+#ifndef FOOTSTEP_REGS_ONLY
+
 #define RECORD_BLOCK_SIZE 16384
 #define MAX_RECORD_SIZE 4096
 
@@ -6,17 +19,6 @@ struct record_header {
 	unsigned size;
 	unsigned tid;
 };
-
-#define FOOTSTEP_REG_0_NAME rdi
-#define FOOTSTEP_REG_0_OFFSET 0x38
-#define FOOTSTEP_REG_1_NAME rdx
-#define FOOTSTEP_REG_1_OFFSET 0x10
-#define FOOTSTEP_REG_2_NAME cc_dep2
-#define FOOTSTEP_REG_2_OFFSET 144
-#define FOOTSTEP_REG_3_NAME cc_ndep
-#define FOOTSTEP_REG_3_OFFSET 152
-#define FOOTSTEP_REG_4_NAME rax
-#define FOOTSTEP_REG_4_OFFSET 0
 
 struct footstep_record {
 #define RECORD_footstep 1
@@ -93,7 +95,13 @@ struct allocate_memory_record {
 /* Uses VexGuestAMD64State as payload */
 #define RECORD_initial_registers 13
 
-#define RECORD_MAX_CLASS RECORD_initial_registers
+#define RECORD_initial_brk 14
+struct initial_brk_record {
+#define RECORD_initial_brk 14
+	UWord initial_brk;
+};
+
+#define RECORD_MAX_CLASS RECORD_initial_brk
 
 
 struct index_record {
@@ -104,9 +112,11 @@ struct index_record {
 static inline int
 IS_STACK(const void *ptr, unsigned long rsp)
 {
-	if (ptr < (const void *)rsp - 128 ||
-	    ptr > (const void *)rsp + 16384)
+	if ((unsigned long)ptr < (unsigned long)rsp - 128 ||
+	    (unsigned long)ptr > (unsigned long)rsp + 16384)
 		return False;
 	else
 		return True;
 }
+
+#endif /* !FOOTSTEP_REGS_ONLY */

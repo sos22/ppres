@@ -624,6 +624,8 @@ process_proc_line(char *line, struct record_emitter *logfile)
 	}
 }
 
+extern Addr  VG_(brk_limit);
+
 static void
 dump_snapshot(void)
 {
@@ -635,9 +637,13 @@ dump_snapshot(void)
 	unsigned buffer_line_cursor;
 	Int read_this_time;
 	VexGuestAMD64State *regs;
+	struct initial_brk_record *ibr;
 
 	regs = emit_record(&logfile, RECORD_initial_registers, sizeof(*regs));
 	*regs = VG_(threads)[1].arch.vex;
+
+	ibr = emit_record(&logfile, RECORD_initial_brk, sizeof(*ibr));
+	ibr->initial_brk = VG_(brk_limit);
 
 	sr = VG_(open)((Char *)"/proc/self/maps", VKI_O_RDONLY, 0);
 	if (sr_isError(sr)) {
