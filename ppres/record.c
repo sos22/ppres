@@ -416,6 +416,20 @@ handle_ioctl(UWord *syscall_args, UInt nr_args, SysRes res)
 }
 
 static void
+handle_fcntl(UWord *syscall_args, UInt nr_args, SysRes res)
+{
+	switch (syscall_args[1]) {
+		/* Most fcntl commands have no memory arguments */
+	case F_GETFD:
+		break;
+	default:
+		VG_(printf)("Don't know how to handle fcntl %lx\n",
+			    syscall_args[1]);
+		VG_(exit)(1);
+	}
+}
+
+static void
 post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	     SysRes res)
 {
@@ -442,6 +456,10 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 
 	case __NR_ioctl:
 		handle_ioctl(syscall_args, nr_args, res);
+		break;
+
+	case __NR_fcntl:
+		handle_fcntl(syscall_args, nr_args, res);
 		break;
 
 	case __NR_nanosleep: {
