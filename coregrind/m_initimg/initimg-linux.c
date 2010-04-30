@@ -184,13 +184,9 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
    /* copy it over */
    for (cpp = ret; *origenv; )
       *cpp++ = *origenv++;
-   vg_assert(envc == (cpp - ret));
-
-   *cpp = "LD_AUDIT=./ppres/ppres_audit.so";
-   cpp++;
-   envc++;
-
    *cpp = NULL;
+
+   vg_assert(envc == (cpp - ret));
 
    /* Walk over the new environment, mashing as we go */
    for (cpp = ret; cpp && *cpp; cpp++) {
