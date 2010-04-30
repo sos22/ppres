@@ -519,6 +519,7 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		break;
 	}
 
+	case __NR_getdents:
 	case __NR_read: {
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[1],
