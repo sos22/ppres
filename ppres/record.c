@@ -599,9 +599,13 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	}
 
 	case __NR_getgroups: {
-		if (!sr_isError(res))
+		if (!sr_isError(res)) {
+			unsigned nr_groups = sr_Res(res);
+			if (nr_groups > syscall_args[0])
+				nr_groups = syscall_args[0];
 			capture_memory((void *)syscall_args[1],
-				       sizeof(gid_t) * sr_Res(res));
+				       sizeof(gid_t) * nr_groups);
+		}
 		break;
 	}
 
