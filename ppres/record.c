@@ -452,6 +452,15 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_lseek:
 	case __NR_exit:
 	case __NR_getuid:
+	case __NR_geteuid:
+	case __NR_sync:
+		break;
+
+	case __NR_time:
+		if (!sr_isError(res) &&
+		    syscall_args[0] != 0)
+			capture_memory((void *)syscall_args[0],
+				       8);
 		break;
 
 	case __NR_ioctl:
@@ -519,6 +528,7 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		break;
 	}
 
+	case __NR_readlink:
 	case __NR_getdents:
 	case __NR_read: {
 		if (!sr_isError(res))
