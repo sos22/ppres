@@ -420,7 +420,9 @@ handle_fcntl(UWord *syscall_args, UInt nr_args, SysRes res)
 {
 	switch (syscall_args[1]) {
 		/* Most fcntl commands have no memory arguments */
+	case F_DUPFD:
 	case F_GETFD:
+	case F_SETFD:
 		break;
 	default:
 		VG_(printf)("Don't know how to handle fcntl %lx\n",
@@ -454,6 +456,10 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_getuid:
 	case __NR_geteuid:
 	case __NR_sync:
+	case __NR_getpid:
+	case __NR_getppid:
+	case __NR_getgid:
+	case __NR_getegid:
 		break;
 
 	case __NR_time:
@@ -591,6 +597,12 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		break;
 	}
 
+	case __NR_getgroups: {
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[1],
+				       sizeof(gid_t) * sr_Res(res));
+		break;
+	}
 	default:
 		VG_(printf)("don't know what to do with syscall %d\n", syscall_nr);
 		VG_(exit)(1);
