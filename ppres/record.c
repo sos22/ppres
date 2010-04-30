@@ -1,4 +1,6 @@
 #define _LARGEFILE64_SOURCE
+#include <asm/ioctl.h>
+#include <asm/ioctls.h>
 #include <asm/unistd.h>
 #include <sys/mman.h>
 #include <sys/fcntl.h>
@@ -363,6 +365,56 @@ my_mprotect(void *base, size_t len, int prot)
 	     "rsi" (len), "rdx" (prot));
 }
 
+typedef unsigned char   cc_t;
+typedef unsigned int    tcflag_t;
+#define NCCS 19
+struct termios {
+        tcflag_t c_iflag;               /* input mode flags */
+        tcflag_t c_oflag;               /* output mode flags */
+        tcflag_t c_cflag;               /* control mode flags */
+        tcflag_t c_lflag;               /* local mode flags */
+        cc_t c_line;                    /* line discipline */
+        cc_t c_cc[NCCS];                /* control characters */
+};
+struct winsize {
+        unsigned short ws_row;
+        unsigned short ws_col;
+        unsigned short ws_xpixel;
+        unsigned short ws_ypixel;
+};
+
+static void
+handle_ioctl(UWord *syscall_args, UInt nr_args, SysRes res)
+{
+	UWord code = syscall_args[1];
+	const char *dir_strings[4] = { "_IOC_NONE",
+				       "_IOC_WRITE",
+				       "_IOC_READ",
+				       "_IOC_<bad>" };
+	switch (code) {
+	case TCGETS:
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[2],
+				       sizeof(struct termios));
+		break;
+	case TIOCGWINSZ:
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[2],
+				       sizeof(struct winsize));
+		break;
+	default:
+		VG_(printf)("don't know what to do with ioctl %lx (_IOC(%ld=%s,%ld=%c,%ld,%ld))\n",
+			    code,
+			    _IOC_DIR(code),
+			    dir_strings[_IOC_DIR(code)],
+			    _IOC_TYPE(code),
+			    (unsigned char)_IOC_TYPE(code),
+			    _IOC_NR(code),
+			    _IOC_SIZE(code));
+		VG_(exit)(1);
+	}
+}
+
 static void
 post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	     SysRes res)
@@ -386,6 +438,10 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_lseek:
 	case __NR_exit:
 	case __NR_getuid:
+		break;
+
+	case __NR_ioctl:
+		handle_ioctl(syscall_args, nr_args, res);
 		break;
 
 	case __NR_nanosleep: {
