@@ -663,7 +663,8 @@ skip_spaces(char *l)
 }
 
 static void
-process_proc_line(char *line, struct record_emitter *logfile)
+process_proc_line(char *line, struct record_emitter *logfile,
+		  VexGuestAMD64State *regs)
 {
 	unsigned long start, end;
 	unsigned long ign;
@@ -690,7 +691,8 @@ process_proc_line(char *line, struct record_emitter *logfile)
 	 * doing it. */
 	if (!VG_(strcmp)((Char *)path, (Char *)"[vsyscall]"))
 		return;
-	if (!VG_(strcmp)((Char *)path, (Char *)"[stack]"))
+	if (!VG_(strcmp)((Char *)path, (Char *)"[stack]") ||
+	    (regs->guest_RSP >= start && regs->guest_RSP < end))
 		flags |= MAP_GROWSDOWN | MAP_STACK;
 
 	if (!(prot & PROT_READ)) {
@@ -785,7 +787,8 @@ dump_snapshot(void)
 			}
 		}
 		buf[buffer_line_cursor] = 0;
-		process_proc_line(buf + buffer_line_start, &logfile);
+		process_proc_line(buf + buffer_line_start, &logfile,
+				  &VG_(threads)[1].arch.vex);
 		buffer_line_start = buffer_line_cursor + 1;
 	}
 	VG_(close)(fd);
