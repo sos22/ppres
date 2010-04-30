@@ -229,6 +229,21 @@ struct kernel_stat {
         long            __unused[3];
 };
 
+#define __statfs_word long
+struct kernel_statfs {
+        __statfs_word f_type;
+        __statfs_word f_bsize;
+        __statfs_word f_blocks;
+        __statfs_word f_bfree;
+        __statfs_word f_bavail;
+        __statfs_word f_files;
+        __statfs_word f_ffree;
+        __kernel_fsid_t f_fsid;
+        __statfs_word f_namelen;
+        __statfs_word f_frsize;
+        __statfs_word f_spare[5];
+};
+
 static void
 emit_triv_syscall(UInt nr, SysRes res, UWord *args)
 {
@@ -462,6 +477,12 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[1],
 				       sizeof(struct timespec));
+		break;
+
+	case __NR_statfs:
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[1],
+				       sizeof(struct kernel_statfs));
 		break;
 
 	case __NR_futex: {
