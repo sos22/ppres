@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 
 typedef unsigned long Word;
 typedef unsigned int UInt;
@@ -18,6 +19,7 @@ typedef struct {
 	Bool  _isError;
 } SysRes;
 
+typedef struct sigaction sigaction_t;
 #include "ppres.h"
 
 #define STR2(x) #x

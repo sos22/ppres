@@ -28,6 +28,8 @@
 #include "libvex_guest_offsets.h"
 #include "valgrind.h"
 
+typedef struct vki_sigaction_base sigaction_t;
+
 #include "../coregrind/pub_core_threadstate.h"
 
 #include "ppres.h"
@@ -449,7 +451,6 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_exit_group:
 	case __NR_set_tid_address:
 	case __NR_set_robust_list:
-	case __NR_rt_sigaction:
 	case __NR_rt_sigprocmask:
 	case __NR_lseek:
 	case __NR_exit:
@@ -603,6 +604,15 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 				       sizeof(gid_t) * sr_Res(res));
 		break;
 	}
+
+	case __NR_rt_sigaction: {
+		if (!sr_isError(res) &&
+		    syscall_args[2])
+			capture_memory((void *)syscall_args[2],
+				       sizeof(sigaction_t));
+		break;
+	}
+
 	default:
 		VG_(printf)("don't know what to do with syscall %d\n", syscall_nr);
 		VG_(exit)(1);
@@ -758,12 +768,18 @@ dump_snapshot(void)
 	Int read_this_time;
 	VexGuestAMD64State *regs;
 	struct initial_brk_record *ibr;
+	unsigned x;
+	struct initial_sighandlers_record *isr;
 
 	regs = emit_record(&logfile, RECORD_initial_registers, sizeof(*regs));
 	*regs = VG_(threads)[1].arch.vex;
 
 	ibr = emit_record(&logfile, RECORD_initial_brk, sizeof(*ibr));
 	ibr->initial_brk = VG_(brk_limit);
+
+	isr = emit_record(&logfile, RECORD_initial_sighandlers, sizeof(*isr));
+	for (x = 0; x < 64; x++)
+		VG_(do_sys_sigaction)(x, NULL, &isr->handlers[x]);
 
 	sr = VG_(open)((Char *)"/proc/self/maps", VKI_O_RDONLY, 0);
 	if (sr_isError(sr)) {
@@ -814,6 +830,7 @@ dump_snapshot(void)
 		buffer_line_start = buffer_line_cursor + 1;
 	}
 	VG_(close)(fd);
+
 }
 
 static void

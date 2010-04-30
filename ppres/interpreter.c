@@ -22,6 +22,7 @@
 #include "../coregrind/pub_core_dispatch_asm.h"
 #include "../coregrind/pub_core_threadstate.h"
 
+typedef struct vki_sigaction_base sigaction_t;
 #include "replay2.h"
 #include "ppres.h"
 

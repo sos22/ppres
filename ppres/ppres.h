@@ -95,13 +95,17 @@ struct allocate_memory_record {
 /* Uses VexGuestAMD64State as payload */
 #define RECORD_initial_registers 13
 
-#define RECORD_initial_brk 14
 struct initial_brk_record {
 #define RECORD_initial_brk 14
 	UWord initial_brk;
 };
 
-#define RECORD_MAX_CLASS RECORD_initial_brk
+struct initial_sighandlers_record {
+#define RECORD_initial_sighandlers 15
+	sigaction_t handlers[64];
+};
+
+#define RECORD_MAX_CLASS RECORD_initial_sighandlers
 
 
 struct index_record {

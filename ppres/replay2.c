@@ -24,6 +24,8 @@
 
 #include "../coregrind/pub_core_threadstate.h"
 
+typedef struct vki_sigaction_base sigaction_t;
+
 #include "ppres.h"
 #include "ppres_client.h"
 #include "replay2.h"
