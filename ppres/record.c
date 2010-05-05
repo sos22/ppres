@@ -187,11 +187,9 @@ record_load(const void *ptr, unsigned size, void *base, unsigned long rsp,
 {
 	struct mem_read_record *mrr;
 	VG_(memcpy)(base, ptr, size);
-	if (!IS_STACK(ptr, rsp)) {
-		mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
-		mrr->ptr = (Word)ptr;
-		VG_(memcpy)(mrr + 1, base, size);
-	}
+	mrr = emit_record(&logfile, RECORD_mem_read, sizeof(*mrr) + size);
+	mrr->ptr = (Word)ptr;
+	VG_(memcpy)(mrr + 1, base, size);
 }
 
 static void
@@ -200,11 +198,9 @@ record_store(void *ptr, unsigned size, const void *base, unsigned long rsp,
 {
 	struct mem_write_record *mrr;
 	VG_(memcpy)(ptr, base, size);
-	if (!IS_STACK(ptr, rsp)) {
-		mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
-		mrr->ptr = (Word)ptr;
-		VG_(memcpy)(mrr + 1, base, size);
-	}
+	mrr = emit_record(&logfile, RECORD_mem_write, sizeof(*mrr) + size);
+	mrr->ptr = (Word)ptr;
+	VG_(memcpy)(mrr + 1, base, size);
 }
 
 #define included_for_record
