@@ -12,7 +12,7 @@
 #ifndef FOOTSTEP_REGS_ONLY
 
 #define RECORD_BLOCK_SIZE 16384
-#define MAX_RECORD_SIZE 4096
+#define MAX_RECORD_SIZE (4096+sizeof(struct record_header)+sizeof(struct memory_record))
 
 struct record_header {
 	unsigned cls;
