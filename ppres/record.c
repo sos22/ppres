@@ -126,9 +126,10 @@ write_index_record(int fd, unsigned long nr_records, unsigned long offset_in_fil
 }
 
 static void *
-emit_record(struct record_emitter *re,
-	    unsigned record_class,
-	    unsigned record_size)
+_emit_record(struct record_emitter *re,
+	     unsigned record_class,
+	     unsigned record_size,
+	     unsigned tid)
 {
 	struct record_header *hdr;
 
@@ -144,12 +145,20 @@ emit_record(struct record_emitter *re,
 	hdr = re->current_block + re->current_block_used;
 	hdr->cls = record_class;
 	hdr->size = record_size;
-	hdr->tid = VG_(get_running_tid)();
+	hdr->tid = tid;
 	re->current_block_used += record_size;
 	re->offset_in_file += record_size;
 
 	re->nr_records++;
 	return hdr + 1;
+}
+
+static void *
+emit_record(struct record_emitter *re,
+	    unsigned record_class,
+	    unsigned record_size)
+{
+	return _emit_record(re, record_class, record_size, VG_(get_running_tid)());
 }
 
 static void
@@ -770,15 +779,15 @@ dump_snapshot(void)
 	unsigned x;
 	struct initial_sighandlers_record *isr;
 
-	regs = emit_record(&logfile, RECORD_initial_registers, sizeof(*regs));
-	*regs = VG_(threads)[1].arch.vex;
-
 	ibr = emit_record(&logfile, RECORD_initial_brk, sizeof(*ibr));
 	ibr->initial_brk = VG_(brk_limit);
 
 	isr = emit_record(&logfile, RECORD_initial_sighandlers, sizeof(*isr));
 	for (x = 0; x < 64; x++)
 		VG_(do_sys_sigaction)(x, NULL, &isr->handlers[x]);
+
+	regs = _emit_record(&logfile, RECORD_initial_registers, sizeof(*regs), 1);
+	*regs = VG_(threads)[1].arch.vex;
 
 	sr = VG_(open)((Char *)"/proc/self/maps", VKI_O_RDONLY, 0);
 	if (sr_isError(sr)) {
