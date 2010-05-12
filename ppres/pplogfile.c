@@ -176,6 +176,26 @@ main(int argc, char *argv[])
 			       sr->signo, sr->rip, sr->err, sr->virtaddr);
 			break;
 		}
+		case RECORD_allocate_memory: {
+			struct allocate_memory_record *amr = payload;
+			printf("allocate %lx:%lx prot %lx flags %lx\n",
+			       amr->start, amr->start + amr->size, amr->prot,
+			       amr->flags);
+			break;
+		}
+		case RECORD_initial_registers: {
+			printf("<initial registers>\n");
+			break;
+		}
+		case RECORD_initial_brk: {
+			struct initial_brk_record *ibr = payload;
+			printf("initial brk 0x%lx\n", ibr->initial_brk);
+			break;
+		}
+		case RECORD_initial_sighandlers: {
+			printf("<initial sighandlers>\n");
+			break;
+		}
 		default:
 			printf("record cls %d\n", h.cls);
 			break;
