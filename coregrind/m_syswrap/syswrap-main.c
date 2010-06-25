@@ -1265,6 +1265,9 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
    ensure_initialised();
 
    vg_assert(VG_(is_valid_tid)(tid));
+   if (VG_(running_tid) != tid)
+     VG_(printf)("syscalling in %d, running %d\n", tid, VG_(running_tid));
+
    vg_assert(tid >= 1 && tid < VG_N_THREADS);
 
    tst = VG_(get_ThreadState)(tid);
@@ -1442,6 +1445,9 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
                   &layout, 
                   &sci->args, &sci->status, &sci->flags );
    
+   if (VG_(running_tid) != tid)
+     VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
+
    /* The pre-handler may have modified:
          sci->args
          sci->status
@@ -1456,6 +1462,8 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
    vg_assert(sci->args.sysno == sci->orig_args.sysno);
 
    if (sci->status.what == SsComplete && !sr_isError(sci->status.sres)) {
+     if (VG_(running_tid) != tid)
+       VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
       /* The pre-handler completed the syscall itself, declaring
          success. */
       if (sci->flags & SfNoWriteResult) {
@@ -1475,6 +1483,8 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
 
    else
    if (sci->status.what == SsComplete && sr_isError(sci->status.sres)) {
+     if (VG_(running_tid) != tid)
+       VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
       /* The pre-handler decided to fail syscall itself. */
       PRINT(" --> [pre-fail] Failure(0x%llx)", (ULong)sr_Err(sci->status.sres));
       /* In this case, the pre-handler is also allowed to ask for the
@@ -1501,6 +1511,8 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
          by doing it directly in this thread, which is a lot
          simpler. */
 
+     if (VG_(running_tid) != tid)
+       VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
       /* Check that the given flags are allowable: MayBlock, PollAfter
          and PostOnFail are ok. */
       vg_assert(0 == (sci->flags & ~(SfMayBlock | SfPostOnFail | SfPollAfter)));
@@ -1511,6 +1523,9 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
          vki_sigset_t mask;
 
          PRINT(" --> [async] ... \n");
+
+	 if (VG_(running_tid) != tid)
+	   VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
 
          mask = tst->sig_mask;
          sanitize_client_sigmask(&mask);
@@ -1583,13 +1598,20 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
             kernel, there's no point in flushing them back to the
             guest state.  Indeed doing so could be construed as
             incorrect. */
-         SysRes sres 
+	SysRes sres;
+
+	if (VG_(running_tid) != tid)
+	  VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
+
+	sres
             = VG_(do_syscall)(sysno, sci->args.arg1, sci->args.arg2, 
                                      sci->args.arg3, sci->args.arg4, 
                                      sci->args.arg5, sci->args.arg6,
                                      sci->args.arg7, sci->args.arg8 );
          sci->status = convert_SysRes_to_SyscallStatus(sres);
 
+	 if (VG_(running_tid) != tid)
+	   VG_(printf)("%s:%d syscalling in %d, running %d\n", __FILE__, __LINE__, tid, VG_(running_tid));
          /* Be decorative, if required. */
          if (VG_(clo_trace_syscalls)) {
             Bool failed = sr_isError(sci->status.sres);

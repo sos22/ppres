@@ -591,7 +591,7 @@ void VG_(scheduler_init_phase2) ( ThreadId tid_main,
 	 vg_assert(!_qq_tst->sched_jmpbuf_valid);			\
 	 _qq_tst->sched_jmpbuf_valid = True;				\
 	 stmt;								\
-      }	else if (VG_(clo_trace_sched))					\
+      }	else if (1)							\
 	 VG_(printf)("SCHEDSETJMP(line %d) tid %d, jumped=%d\n",        \
                      __LINE__, tid, jumped);                            \
       vg_assert(_qq_tst->sched_jmpbuf_valid);				\
@@ -962,6 +962,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 
    while (!VG_(is_exiting)(tid)) {
 
+     vg_assert(VG_(is_running_thread)(tid));
       if (VG_(dispatch_ctr) == 1) {
 
 #        if defined(VGP_ppc32_aix5) || defined(VGP_ppc64_aix5)
@@ -1010,6 +1011,8 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 VG_(acquire_BigLock)(tid, "VG_(scheduler):timeslice");
 	 /* ------------ now we do have The Lock ------------ */
 
+	 vg_assert(VG_(is_running_thread)(tid));
+
 	 /* OK, do some relatively expensive housekeeping stuff */
 	 scheduler_sanity(tid);
 	 VG_(sanity_check_general)(False);
@@ -1047,6 +1050,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 
       trc = run_thread_for_a_while ( tid );
 
+      VG_(running_tid) = tid;
       if (VG_(clo_trace_sched) && VG_(clo_verbosity) > 2) {
 	 Char buf[50];
 	 VG_(sprintf)(buf, "TRC: %s", name_of_sched_event(trc));
@@ -1083,6 +1087,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
       case VEX_TRC_JMP_SYS_INT129:  /* x86-darwin */
       case VEX_TRC_JMP_SYS_INT130:  /* x86-darwin */
       case VEX_TRC_JMP_SYS_SYSCALL: /* amd64-linux, ppc32-linux, amd64-darwin */
+	VG_(running_tid) = tid;
 	 handle_syscall(tid, trc);
 	 if (VG_(clo_sanity_level) > 2)
 	    VG_(sanity_check_general)(True); /* sanity-check every syscall */

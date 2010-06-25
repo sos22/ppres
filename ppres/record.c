@@ -9,6 +9,7 @@
 #include <linux/utsname.h>
 #include <linux/futex.h>
 #include <errno.h>
+#include <sched.h>
 #include <setjmp.h>
 #include <time.h>
 #include "pub_tool_basics.h"
@@ -465,6 +466,10 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_getppid:
 	case __NR_getgid:
 	case __NR_getegid:
+	case __NR_sched_getscheduler:
+	case __NR_sched_get_priority_min:
+	case __NR_sched_get_priority_max:
+	case __NR_tgkill:
 		break;
 
 	case __NR_time:
@@ -569,7 +574,19 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 				       sizeof(struct rlimit));
 		break;
 
+	case __NR_gettimeofday:
+		if (!sr_isError(res)) {
+			if (syscall_args[0])
+				capture_memory((void *)syscall_args[0],
+					       sizeof(struct timeval));
+			if (syscall_args[1])
+				capture_memory((void *)syscall_args[1],
+					       sizeof(struct timeval));
+		}
+		break;
+
 	case __NR_clock_gettime:
+	case __NR_clock_getres:
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[1],
 				       sizeof(struct timespec));
@@ -586,6 +603,7 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		 * this. */
 		switch (syscall_args[1] & FUTEX_CMD_MASK) {
 		case FUTEX_WAKE:
+		case FUTEX_CMP_REQUEUE:
 			/* No special handling needed */
 			break;
 		case FUTEX_WAIT:
@@ -593,6 +611,9 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 			if (!sr_isError(res) ||
 			    sr_Err(res) != EWOULDBLOCK)
 				emit_record(&logfile, RECORD_thread_unblocked, 0);
+			break;
+		case FUTEX_WAKE_OP:
+			capture_memory((void *)syscall_args[4], 4);
 			break;
 		default:
 			VG_(printf)("Don't understand futex operation %ld\n",
@@ -618,6 +639,13 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		    syscall_args[2])
 			capture_memory((void *)syscall_args[2],
 				       sizeof(sigaction_t));
+		break;
+	}
+
+	case __NR_sched_getparam: {
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[1],
+				       sizeof(struct sched_param));
 		break;
 	}
 

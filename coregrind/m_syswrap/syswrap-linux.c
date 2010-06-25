@@ -1308,7 +1308,7 @@ PRE(sys_tgkill)
       kernel did not immediately deliver the async signal to this
       thread (on ppc it did, which broke the assertion re tst->status
       at the top of async_signalhandler()). */
-   *flags |= SfMayBlock;
+   //*flags |= SfMayBlock;
 }
 POST(sys_tgkill)
 {
