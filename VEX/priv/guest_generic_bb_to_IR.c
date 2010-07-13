@@ -1,42 +1,31 @@
 
 /*--------------------------------------------------------------------*/
-/*---                                                              ---*/
-/*--- This file (guest_generic_bb_to_IR.c) is                      ---*/
-/*--- Copyright (C) OpenWorks LLP.  All rights reserved.           ---*/
-/*---                                                              ---*/
+/*--- begin                               guest_generic_bb_to_IR.c ---*/
 /*--------------------------------------------------------------------*/
 
 /*
-   This file is part of LibVEX, a library for dynamic binary
-   instrumentation and translation.
+   This file is part of Valgrind, a dynamic binary instrumentation
+   framework.
 
-   Copyright (C) 2004-2009 OpenWorks LLP.  All rights reserved.
+   Copyright (C) 2004-2010 OpenWorks LLP
+      info@open-works.net
 
-   This library is made available under a dual licensing scheme.
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version.
 
-   If you link LibVEX against other code all of which is itself
-   licensed under the GNU General Public License, version 2 dated June
-   1991 ("GPL v2"), then you may use LibVEX under the terms of the GPL
-   v2, as appearing in the file LICENSE.GPL.  If the file LICENSE.GPL
-   is missing, you can obtain a copy of the GPL v2 from the Free
-   Software Foundation Inc., 51 Franklin St, Fifth Floor, Boston, MA
+   This program is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
    02110-1301, USA.
 
-   For any other uses of LibVEX, you must first obtain a commercial
-   license from OpenWorks LLP.  Please contact info@open-works.co.uk
-   for information about commercial licensing.
-
-   This software is provided by OpenWorks LLP "as is" and any express
-   or implied warranties, including, but not limited to, the implied
-   warranties of merchantability and fitness for a particular purpose
-   are disclaimed.  In no event shall OpenWorks LLP be liable for any
-   direct, indirect, incidental, special, exemplary, or consequential
-   damages (including, but not limited to, procurement of substitute
-   goods or services; loss of use, data, or profits; or business
-   interruption) however caused and on any theory of liability,
-   whether in contract, strict liability, or tort (including
-   negligence or otherwise) arising in any way out of the use of this
-   software, even if advised of the possibility of such damage.
+   The GNU General Public License is contained in the file COPYING.
 
    Neither the names of the U.S. Department of Energy nor the
    University of California nor the names of its contributors may be
@@ -54,9 +43,31 @@
 
 /* Forwards .. */
 __attribute__((regparm(2)))
-static UInt genericg_compute_checksum_4al_4plus ( HWord addr, HWord len );
-__attribute__((regparm(2)))
-static UInt genericg_compute_checksum_generic ( HWord addr, HWord len );
+static UInt genericg_compute_checksum_4al ( HWord first_w32, HWord n_w32s );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_1 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_2 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_3 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_4 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_5 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_6 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_7 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_8 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_9 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_10 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_11 ( HWord first_w32 );
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_12 ( HWord first_w32 );
 
 /* Small helpers */
 static Bool const_False ( void* callback_opaque, Addr64 a ) { 
@@ -121,6 +132,7 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
    IRSB*      irsb;
    Addr64     guest_IP_curr_instr;
    IRConst*   guest_IP_bbstart_IRConst = NULL;
+   Int        n_cond_resteers_allowed = 2;
 
    Bool (*resteerOKfn)(void*,Addr64) = NULL;
 
@@ -209,6 +221,15 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
       resteerOKfn
          = resteerOK ? chase_into_ok : const_False;
 
+      /* n_cond_resteers_allowed keeps track of whether we're still
+         allowing dis_instr_fn to chase conditional branches.  It
+         starts (at 2) and gets decremented each time dis_instr_fn
+         tells us it has chased a conditional branch.  We then
+         decrement it, and use it to tell later calls to dis_instr_fn
+         whether or not it is allowed to chase conditional
+         branches. */
+      vassert(n_cond_resteers_allowed >= 0 && n_cond_resteers_allowed <= 2);
+
       /* This is the IP of the instruction we're just about to deal
          with. */
       guest_IP_curr_instr = guest_IP_bbstart + delta;
@@ -231,6 +252,7 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
       dres = dis_instr_fn ( irsb,
                             need_to_put_IP,
                             resteerOKfn,
+                            toBool(n_cond_resteers_allowed > 0),
                             callback_opaque,
                             guest_code,
                             delta,
@@ -243,10 +265,17 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
       /* stay sane ... */
       vassert(dres.whatNext == Dis_StopHere
               || dres.whatNext == Dis_Continue
-              || dres.whatNext == Dis_Resteer);
+              || dres.whatNext == Dis_ResteerU
+              || dres.whatNext == Dis_ResteerC);
+      /* ... disassembled insn length is sane ... */
       vassert(dres.len >= 0 && dres.len <= 20);
-      if (dres.whatNext != Dis_Resteer)
+      /* ... continueAt is zero if no resteer requested ... */
+      if (dres.whatNext != Dis_ResteerU && dres.whatNext != Dis_ResteerC)
          vassert(dres.continueAt == 0);
+      /* ... if we disallowed conditional resteers, check that one
+             didn't actually happen anyway ... */
+      if (n_cond_resteers_allowed == 0)
+         vassert(dres.whatNext != Dis_ResteerC);
 
       /* Fill in the insn-mark length field. */
       vassert(first_stmt_idx >= 0 && first_stmt_idx < irsb->stmts_used);
@@ -313,10 +342,15 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
          case Dis_StopHere:
             vassert(irsb->next != NULL);
             goto done;
-         case Dis_Resteer:
+         case Dis_ResteerU:
+         case Dis_ResteerC:
             /* Check that we actually allowed a resteer .. */
             vassert(resteerOK);
             vassert(irsb->next == NULL);
+            if (dres.whatNext == Dis_ResteerC) {
+               vassert(n_cond_resteers_allowed > 0);
+               n_cond_resteers_allowed--;
+            }
             /* figure out a new delta to continue at. */
             vassert(resteerOKfn(callback_opaque,dres.continueAt));
             delta = dres.continueAt - guest_IP_bbstart;
@@ -341,13 +375,40 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
 
   done:
    /* We're done.  The only thing that might need attending to is that
-      a self-checking preamble may need to be created. */
+      a self-checking preamble may need to be created.
+
+      The scheme is to compute a rather crude checksum of the code
+      we're making a translation of, and add to the IR a call to a
+      helper routine which recomputes the checksum every time the
+      translation is run, and requests a retranslation if it doesn't
+      match.  This is obviously very expensive and considerable
+      efforts are made to speed it up:
+
+      * the checksum is computed from all the 32-bit words that
+        overlap the translated code.  That means it could depend on up
+        to 3 bytes before and 3 bytes after which aren't part of the
+        translated area, and so if those change then we'll
+        unnecessarily have to discard and retranslate.  This seems
+        like a pretty remote possibility and it seems as if the
+        benefit of not having to deal with the ends of the range at
+        byte precision far outweigh any possible extra translations
+        needed.
+
+      * there's a generic routine and 12 specialised cases, which
+        handle the cases of 1 through 12-word lengths respectively.
+        They seem to cover about 90% of the cases that occur in
+        practice.
+   */
    if (do_self_check) {
 
       UInt     len2check, expected32;
       IRTemp   tistart_tmp, tilen_tmp;
-      UInt     (*checksum_fn)(HWord, HWord) __attribute__((regparm(2)));
-      HWord    checksum_fn_entry;
+      UInt     (*fn_generic)(HWord, HWord) __attribute__((regparm(2)));
+      UInt     (*fn_spec)(HWord) __attribute__((regparm(1)));
+      HChar*   nm_generic;
+      HChar*   nm_spec;
+      HWord    fn_generic_entry = 0;
+      HWord    fn_spec_entry = 0;
 
       vassert(vge->n_used == 1);
       len2check = vge->len[0];
@@ -355,65 +416,134 @@ IRSB* bb_to_IR ( /*OUT*/VexGuestExtents* vge,
       /* stay sane */
       vassert(len2check >= 0 && len2check < 1000/*arbitrary*/);
 
-      if (len2check >= 4 && 0 == (((HWord)guest_code) & 3)) {
-         checksum_fn = genericg_compute_checksum_4al_4plus;
-      } else {
-         checksum_fn = genericg_compute_checksum_generic;
-      }
+      /* Skip the check if the translation involved zero bytes */
+      if (len2check > 0) {
+         HWord first_w32 = ((HWord)guest_code) & ~(HWord)3;
+         HWord last_w32  = (((HWord)guest_code) + len2check - 1) & ~(HWord)3;
+         vassert(first_w32 <= last_w32);
+         HWord w32_diff = last_w32 - first_w32;
+         vassert(0 == (w32_diff & 3));
+         HWord w32s_to_check = (w32_diff + 4) / 4;
+         vassert(w32s_to_check > 0 && w32s_to_check < 1004/*arbitrary*//4);
 
-      expected32 = checksum_fn( (HWord)guest_code, len2check );
+         /* vex_printf("%lx %lx  %ld\n", first_w32, last_w32, w32s_to_check); */
 
-      /* Set TISTART and TILEN.  These will describe to the despatcher
-         the area of guest code to invalidate should we exit with a
-         self-check failure. */
+         fn_generic =  genericg_compute_checksum_4al;
+         nm_generic = "genericg_compute_checksum_4al";
+         fn_spec = NULL;
+         nm_spec = NULL;
 
-      tistart_tmp = newIRTemp(irsb->tyenv, guest_word_type);
-      tilen_tmp   = newIRTemp(irsb->tyenv, guest_word_type);
+         switch (w32s_to_check) {
+             case 1:  fn_spec =  genericg_compute_checksum_4al_1;
+                      nm_spec = "genericg_compute_checksum_4al_1"; break;
+             case 2:  fn_spec =  genericg_compute_checksum_4al_2;
+                      nm_spec = "genericg_compute_checksum_4al_2"; break;
+             case 3:  fn_spec =  genericg_compute_checksum_4al_3;
+                      nm_spec = "genericg_compute_checksum_4al_3"; break;
+             case 4:  fn_spec =  genericg_compute_checksum_4al_4;
+                      nm_spec = "genericg_compute_checksum_4al_4"; break;
+             case 5:  fn_spec =  genericg_compute_checksum_4al_5;
+                      nm_spec = "genericg_compute_checksum_4al_5"; break;
+             case 6:  fn_spec =  genericg_compute_checksum_4al_6;
+                      nm_spec = "genericg_compute_checksum_4al_6"; break;
+             case 7:  fn_spec =  genericg_compute_checksum_4al_7;
+                      nm_spec = "genericg_compute_checksum_4al_7"; break;
+             case 8:  fn_spec =  genericg_compute_checksum_4al_8;
+                      nm_spec = "genericg_compute_checksum_4al_8"; break;
+             case 9:  fn_spec =  genericg_compute_checksum_4al_9;
+                      nm_spec = "genericg_compute_checksum_4al_9"; break;
+             case 10: fn_spec =  genericg_compute_checksum_4al_10;
+                      nm_spec = "genericg_compute_checksum_4al_10"; break;
+             case 11: fn_spec =  genericg_compute_checksum_4al_11;
+                      nm_spec = "genericg_compute_checksum_4al_11"; break;
+             case 12: fn_spec =  genericg_compute_checksum_4al_12;
+                      nm_spec = "genericg_compute_checksum_4al_12"; break;
+             default: break;
+         }
 
-      irsb->stmts[selfcheck_idx+0]
-         = IRStmt_WrTmp(tistart_tmp, IRExpr_Const(guest_IP_bbstart_IRConst) );
+         expected32 = fn_generic( first_w32, w32s_to_check );
+         /* If we got a specialised version, check it produces the same
+            result as the generic version! */
+         if (fn_spec) {
+            vassert(nm_spec);
+            vassert(expected32 == fn_spec( first_w32 ));
+         } else {
+            vassert(!nm_spec);
+         }
 
-      irsb->stmts[selfcheck_idx+1]
-         = IRStmt_WrTmp(tilen_tmp,
-                        guest_word_type==Ity_I32 
-                           ? IRExpr_Const(IRConst_U32(len2check)) 
-                           : IRExpr_Const(IRConst_U64(len2check))
-           );
+         /* Set TISTART and TILEN.  These will describe to the despatcher
+            the area of guest code to invalidate should we exit with a
+            self-check failure. */
 
-      irsb->stmts[selfcheck_idx+2]
-         = IRStmt_Put( offB_TISTART, IRExpr_RdTmp(tistart_tmp) );
+         tistart_tmp = newIRTemp(irsb->tyenv, guest_word_type);
+         tilen_tmp   = newIRTemp(irsb->tyenv, guest_word_type);
 
-      irsb->stmts[selfcheck_idx+3]
-         = IRStmt_Put( offB_TILEN, IRExpr_RdTmp(tilen_tmp) );
+         irsb->stmts[selfcheck_idx+0]
+            = IRStmt_WrTmp(tistart_tmp, IRExpr_Const(guest_IP_bbstart_IRConst) );
 
-      if (abiinfo_both->host_ppc_calls_use_fndescrs) {
-         HWord* fndescr = (HWord*)checksum_fn;
-         checksum_fn_entry = fndescr[0];
-      } else {
-         checksum_fn_entry = (HWord)checksum_fn;
-      }
+         irsb->stmts[selfcheck_idx+1]
+            = IRStmt_WrTmp(tilen_tmp,
+                           guest_word_type==Ity_I32 
+                              ? IRExpr_Const(IRConst_U32(len2check)) 
+                              : IRExpr_Const(IRConst_U64(len2check))
+              );
 
-      irsb->stmts[selfcheck_idx+4]
-         = IRStmt_Exit( 
-              IRExpr_Binop( 
-                 Iop_CmpNE32, 
-                 mkIRExprCCall( 
-                    Ity_I32, 
-                    2/*regparms*/, 
-                    checksum_fn == genericg_compute_checksum_4al_4plus
-                       ? "genericg_compute_checksum_4al_4plus"
-                       : "genericg_compute_checksum_generic",
-                    (void*)checksum_fn_entry,
-                    mkIRExprVec_2( 
-                       mkIRExpr_HWord( (HWord)guest_code ), 
-                       mkIRExpr_HWord( (HWord)len2check )
-                    )
+         irsb->stmts[selfcheck_idx+2]
+            = IRStmt_Put( offB_TISTART, IRExpr_RdTmp(tistart_tmp) );
+
+         irsb->stmts[selfcheck_idx+3]
+            = IRStmt_Put( offB_TILEN, IRExpr_RdTmp(tilen_tmp) );
+
+         /* Generate the entry point descriptors */
+         if (abiinfo_both->host_ppc_calls_use_fndescrs) {
+            HWord* descr = (HWord*)fn_generic;
+            fn_generic_entry = descr[0];
+            if (fn_spec) {
+               descr = (HWord*)fn_spec;
+               fn_spec_entry = descr[0];
+            } else {
+               fn_spec_entry = (HWord)NULL;
+            }
+         } else {
+            fn_generic_entry = (HWord)fn_generic;
+            if (fn_spec) {
+               fn_spec_entry = (HWord)fn_spec;
+            } else {
+               fn_spec_entry = (HWord)NULL;
+            }
+         }
+
+         IRExpr* callexpr = NULL;
+         if (fn_spec) {
+            callexpr = mkIRExprCCall( 
+                          Ity_I32, 1/*regparms*/, 
+                          nm_spec, (void*)fn_spec_entry,
+                          mkIRExprVec_1(
+                             mkIRExpr_HWord( (HWord)first_w32 )
+                          )
+                       );
+         } else {
+            callexpr = mkIRExprCCall( 
+                          Ity_I32, 2/*regparms*/, 
+                          nm_generic, (void*)fn_generic_entry,
+                          mkIRExprVec_2(
+                             mkIRExpr_HWord( (HWord)first_w32 ),
+                             mkIRExpr_HWord( (HWord)w32s_to_check )
+                          )
+                       );
+         }
+
+         irsb->stmts[selfcheck_idx+4]
+            = IRStmt_Exit( 
+                 IRExpr_Binop( 
+                    Iop_CmpNE32,
+                    callexpr,
+                    IRExpr_Const(IRConst_U32(expected32))
                  ),
-                 IRExpr_Const(IRConst_U32(expected32))
-              ),
-              Ijk_TInval,
-              guest_IP_bbstart_IRConst
-           );
+                 Ijk_TInval,
+                 guest_IP_bbstart_IRConst
+              );
+      }
    }
 
    return irsb;
@@ -441,83 +571,249 @@ static inline UInt ROL32 ( UInt w, Int n ) {
 }
 
 __attribute((regparm(2)))
-static UInt genericg_compute_checksum_generic ( HWord addr, HWord len )
+static UInt genericg_compute_checksum_4al ( HWord first_w32, HWord n_w32s )
 {
-   UInt sum1 = 0, sum2 = 0;
-   /* pull up to 4-alignment */
-   while ((addr & 3) != 0 && len >= 1) {
-      UChar* p = (UChar*)addr;
-      sum1 = (sum1 << 8) | (UInt)p[0];
-      addr++;
-      len--;
-   }
-   /* vectorised + unrolled */
-   while (len >= 16) {
-      UInt* p = (UInt*)addr;
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   /* unrolled */
+   while (n_w32s >= 4) {
       UInt  w;
       w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
       w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
       w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
       w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      addr += 16;
-      len  -= 16;
+      p += 4;
+      n_w32s -= 4;
       sum1 ^= sum2;
    }
-   /* vectorised fixup */
-   while (len >= 4) {
-      UInt* p = (UInt*)addr;
-      UInt  w = p[0];
-      sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      addr += 4;
-      len  -= 4;
+   while (n_w32s >= 1) {
+      UInt  w;
+      w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+      p += 1;
+      n_w32s -= 1;
       sum1 ^= sum2;
-   }
-   /* scalar fixup */
-   while (len >= 1) {
-      UChar* p = (UChar*)addr;
-      UInt   w = (UInt)p[0];
-      sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      addr++;
-      len--;
    }
    return sum1 + sum2;
 }
 
-__attribute((regparm(2)))
-static UInt genericg_compute_checksum_4al_4plus ( HWord addr, HWord len )
+/* Specialised versions of the above function */
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_1 ( HWord first_w32 )
 {
-   UInt sum1 = 0, sum2 = 0;
-   /* vassert(0 == (addr & 3)); */
-   /* vassert(len >= 4); */
-   /* vectorised + unrolled */
-   while (len >= 16) {
-      UInt* p = (UInt*)addr;
-      UInt  w;
-      w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      addr += 16;
-      len  -= 16;
-      sum1 ^= sum2;
-   }
-   /* vectorised fixup */
-   while (len >= 4) {
-      UInt* p = (UInt*)addr;
-      UInt  w = p[0];
-      sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      addr += 4;
-      len  -= 4;
-      sum1 ^= sum2;
-   }
-   /* scalar fixup */
-   while (len >= 1) {
-      UChar* p = (UChar*)addr;
-      UInt   w = (UInt)p[0];
-      sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
-      addr++;
-      len--;
-   }
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_2 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_3 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_4 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_5 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_6 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_7 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[6];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_8 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[6];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[7];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_9 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[6];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[7];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[8];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_10 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[6];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[7];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[8];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[9];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_11 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[6];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[7];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[8];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[9];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[10]; sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   return sum1 + sum2;
+}
+
+__attribute__((regparm(1)))
+static UInt genericg_compute_checksum_4al_12 ( HWord first_w32 )
+{
+   UInt  sum1 = 0, sum2 = 0;
+   UInt* p = (UInt*)first_w32;
+   UInt  w;
+   w = p[0];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[1];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[2];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[3];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[4];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[5];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[6];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[7];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
+   w = p[8];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[9];  sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[10]; sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   w = p[11]; sum1 = ROL32(sum1 ^ w, 31);  sum2 += w;
+   sum1 ^= sum2;
    return sum1 + sum2;
 }
 

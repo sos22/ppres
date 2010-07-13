@@ -2316,6 +2316,7 @@ static void setup_post_syscall_table ( void )
 #     endif
       ADD(0, __NR_getrlimit);
       ADD(0, __NR_getrusage);
+      ADD(0, __NR_getsid);
 #     if defined(__NR_getsockname)
       ADD(0, __NR_getsockname);
 #     endif
@@ -2331,6 +2332,9 @@ static void setup_post_syscall_table ( void )
       ADD(0, __NR_getxattr);
       ADD(0, __NR_inotify_add_watch);
       ADD(0, __NR_inotify_init);
+#     if defined(__NR_inotify_init1)
+      ADD(0, __NR_inotify_init1);
+#     endif
       ADD(0, __NR_inotify_rm_watch);
       ADD(0, __NR_ioctl); // ioctl -- assuming no pointers returned
       ADD(0, __NR_ioprio_get);
@@ -2347,6 +2351,7 @@ static void setup_post_syscall_table ( void )
       ADD(0, __NR_madvise);
       ADD(0, __NR_mkdir);
       ADD(0, __NR_mlock);
+      ADD(0, __NR_mlockall);
       ADD(0, __NR_mprotect);
       ADD(0, __NR_munmap); // die_mem_munmap already called, segment remove);
       ADD(0, __NR_nanosleep);

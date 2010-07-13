@@ -82,7 +82,7 @@
 #define DRD_STOP_IGNORING_VAR(x) DRDCL_(ignore_range)(&(x), sizeof(x))
 
 /**
- * Tell DRD to trace all memory accesses on the specified variable. 
+ * Tell DRD to trace all memory accesses on the specified variable.
  * until the memory that was allocated for the variable is freed.
  */
 #define DRD_TRACE_VAR(x) DRDCL_(trace_range)(&(x), sizeof(x))
@@ -90,24 +90,24 @@
 /**
  * @defgroup RaceDetectionAnnotations Data race detection annotations.
  *
- * @see See also the source file <a href="http://code.google.com/p/google-perftools/source/browse/trunk/src/base/dynamic_annotations.h">dynamic_annotations.h</a>
+ * @see See also the source file <a href="http://code.google.com/p/data-race-test/source/browse/trunk/dynamic_annotations/dynamic_annotations.h</a>
+
  * in the ThreadSanitizer project.
  */
 /*@{*/
 
 /**
- * Tell DRD to insert a mark. addr is the address of an object that is not a
- * pthread synchronization object. Inserting two 'happens before' annotations
- * while no thread has passed by a 'happens after' annotation is an error.
+ * Tell DRD to insert a happens-before mark. addr is the address of an object
+ * that is not a pthread synchronization object.
  */
 #define ANNOTATE_HAPPENS_BEFORE(addr) DRDCL_(annotate_happens_before)(addr)
 
 /**
- * Tell DRD that the memory accesses executed after this annotation will happen
- * after the memory accesses performed before the most recent
+ * Tell DRD that the memory accesses executed after this annotation will
+ * happen after all memory accesses performed before all preceding
  * ANNOTATE_HAPPENS_BEFORE(addr). addr is the address of an object that is not
- * a pthread synchronization object. Inserting a 'happens after' annotation
- * before any other thread has passed by a 'happens before' annotation for the
+ * a pthread synchronization object. Inserting a happens-after annotation
+ * before any other thread has passed by a happens-before annotation for the
  * same address is an error.
  */
 #define ANNOTATE_HAPPENS_AFTER(addr) DRDCL_(annotate_happens_after)(addr)
@@ -128,6 +128,11 @@
 #define ANNOTATE_CONDVAR_SIGNAL(cv) do { } while(0)
 
 /**
+ * Tell DRD that the condition variable at address cv is about to be signaled.
+ */
+#define ANNOTATE_CONDVAR_SIGNAL_ALL(cv) do { } while(0)
+
+/**
  * Tell DRD that waiting on condition variable at address cv succeeded and that
  * the memory operations performed after this annotation should be considered
  * to happen after the matching ANNOTATE_CONDVAR_SIGNAL(cv). Since this is the
@@ -142,6 +147,9 @@
  * ordered. This is how DRD always behaves, so this macro has been defined
  * such that it has no effect.
  */
+#define ANNOTATE_PURE_HAPPENS_BEFORE_MUTEX(mtx) do { } while(0)
+
+/** Deprecated -- don't use this annotation. */
 #define ANNOTATE_MUTEX_IS_USED_AS_CONDVAR(mtx) do { } while(0)
 
 /**
@@ -151,10 +159,11 @@
  */
 #define ANNOTATE_PUBLISH_MEMORY_RANGE(addr, size) do { } while(0)
 
-/**
- * Tell DRD to undo the effect of ANNOTATE_PUBLISH_MEMORY_RANGE().
- */
+/** Deprecated -- don't use this annotation. */
 #define ANNOTATE_UNPUBLISH_MEMORY_RANGE(addr, size) do { } while(0)
+
+/** Deprecated -- don't use this annotation. */
+#define ANNOTATE_SWAP_MEMORY_RANGE(addr, size) do { } while(0)
 
 /** Tell DRD that a reader-writer lock object has been initialized. */
 #define ANNOTATE_RWLOCK_CREATE(rwlock) \
@@ -202,6 +211,27 @@
  */
 #define ANNOTATE_WRITERLOCK_RELEASED(rwlock) ANNOTATE_RWLOCK_RELEASED(rwlock, 1)
 
+/*
+ * Report that a barrier has been initialized with a given barrier count.  The
+ * third argument specifies whether or not reinitialization is allowed, that
+ * is, whether or not it is allowed to call barrier_init() several times
+ * without calling barrier_destroy().
+ */
+#define ANNOTATE_BARRIER_INIT(barrier, count, reinitialization_allowed) \
+   DRDCL_(annotate_barrier_init)(barrier, count, reinitialization_allowed)
+
+/* Report that a barrier has been destroyed. */
+#define ANNOTATE_BARRIER_DESTROY(barrier)	\
+   DRDCL_(annotate_barrier_destroy)(barrier)
+
+/* Report that the calling thread is about to start waiting for a barrier. */
+#define ANNOTATE_BARRIER_WAIT_BEFORE(barrier)		\
+   DRDCL_(annotate_barrier_wait_before)(barrier)
+
+/* Report that the calling thread has just finished waiting for a barrier. */
+#define ANNOTATE_BARRIER_WAIT_AFTER(barrier)	\
+   DRDCL_(annotate_barrier_wait_after)(barrier)
+
 /**
  * Tell DRD that a FIFO queue has been created. The abbreviation PCQ stands for
  * <em>producer-consumer</em>.
@@ -228,10 +258,16 @@
 #define ANNOTATE_PCQ_GET(pcq) do { } while(0)
 
 /**
- * Tell DRD that data races in the specified address range are expected and
- * must not be reported.
+ * Tell DRD that data races at the specified address are expected and must not
+ * be reported.
  */
-#define ANNOTATE_BENIGN_RACE(addr, descr) DRDCL_(ignore_range)(addr, 4)
+#define ANNOTATE_BENIGN_RACE(addr, descr) \
+   DRDCL_(ignore_range)(addr, sizeof(*addr))
+
+/* Same as ANNOTATE_BENIGN_RACE(address, description), but applies to
+   the memory range [address, address+size). */
+#define ANNOTATE_BENIGN_RACE_SIZED(address, size, description)	\
+   DRDCL_(ignore_range)(addr, size)
 
 /** Tell DRD to ignore all reads performed by the current thread. */
 #define ANNOTATE_IGNORE_READS_BEGIN() DRDCL_(set_record_loads)(0)
@@ -320,6 +356,10 @@ enum {
    VG_USERREQ__DRD_SET_THREAD_NAME,
    /* args: null-terminated character string. */
 
+   /* Tell DRD that a DRD annotation has not yet been implemented. */
+   VG_USERREQ__DRD_ANNOTATION_UNIMP,
+   /* args: Char*. */
+
    /* Tell DRD that a user-defined reader-writer synchronization object
     * has been created. */
    VG_USERREQ__DRD_ANNOTATE_RWLOCK_CREATE
@@ -341,16 +381,16 @@ enum {
       = VG_USERREQ_TOOL_BASE('H','G') + 256 + 18,
    /* args: Addr, Int is_rw. */
 
-   /* Tell DRD that an annotation has not yet been implemented. */
-   VG_USERREQ__DRD_ANNOTATION_UNIMP
+   /* Tell DRD that a Helgrind annotation has not yet been implemented. */
+   VG_USERREQ__HELGRIND_ANNOTATION_UNIMP
       = VG_USERREQ_TOOL_BASE('H','G') + 256 + 32,
    /* args: Char*. */
 
-   /* Tell DRD to insert a happens before annotation. */
+   /* Tell DRD to insert a happens-before annotation. */
    VG_USERREQ__DRD_ANNOTATE_HAPPENS_BEFORE
       = VG_USERREQ_TOOL_BASE('H','G') + 256 + 33,
    /* args: Addr. */
-   /* Tell DRD to insert a happens after annotation. */
+   /* Tell DRD to insert a happens-after annotation. */
    VG_USERREQ__DRD_ANNOTATE_HAPPENS_AFTER
       = VG_USERREQ_TOOL_BASE('H','G') + 256 + 34,
    /* args: Addr. */
@@ -489,5 +529,80 @@ void DRDCL_(annotate_rwlock_released)(const void* const rwlock, const int is_w)
                               VG_USERREQ__DRD_ANNOTATE_RWLOCK_RELEASED,
                               rwlock, is_w, 0, 0, 0);
 }
+
+static __inline__
+void DRDCL_(annotate_barrier_init)(const void* barrier, const unsigned count,
+				   const int reinitialization_allowed)
+{
+   int res;
+   VALGRIND_DO_CLIENT_REQUEST(res, 0,
+                              VG_USERREQ__DRD_ANNOTATION_UNIMP,
+                              "ANNOTATE_BARRIER_INIT", 0, 0, 0, 0);
+}
+
+static __inline__
+void DRDCL_(annotate_barrier_destroy)(const void* barrier)
+{
+   int res;
+   VALGRIND_DO_CLIENT_REQUEST(res, 0,
+                              VG_USERREQ__DRD_ANNOTATION_UNIMP,
+                              "ANNOTATE_BARRIER_DESTROY", 0, 0, 0, 0);
+}
+
+static __inline__
+void DRDCL_(annotate_barrier_wait_before)(const void* barrier)
+{
+   int res;
+   VALGRIND_DO_CLIENT_REQUEST(res, 0,
+                              VG_USERREQ__DRD_ANNOTATION_UNIMP,
+                              "ANNOTATE_BARRIER_WAIT_BEFORE", 0, 0, 0, 0);
+}
+
+static __inline__
+void DRDCL_(annotate_barrier_wait_after)(const void* barrier)
+{
+   int res;
+   VALGRIND_DO_CLIENT_REQUEST(res, 0,
+                              VG_USERREQ__DRD_ANNOTATION_UNIMP,
+                              "ANNOTATE_BARRIER_WAIT_AFTER", 0, 0, 0, 0);
+}
+
+
+/**
+ * @addtogroup RaceDetectionAnnotations
+ */
+/*@{*/
+
+#ifdef __cplusplus
+/* ANNOTATE_UNPROTECTED_READ is the preferred way to annotate racy reads.
+
+   Instead of doing
+   ANNOTATE_IGNORE_READS_BEGIN();
+   ... = x;
+   ANNOTATE_IGNORE_READS_END();
+   one can use
+   ... = ANNOTATE_UNPROTECTED_READ(x); */
+template <typename T>
+inline T ANNOTATE_UNPROTECTED_READ(const volatile T& x) {
+   ANNOTATE_IGNORE_READS_BEGIN();
+   const T result = x;
+   ANNOTATE_IGNORE_READS_END();
+   return result;
+}
+/* Apply ANNOTATE_BENIGN_RACE_SIZED to a static variable. */
+#define ANNOTATE_BENIGN_RACE_STATIC(static_var, description)		\
+   namespace {								\
+      static class static_var##_annotator				\
+      {									\
+      public:								\
+	 static_var##_annotator()					\
+	 {								\
+	    ANNOTATE_BENIGN_RACE(&static_var, #static_var ": " description); \
+	 }								\
+      } the_##static_var##_annotator;					\
+   }
+#endif
+
+/*@}*/
 
 #endif /* __VALGRIND_DRD_H */

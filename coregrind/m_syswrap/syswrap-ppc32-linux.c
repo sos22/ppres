@@ -297,6 +297,17 @@ static SysRes do_clone ( ThreadId ptid,
    ctst->sig_mask = ptst->sig_mask;
    ctst->tmp_sig_mask = ptst->sig_mask;
 
+   /* Start the child with its threadgroup being the same as the
+      parent's.  This is so that any exit_group calls that happen
+      after the child is created but before it sets its
+      os_state.threadgroup field for real (in thread_wrapper in
+      syswrap-linux.c), really kill the new thread.  a.k.a this avoids
+      a race condition in which the thread is unkillable (via
+      exit_group) because its threadgroup is not set.  The race window
+      is probably only a few hundred or a few thousand cycles long.
+      See #226116. */
+   ctst->os_state.threadgroup = ptst->os_state.threadgroup;
+
    /* We don't really know where the client stack is, because its
       allocated by the client.  The best we can do is look at the
       memory mappings and try to derive some useful information.  We
@@ -1859,7 +1870,7 @@ static SyscallTableEntry syscall_table[] = {
    LINX_(__NR_set_robust_list,   sys_set_robust_list),   // 299
    LINXY(__NR_get_robust_list,   sys_get_robust_list),   // 300
 //   LINX_(__NR_move_pages,        sys_ni_syscall),        // 301
-//   LINX_(__NR_getcpu,            sys_ni_syscall),        // 302
+   LINXY(__NR_getcpu,            sys_getcpu),            // 302
    LINXY(__NR_epoll_pwait,       sys_epoll_pwait),       // 303
    LINX_(__NR_utimensat,         sys_utimensat),         // 304
    LINXY(__NR_signalfd,          sys_signalfd),          // 305

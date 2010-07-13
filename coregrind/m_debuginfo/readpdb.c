@@ -42,7 +42,9 @@
 #include "pub_core_vki.h"          // VKI_PAGE_SIZE
 #include "pub_core_libcbase.h"
 #include "pub_core_libcassert.h"
+#include "pub_core_libcfile.h"     // VG_(open), read, lseek, close
 #include "pub_core_libcprint.h"
+#include "pub_core_libcproc.h"     // VG_(getpid), system
 #include "pub_core_options.h"      // VG_(clo_verbosity)
 #include "pub_core_xarray.h"       // keeps priv_storage.h happy
 #include "pub_core_redir.h"
@@ -70,23 +72,36 @@
 
    To complicate matters further, Wine supplies us, via the
    VG_USERREQ__LOAD_PDB_DEBUGINFO client request that initiates PDB
-   reading, a value 'reloc' which, if you read 'virtual.c' in the Wine
-   sources, looks a lot like a text bias value.  Yet the code below
-   ignores it.
+   reading, a value 'unknown_purpose__reloc' which, if you read
+   'virtual.c' in the Wine sources, looks a lot like a text bias
+   value.  Yet the code below ignores it.
 
    To make future experimentation with biasing easier, here are four
    macros which give the bias to use in each of the four cases.  Be
    warned, they can and do refer to local vars in the relevant
    functions. */
 
-/* This is the biasing arrangement in John's original patch.  I don't
-   see that is makes any sense for the FPO bias to be hardwired to
-   zero, but perhaps that's OK when the reloc value is also zero.
-   (iow, the FPO bias should actually be 'reloc' ?) */
+/* The BIAS_FOR_{SYMBOLS,LINETAB,LINETAB2} are as in JohnR's original
+   patch.  BIAS_FOR_FPO was originally hardwired to zero, but that
+   doesn't make much sense.  Here, we use text_bias as empirically
+   producing the most ranges that fall inside the text segments for a
+   multi-dll program.  Of course, it could still be nonsense :-) */
 #define BIAS_FOR_SYMBOLS   (di->rx_map_avma)
 #define BIAS_FOR_LINETAB   (di->rx_map_avma)
 #define BIAS_FOR_LINETAB2  (di->text_bias)
-#define BIAS_FOR_FPO       0 /* no, really */
+#define BIAS_FOR_FPO       (di->text_bias)
+/* Using di->text_bias for the FPOs causes 981 in range and 1 out of
+   range.  Using rx_map_avma gives 953 in range and 29 out of range,
+   so di->text_bias looks like a better bet.:
+   $ grep FPO spew-B-text_bias  | grep keep | wc
+       981    4905   57429
+   $ grep FPO spew-B-text_bias  | grep SKIP | wc
+         1       5      53
+   $ grep FPO spew-B-rx_map_avma  | grep keep | wc
+       953    4765   55945
+   $ grep FPO spew-B-rx_map_avma  | grep SKIP | wc
+        29     145    1537
+*/
 
 /* This module leaks space; enable m_main's calling of
    VG_(di_discard_ALL_debuginfo)() at shutdown and run with
@@ -1201,8 +1216,6 @@ static void pdb_convert_symbols_header( PDB_SYMBOLS *symbols,
 /*---                                                      ---*/
 /*------------------------------------------------------------*/
 
-static Bool debug = False; // JRS: fixme
-
 static ULong DEBUG_SnarfCodeView(
                 DebugInfo* di,
                 IMAGE_SECTION_HEADER* sectp,
@@ -1216,12 +1229,13 @@ static ULong DEBUG_SnarfCodeView(
    UChar* nmstr;
    Char   symname[4096 /*WIN32_PATH_MAX*/];
 
+   Bool  debug = di->trace_symtab;
    Addr  bias = BIAS_FOR_SYMBOLS;
    ULong n_syms_read = 0;
 
    if (debug)
       VG_(message)(Vg_UserMsg,
-                   "SnarfCodeView addr=%p offset=%d length=%d\n", 
+                   "BEGIN SnarfCodeView addr=%p offset=%d length=%d\n", 
                    root, offset, size );
 
    VG_(memset)(&vsym, 0, sizeof(vsym));  /* avoid holes */
@@ -1262,7 +1276,7 @@ static ULong DEBUG_SnarfCodeView(
          symname[sym->data_v1.p_name.namelen] = '\0';
 
          if (debug)
-            VG_(message)(Vg_UserMsg, "Data %s\n", symname );
+            VG_(message)(Vg_UserMsg, "  Data %s\n", symname );
 
          if (0 /*VG_(needs).data_syms*/) {
             nmstr = ML_(addStr)(di, symname, sym->data_v1.p_name.namelen);
@@ -1287,7 +1301,7 @@ static ULong DEBUG_SnarfCodeView(
 
          if (debug)
             VG_(message)(Vg_UserMsg,
-                         "S_GDATA_V2/S_LDATA_V2/S_PUB_V2 %s\n", symname );
+                         "  S_GDATA_V2/S_LDATA_V2/S_PUB_V2 %s\n", symname );
 
          if (sym->generic.id==S_PUB_V2 /*VG_(needs).data_syms*/) {
             nmstr = ML_(addStr)(di, symname, k);
@@ -1318,7 +1332,7 @@ static ULong DEBUG_SnarfCodeView(
 
          if (debug)
             VG_(message)(Vg_UserMsg,
-                         "S_PUB_FUNC1_V3/S_PUB_FUNC2_V3/S_PUB_V3 %s\n",
+                         "  S_PUB_FUNC1_V3/S_PUB_FUNC2_V3/S_PUB_V3 %s\n",
                          symname );
 
          if (1  /*sym->generic.id==S_PUB_FUNC1_V3 
@@ -1368,7 +1382,7 @@ static ULong DEBUG_SnarfCodeView(
          vsym.isIFunc = False;
          if (debug)
              VG_(message)(Vg_UserMsg,
-                         "Adding function %s addr=%#lx length=%d\n",
+                         "  Adding function %s addr=%#lx length=%d\n",
                          symname, vsym.addr, vsym.size );
          ML_(addSym)( di, &vsym );
          n_syms_read++;
@@ -1389,7 +1403,7 @@ static ULong DEBUG_SnarfCodeView(
          vsym.isIFunc = False;
          if (debug)
             VG_(message)(Vg_UserMsg,
-                         "Adding function %s addr=%#lx length=%d\n",
+                         "  Adding function %s addr=%#lx length=%d\n",
                          symname, vsym.addr, vsym.size );
          ML_(addSym)( di, &vsym );
          n_syms_read++;
@@ -1398,7 +1412,7 @@ static ULong DEBUG_SnarfCodeView(
       case S_GPROC_V3: {
          if (debug)
             VG_(message)(Vg_UserMsg,
-                         "S_LPROC_V3/S_GPROC_V3 %s\n", sym->proc_v3.name );
+                         "  S_LPROC_V3/S_GPROC_V3 %s\n", sym->proc_v3.name );
 
          if (1) {
             nmstr = ML_(addStr)(di, sym->proc_v3.name,
@@ -1483,6 +1497,10 @@ static ULong DEBUG_SnarfCodeView(
 
    } /* for ( i = offset; i < size; i += length ) */
 
+   if (debug)
+      VG_(message)(Vg_UserMsg,
+                   "END SnarfCodeView addr=%p offset=%d length=%d\n", 
+                   root, offset, size );
    return n_syms_read;
 }
 
@@ -1529,8 +1547,14 @@ static ULong DEBUG_SnarfLinetab(
    struct startend    * start;
    Int                this_seg;
 
+   Bool  debug = di->trace_symtab;
    Addr  bias = BIAS_FOR_LINETAB;
    ULong n_lines_read = 0;
+
+   if (debug)
+      VG_(message)(Vg_UserMsg,
+                   "BEGIN SnarfLineTab linetab=%p size=%d\n", 
+                   linetab, size );
 
    /*
     * Now get the important bits.
@@ -1600,7 +1624,7 @@ static ULong DEBUG_SnarfLinetab(
 
             if (debug)
                VG_(message)(Vg_UserMsg,
-                  "Adding %d lines for file %s segment %d addr=%#x end=%#x\n",
+                  "  Adding %d lines for file %s segment %d addr=%#x end=%#x\n",
                   linecount, filename, segno, start[k].start, start[k].end );
 
             for ( j = 0; j < linecount; j++ ) {
@@ -1612,7 +1636,7 @@ static ULong DEBUG_SnarfLinetab(
                                            : start[k].end);
                if (debug)
                   VG_(message)(Vg_UserMsg,
-                     "Adding line %d addr=%#lx end=%#lx\n", 
+                     "  Adding line %d addr=%#lx end=%#lx\n", 
                         ((unsigned short *)(pnt2.ui + linecount))[j],
                         startaddr, endaddr );
                   ML_(addLineInfo)(
@@ -1623,6 +1647,11 @@ static ULong DEBUG_SnarfLinetab(
             }
         }
     }
+
+   if (debug)
+      VG_(message)(Vg_UserMsg,
+                   "END SnarfLineTab linetab=%p size=%d\n", 
+                   linetab, size );
 
     return n_lines_read;
 }
@@ -1679,8 +1708,8 @@ static ULong codeview_dump_linetab2(
    unsigned    i;
    struct codeview_linetab2_block* lbh;
    struct codeview_linetab2_file* fd;
-   //const Bool debug = False;
 
+   Bool  debug = di->trace_symtab;
    Addr  bias = BIAS_FOR_LINETAB2;
    ULong n_line2s_read = 0;
 
@@ -1777,11 +1806,26 @@ static ULong codeview_dump_linetab2(
 /*---                                                      ---*/
 /*------------------------------------------------------------*/
 
+static Int cmp_FPO_DATA_for_canonicalisation ( void* f1V, void* f2V )
+{
+   /* Cause FPO data to be sorted first in ascending order of range
+      starts, and for entries with the same range start, with the
+      shorter range (length) first. */
+   FPO_DATA* f1 = (FPO_DATA*)f1V;
+   FPO_DATA* f2 = (FPO_DATA*)f2V;
+   if (f1->ulOffStart < f2->ulOffStart) return -1;
+   if (f1->ulOffStart > f2->ulOffStart) return  1;
+   if (f1->cbProcSize < f2->cbProcSize) return -1;
+   if (f1->cbProcSize > f2->cbProcSize) return  1;
+   return 0; /* identical in both start and length */
+}
+
+
 /* JRS fixme: compare with version in current Wine sources */
 static void pdb_dump( struct pdb_reader* pdb,
                       DebugInfo* di,
                       Addr pe_avma,
-                      Int  reloc,
+                      Int  unknown_purpose__reloc,
                       IMAGE_SECTION_HEADER* sectp_avma )
 {
    Int header_size;
@@ -1792,6 +1836,7 @@ static void pdb_dump( struct pdb_reader* pdb,
    char *modimage;
    char *file; 
 
+   Bool debug = di->trace_symtab;
    Addr bias_for_fpo = BIAS_FOR_FPO;
 
    ULong n_fpos_read = 0, n_syms_read = 0,
@@ -1819,7 +1864,7 @@ static void pdb_dump( struct pdb_reader* pdb,
       }
    }
 
-   if (VG_(clo_verbosity) > 0) {
+   if (VG_(clo_verbosity) > 1) {
       VG_(message)(Vg_DebugMsg,
                    "PDB_READER:\n");
       VG_(message)(Vg_DebugMsg,
@@ -1836,7 +1881,7 @@ static void pdb_dump( struct pdb_reader* pdb,
                    (PtrdiffT)BIAS_FOR_FPO, VG_STRINGIFY(BIAS_FOR_FPO));
       VG_(message)(Vg_DebugMsg,
                    "   RELOC             = %#08lx\n",
-                   (PtrdiffT)reloc);
+                   (PtrdiffT)unknown_purpose__reloc);
    }
 
    /* Since we just use the FPO data without reformatting, at least
@@ -1847,76 +1892,162 @@ static void pdb_dump( struct pdb_reader* pdb,
          meaningless?) */
       unsigned sz = 0;
       di->fpo = pdb->read_file( pdb, 5, &sz );
+
+      // FIXME: seems like the size can be a non-integral number
+      // of FPO_DATAs.  Force-align it (moronically).  Perhaps this
+      // signifies that we're not looking at a valid FPO table ..
+      // who knows.  Needs investigation.
+      while (sz > 0 && (sz % sizeof(FPO_DATA)) != 0)
+         sz--;
+
       di->fpo_size = sz;
+      if (0) VG_(printf)("FPO: got fpo_size %lu\n", (UWord)sz);
+      vg_assert(0 == (di->fpo_size % sizeof(FPO_DATA)));
    } else {
       vg_assert(di->fpo == NULL);
       vg_assert(di->fpo_size == 0);
    }
 
-   if (di->fpo) {
-      Word i;
-      Addr min_svma = ~(Addr)0;
-      Addr max_svma = (Addr)0;
+   // BEGIN clean up FPO data
+   if (di->fpo && di->fpo_size > 0) {
+      Word i, j;
+      Bool anyChanges;
+      Int itersAvail = 10;
+
       vg_assert(sizeof(di->fpo[0]) == 16);
       di->fpo_size /= sizeof(di->fpo[0]);
 
-      /* Sanity-check the table, and find the min and max avmas. */
-      for (i = 0; i < di->fpo_size; i++) {
-         /* If any of the following assertions fail, we'll need to add
-            an extra pass to tidy up the FPO info -- make them be in
-            order and non-overlapping, since in-orderness and
-            non-overlappingness are required for safe use of
-            ML_(search_one_fpotab). */
-         vg_assert(di->fpo[i].cbProcSize > 0);
-         if (i > 0) {
-            Bool ok;
-            Bool dup
-               = di->fpo[i-1].ulOffStart == di->fpo[i].ulOffStart
-                 && di->fpo[i-1].cbProcSize == di->fpo[i].cbProcSize;
-            /* tolerate exact duplicates -- I think they are harmless
-               w.r.t. termination properties of the binary search in
-               ML_(search_one_fpotab). */
-            if (dup)
-               continue;
+      // BEGIN FPO-data tidying-up loop
+      do {
 
-            ok = di->fpo[i-1].ulOffStart + di->fpo[i-1].cbProcSize 
-                 <= di->fpo[i].ulOffStart;
-            if (1 && !ok)
-               VG_(printf)("%#x +%d  then  %#x +%d\n",
-                           di->fpo[i-1].ulOffStart, di->fpo[i-1].cbProcSize,
-                           di->fpo[i-0].ulOffStart, di->fpo[i-0].cbProcSize );
-            vg_assert(ok);
+         vg_assert(itersAvail >= 0); /* safety check -- don't loop forever */
+         itersAvail--;
+
+         anyChanges = False;
+
+         /* First get them in ascending order of start point */
+         VG_(ssort)( di->fpo, (SizeT)di->fpo_size, (SizeT)sizeof(FPO_DATA),
+                              cmp_FPO_DATA_for_canonicalisation );
+         /* Get rid of any zero length entries */
+         j = 0;
+         for (i = 0; i < di->fpo_size; i++) {
+            if (di->fpo[i].cbProcSize == 0) {
+               anyChanges = True;
+               continue;
+            }
+            di->fpo[j++] = di->fpo[i];
          }
-         /* Update min/max limits as we go along. */
-         if (di->fpo[i].ulOffStart < min_svma)
-            min_svma = di->fpo[i].ulOffStart;
-         if (di->fpo[i].ulOffStart + di->fpo[i].cbProcSize - 1 > max_svma)
-            max_svma = di->fpo[i].ulOffStart + di->fpo[i].cbProcSize - 1;
+         vg_assert(j >= 0 && j <= di->fpo_size);
+         di->fpo_size = j;
+
+         /* Get rid of any dups */
+         if (di->fpo_size > 1) {
+            j = 1;
+            for (i = 1; i < di->fpo_size; i++) {
+               Bool dup
+                  = di->fpo[j-1].ulOffStart == di->fpo[i].ulOffStart
+                    && di->fpo[j-1].cbProcSize == di->fpo[i].cbProcSize;
+               if (dup) {
+                 anyChanges = True;
+                 continue;
+               }
+               di->fpo[j++] = di->fpo[i];
+            }
+            vg_assert(j >= 0 && j <= di->fpo_size);
+            di->fpo_size = j;
+         }
+
+         /* Truncate any overlapping ranges */
+         for (i = 1; i < di->fpo_size; i++) {
+            vg_assert(di->fpo[i-1].ulOffStart <= di->fpo[i].ulOffStart);
+            if (di->fpo[i-1].ulOffStart + di->fpo[i-1].cbProcSize 
+                > di->fpo[i].ulOffStart) {
+               anyChanges = True;
+               di->fpo[i-1].cbProcSize
+                  = di->fpo[i].ulOffStart - di->fpo[i-1].ulOffStart;
+            }
+         }
+
+      } while (anyChanges);
+      // END FPO-data tidying-up loop
+
+      /* Should now be in ascending order, non overlapping, no zero ranges.
+         Check this, get the min and max avmas, and bias the entries. */
+      for (i = 0; i < di->fpo_size; i++) {
+         vg_assert(di->fpo[i].cbProcSize > 0);
+
+         if (i > 0) {
+            vg_assert(di->fpo[i-1].ulOffStart < di->fpo[i].ulOffStart);
+            vg_assert(di->fpo[i-1].ulOffStart + di->fpo[i-1].cbProcSize
+                      <= di->fpo[i].ulOffStart);
+         }
       }
+
       /* Now bias the table.  This can't be done in the same pass as
          the sanity check, hence a second loop. */
       for (i = 0; i < di->fpo_size; i++) {
          di->fpo[i].ulOffStart += bias_for_fpo;
+         // make sure the biasing didn't royally screw up, by wrapping
+         // the range around the end of the address space
+         vg_assert(0xFFFFFFFF - di->fpo[i].ulOffStart /* "remaining space" */
+                   >= di->fpo[i].cbProcSize);
       }
 
+      /* Dump any entries which point outside the text segment and
+         compute the min/max avma "hint" addresses. */
+      Addr min_avma = ~(Addr)0;
+      Addr max_avma = (Addr)0;
+      vg_assert(di->text_present);
+      j = 0;
+      for (i = 0; i < di->fpo_size; i++) {
+         if ((Addr)(di->fpo[i].ulOffStart) >= di->text_avma
+             && (Addr)(di->fpo[i].ulOffStart + di->fpo[i].cbProcSize)
+                <= di->text_avma + di->text_size) {
+            /* Update min/max limits as we go along. */
+            if (di->fpo[i].ulOffStart < min_avma)
+               min_avma = di->fpo[i].ulOffStart;
+            if (di->fpo[i].ulOffStart + di->fpo[i].cbProcSize - 1 > max_avma)
+               max_avma = di->fpo[i].ulOffStart + di->fpo[i].cbProcSize - 1;
+            /* Keep */
+            di->fpo[j++] = di->fpo[i];
+            if (0)
+            VG_(printf)("FPO: keep text=[0x%lx,0x%lx) 0x%lx 0x%lx\n",
+                        di->text_avma, di->text_avma + di->text_size,
+                        (Addr)di->fpo[i].ulOffStart,
+                        (Addr)di->fpo[i].ulOffStart 
+                        + (Addr)di->fpo[i].cbProcSize - 1);
+         } else {
+            if (0)
+            VG_(printf)("FPO: SKIP text=[0x%lx,0x%lx) 0x%lx 0x%lx\n",
+                        di->text_avma, di->text_avma + di->text_size,
+                        (Addr)di->fpo[i].ulOffStart,
+                        (Addr)di->fpo[i].ulOffStart 
+                        + (Addr)di->fpo[i].cbProcSize - 1);
+            /* out of range; ignore */
+         }
+      }
+      vg_assert(j >= 0 && j <= di->fpo_size);
+      di->fpo_size = j;
+
       /* And record min/max */
-      vg_assert(min_svma <= max_svma); /* should always hold */
-
-      di->fpo_minavma = min_svma + bias_for_fpo;
-      di->fpo_maxavma = max_svma + bias_for_fpo;
-
       /* biasing shouldn't cause wraparound (?!) */
-      vg_assert(di->fpo_minavma <= di->fpo_maxavma);
+      if (di->fpo_size > 0) {
+         vg_assert(min_avma <= max_avma); /* should always hold */
+         di->fpo_minavma = min_avma;
+         di->fpo_maxavma = max_avma;
+      } else {
+         di->fpo_minavma = 0;
+         di->fpo_maxavma = 0;
+      }
 
       if (0) {
-         VG_(printf)("XXXXXXXXX min/max svma %#lx %#lx\n",
-                     min_svma, max_svma);
-         VG_(printf)("XXXXXXXXX min/max avma %#lx %#lx\n",
+         VG_(printf)("FPO: min/max avma %#lx %#lx\n",
                      di->fpo_minavma, di->fpo_maxavma);
       }
 
       n_fpos_read += (ULong)di->fpo_size;
    }
+   // END clean up FPO data
 
    pdb_convert_types_header( &types, types_image );
    switch ( types.version ) {
@@ -1952,6 +2083,8 @@ static void pdb_dump( struct pdb_reader* pdb,
     */
    modimage = pdb->read_file( pdb, symbols.gsym_file, &len_modimage );
    if (modimage) {
+      if (debug)
+         VG_(umsg)("\n");
       if (VG_(clo_verbosity) > 1)
          VG_(message)(Vg_UserMsg, "Reading global symbols\n" );
       DEBUG_SnarfCodeView( di, sectp_avma, modimage, 0, len_modimage );
@@ -1991,6 +2124,8 @@ static void pdb_dump( struct pdb_reader* pdb,
          total_size = pdb_get_file_size(pdb, file_nr);
 
          if (symbol_size) {
+            if (debug)
+               VG_(umsg)("\n");
             if (VG_(clo_verbosity) > 1)
                VG_(message)(Vg_UserMsg, "Reading symbols for %s\n",
                                         file_name );
@@ -2001,6 +2136,8 @@ static void pdb_dump( struct pdb_reader* pdb,
          }
 
          if (lineno_size) {
+            if (debug)
+               VG_(umsg)("\n");
             if (VG_(clo_verbosity) > 1)
                VG_(message)(Vg_UserMsg, "Reading lines for %s\n", file_name );
             n_lines_read
@@ -2039,7 +2176,7 @@ static void pdb_dump( struct pdb_reader* pdb,
    if ( types_image ) ML_(dinfo_free)( types_image );
    if ( pdb->u.jg.toc ) ML_(dinfo_free)( pdb->u.jg.toc );
 
-   if (VG_(clo_verbosity) > 0) {
+   if (VG_(clo_verbosity) > 1) {
       VG_(message)(Vg_DebugMsg,
                    "   # symbols read = %llu\n", n_syms_read );
       VG_(message)(Vg_DebugMsg,
@@ -2058,6 +2195,8 @@ static void pdb_dump( struct pdb_reader* pdb,
 /*---                                                      ---*/
 /*------------------------------------------------------------*/
 
+/* Read line, symbol and unwind information from a PDB file.
+*/
 Bool ML_(read_pdb_debug_info)(
         DebugInfo* di,
         Addr       obj_avma,
@@ -2285,6 +2424,123 @@ Bool ML_(read_pdb_debug_info)(
    TRACE_SYMTAB("\n");
 
    return True;
+}
+
+
+/* Examine a PE file to see if it states the path of an associated PDB
+   file; if so return that.  Caller must deallocate with
+   ML_(dinfo_free).
+*/
+
+HChar* ML_(find_name_of_pdb_file)( HChar* pename )
+{
+   /* This is a giant kludge, of the kind "you did WTF?!?", but it
+      works. */
+   Bool   do_cleanup = False;
+   HChar  tmpname[100], tmpnameroot[50];
+   Int    fd, r;
+   HChar* res = NULL;
+
+   if (!pename)
+      goto out;
+
+   fd = -1;
+   VG_(memset)(tmpnameroot, 0, sizeof(tmpnameroot));
+   VG_(sprintf)(tmpnameroot, "petmp%d", VG_(getpid)());
+   VG_(memset)(tmpname, 0, sizeof(tmpname));
+   fd = VG_(mkstemp)( tmpnameroot, tmpname );
+   if (fd == -1) {
+      VG_(message)(Vg_UserMsg,
+                   "Find PDB file: Can't create /tmp file %s\n", tmpname);
+      goto out;
+   }
+   do_cleanup = True;
+
+   /* Make up the command to run, essentially:
+      sh -c "strings (pename) | egrep '\.pdb|\.PDB' > (tmpname)"
+   */
+   HChar* sh      = "/bin/sh";
+   HChar* strings = "/usr/bin/strings";
+   HChar* egrep   = "/usr/bin/egrep";
+
+   /* (sh) -c "(strings) (pename) | (egrep) 'pdb' > (tmpname) */
+   Int cmdlen = VG_(strlen)(strings) + VG_(strlen)(pename)
+                + VG_(strlen)(egrep) + VG_(strlen)(tmpname)
+                + 100/*misc*/;
+   HChar* cmd = ML_(dinfo_zalloc)("di.readpe.fnopf.cmd", cmdlen);
+   vg_assert(cmd);
+   VG_(sprintf)(cmd, "%s -c \"%s %s | %s '\\.pdb|\\.PDB' >> %s\"",
+                     sh, strings, pename, egrep, tmpname);
+   vg_assert(cmd[cmdlen-1] == 0);
+   if (0) VG_(printf)("QQQQQQQQ: %s\n", cmd);
+
+   r = VG_(system)( cmd );
+   if (r) {
+      VG_(message)(Vg_DebugMsg,
+                   "Find PDB file: Command failed:\n   %s\n", cmd);
+      goto out;
+   }
+
+   /* Find out how big the file is, and get it aboard. */
+   struct vg_stat stat_buf;
+   VG_(memset)(&stat_buf, 0, sizeof(stat_buf));
+
+   SysRes sr = VG_(stat)(tmpname, &stat_buf);
+   if (sr_isError(sr)) {
+      VG_(umsg)("Find PDB file: can't stat %s\n", tmpname);
+      goto out;
+   }
+
+   Int szB = (Int)stat_buf.size;
+   if (szB == 0) {
+      VG_(umsg)("Find PDB file: %s is empty\n", tmpname);
+      goto out;
+   }
+   /* 6 == strlen("X.pdb\n") */
+   if (szB < 6 || szB > 1024/*let's say*/) {
+      VG_(umsg)("Find PDB file: %s has implausible size %d\n",
+                tmpname, szB);
+      goto out;
+   }
+
+   HChar* pdbname = ML_(dinfo_zalloc)("di.readpe.fnopf.pdbname", szB + 1);
+   vg_assert(pdbname);
+   pdbname[szB] = 0;
+
+   Int nread = VG_(read)(fd, pdbname, szB);
+   if (nread != szB) {
+      VG_(umsg)("Find PDB file: read of %s failed\n", tmpname);
+      goto out;
+   }
+   vg_assert(pdbname[szB] == 0);
+
+   /* Check we've got something remotely sane -- must have one dot and
+      one \n in it, and the \n must be at the end */
+   Bool saw_dot = False;
+   Int  saw_n_crs = 0;
+   Int  i;
+   for (i = 0; pdbname[i]; i++) {
+      if (pdbname[i] == '.')  saw_dot = True;
+      if (pdbname[i] == '\n') saw_n_crs++;
+   }
+   if (!saw_dot || saw_n_crs != 1 || pdbname[szB-1] != '\n') {
+      VG_(umsg)("Find PDB file: can't make sense of: %s\n", pdbname);
+      goto out;
+   }
+   /* Change the \n to a terminating zero, so we have a "normal" string */
+   pdbname[szB-1] = 0;
+
+   if (0) VG_(printf)("QQQQQQQQ: got %s\n", pdbname);
+
+   res = pdbname;
+   goto out;
+
+  out:
+   if (do_cleanup) {
+      VG_(close)(fd);
+      VG_(unlink)( tmpname );
+   }
+   return res;
 }
 
 #endif // defined(VGO_linux) || defined(VGO_darwin)

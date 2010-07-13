@@ -27,6 +27,7 @@
 #include "drd_clientreq.h"
 #include "drd_cond.h"
 #include "drd_error.h"
+#include "drd_hb.h"
 #include "drd_load_store.h"
 #include "drd_malloc_wrappers.h"
 #include "drd_mutex.h"
@@ -82,7 +83,10 @@ static Bool handle_client_request(ThreadId vg_tid, UWord* arg, UWord* ret)
    case VG_USERREQ__FREELIKE_BLOCK:
       if (arg[1] && ! DRD_(freelike_block)(vg_tid, arg[1]/*addr*/))
       {
-         GenericErrInfo GEI = { DRD_(thread_get_running_tid)() };
+         GenericErrInfo GEI = {
+	    .tid = DRD_(thread_get_running_tid)(),
+	    .addr = 0,
+	 };
          VG_(maybe_record_error)(vg_tid,
                                  GenericErr,
                                  VG_(get_IP)(vg_tid),
@@ -112,28 +116,11 @@ static Bool handle_client_request(ThreadId vg_tid, UWord* arg, UWord* ret)
       break;
 
    case VG_USERREQ__DRD_ANNOTATE_HAPPENS_BEFORE:
-      {
-         struct cond_info* const cond_p = DRD_(cond_get)(arg[1]);
-         if (! cond_p)
-         {
-            DRD_(mutex_init)(arg[1], mutex_type_order_annotation);
-            DRD_(mutex_pre_lock)(arg[1], mutex_type_order_annotation, False);
-            DRD_(mutex_post_lock)(arg[1], mutex_type_order_annotation, False);
-            DRD_(mutex_unlock)(arg[1], mutex_type_order_annotation);
-         }
-      }
+      DRD_(hb_happens_before)(drd_tid, arg[1]);
       break;
 
    case VG_USERREQ__DRD_ANNOTATE_HAPPENS_AFTER:
-      {
-         struct cond_info* const cond_p = DRD_(cond_get)(arg[1]);
-         if (! cond_p)
-         {
-            DRD_(mutex_pre_lock)(arg[1], mutex_type_order_annotation, False);
-            DRD_(mutex_post_lock)(arg[1], mutex_type_order_annotation, False);
-            DRD_(mutex_unlock)(arg[1], mutex_type_order_annotation);
-         }
-      }
+      DRD_(hb_happens_after)(drd_tid, arg[1]);
       break;
 
    case VG_USERREQ__DRD_ANNOTATE_RWLOCK_CREATE:
@@ -487,7 +474,7 @@ static Bool handle_client_request(ThreadId vg_tid, UWord* arg, UWord* ret)
       if (DRD_(thread_enter_synchr)(drd_tid) == 0)
          DRD_(rwlock_pre_unlock)(arg[1], pthread_rwlock);
       break;
-      
+
    case VG_USERREQ__POST_RWLOCK_UNLOCK:
       DRD_(thread_leave_synchr)(drd_tid);
       break;
@@ -495,6 +482,21 @@ static Bool handle_client_request(ThreadId vg_tid, UWord* arg, UWord* ret)
    case VG_USERREQ__DRD_CLEAN_MEMORY:
       if (arg[2] > 0)
          DRD_(clean_memory)(arg[1], arg[2]);
+      break;
+
+   case VG_USERREQ__HELGRIND_ANNOTATION_UNIMP:
+      {
+         /* Note: it is assumed below that the text arg[1] points to is never
+          * freed, e.g. because it points to static data.
+          */
+         UnimpClReqInfo UICR =
+            { DRD_(thread_get_running_tid)(), (Char*)arg[1] };
+         VG_(maybe_record_error)(vg_tid,
+                                 UnimpHgClReq,
+                                 VG_(get_IP)(vg_tid),
+                                 "",
+                                 &UICR);
+      }
       break;
 
    case VG_USERREQ__DRD_ANNOTATION_UNIMP:
@@ -505,7 +507,7 @@ static Bool handle_client_request(ThreadId vg_tid, UWord* arg, UWord* ret)
          UnimpClReqInfo UICR =
             { DRD_(thread_get_running_tid)(), (Char*)arg[1] };
          VG_(maybe_record_error)(vg_tid,
-                                 UnimpClReq,
+                                 UnimpDrdClReq,
                                  VG_(get_IP)(vg_tid),
                                  "",
                                  &UICR);

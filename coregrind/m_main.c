@@ -163,7 +163,7 @@ static void usage_NORETURN ( Bool debug_help )
 "    --read-var-info=yes|no    read debug info on stack and global variables\n"
 "                              and use it to print better error messages in\n"
 "                              tools that make use of it (Memcheck, Helgrind,\n"
-"                              DRD)\n"
+"                              DRD) [no]\n"
 "    --run-libc-freeres=no|yes free up glibc memory at exit on Linux? [yes]\n"
 "    --sim-hints=hint1,hint2,...  known hints:\n"
 "                                 lax-ioctls, enable-outer [none]\n"
@@ -203,6 +203,7 @@ static void usage_NORETURN ( Bool debug_help )
 "    --vex-iropt-unroll-thresh=<0..400>     [120]\n"
 "    --vex-guest-max-insns=<1..100>         [50]\n"
 "    --vex-guest-chase-thresh=<0..99>       [10]\n"
+"    --vex-guest-chase-cond=no|yes          [no]\n"
 "    --trace-flags and --profile-flags values (omit the middle space):\n"
 "       1000 0000   show conversion into IR\n"
 "       0100 0000   show after initial opt\n"
@@ -510,6 +511,8 @@ void main_process_cmd_line_options ( /*OUT*/Bool* logging_to_fd,
                        VG_(clo_vex_control).guest_max_insns, 1, 100) {}
       else if VG_BINT_CLO(arg, "--vex-guest-chase-thresh",
                        VG_(clo_vex_control).guest_chase_thresh, 0, 99) {}
+      else if VG_BOOL_CLO(arg, "--vex-guest-chase-cond",
+                       VG_(clo_vex_control).guest_chase_cond) {}
 
       else if VG_INT_CLO(arg, "--log-fd", tmp_log_fd) {
          log_to = VgLogTo_Fd;
