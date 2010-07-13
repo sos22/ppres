@@ -2,7 +2,7 @@
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bart.vanassche@gmail.com>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -172,6 +172,11 @@ static Bool handle_client_request(ThreadId vg_tid, UWord* arg, UWord* ret)
       }
       tl_assert(arg[2] == !! arg[2]);
       DRD_(rwlock_pre_unlock)(arg[1], user_rwlock);
+      break;
+
+   case VG_USERREQ__SET_PTHREAD_COND_INITIALIZER:
+      DRD_(pthread_cond_initializer) = (Addr)arg[1];
+      DRD_(pthread_cond_initializer_size) = arg[2];
       break;
 
    case VG_USERREQ__DRD_START_NEW_SEGMENT:

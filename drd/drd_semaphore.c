@@ -2,7 +2,7 @@
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bart.vanassche@gmail.com>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -202,7 +202,7 @@ struct semaphore_info* DRD_(semaphore_init)(const Addr semaphore,
    {
 #if defined(VGO_darwin)
       const ThreadId vg_tid = VG_(get_running_tid)();
-      GenericErrInfo GEI = { DRD_(thread_get_running_tid)() };
+      GenericErrInfo GEI = { DRD_(thread_get_running_tid)(), NULL };
       VG_(maybe_record_error)(vg_tid,
 			      GenericErr,
 			      VG_(get_IP)(vg_tid),
@@ -337,6 +337,7 @@ void DRD_(semaphore_pre_wait)(const Addr semaphore)
 {
    struct semaphore_info* p;
 
+   tl_assert(semaphore < semaphore + 1);
    p = drd_semaphore_get_or_allocate(semaphore);
    tl_assert(p);
    p->waiters++;

@@ -61,6 +61,8 @@ EXTRA_DIST =                                        \
 	bar_trivial.vgtest			    \
 	boost_thread.stderr.exp			    \
 	boost_thread.vgtest			    \
+	bug-235681.stderr.exp			    \
+	bug-235681.vgtest			    \
 	circular_buffer.stderr.exp		    \
 	circular_buffer.vgtest			    \
 	custom_alloc.stderr.exp			    \
@@ -157,6 +159,8 @@ EXTRA_DIST =                                        \
 	pth_process_shared_mutex.vgtest             \
 	pth_spinlock.stderr.exp                     \
 	pth_spinlock.vgtest                         \
+	pth_uninitialized_cond.stderr.exp           \
+	pth_uninitialized_cond.vgtest               \
 	qt4_atomic.stderr.exp                       \
 	qt4_atomic.vgtest                           \
 	qt4_mutex.stderr.exp                        \
@@ -260,6 +264,7 @@ check_PROGRAMS =      \
   annotate_ignore_write \
   annotate_publish_hg \
   annotate_static     \
+  bug-235681          \
   custom_alloc        \
   fp_race             \
   hold_lock           \
@@ -277,6 +282,7 @@ check_PROGRAMS =      \
   pth_inconsistent_cond_wait \
   pth_mutex_reinit    \
   pth_process_shared_mutex   \
+  pth_uninitialized_cond \
   recursive_mutex     \
   rwlock_race         \
   rwlock_test         \

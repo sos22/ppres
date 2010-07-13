@@ -8,7 +8,7 @@
    This file is part of MemCheck, a heavyweight Valgrind tool for
    detecting memory errors.
 
-   Copyright (C) 2000-2009 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -2279,10 +2279,12 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
       case Iop_Max32Sx4:
       case Iop_Min32Ux4:
       case Iop_Min32Sx4:
+      case Iop_Mul32x4:
          return binary32Ix4(mce, vatom1, vatom2);
 
       case Iop_Sub64x2:
       case Iop_Add64x2:
+      case Iop_CmpGT64Sx2:
          return binary64Ix2(mce, vatom1, vatom2);
 
       case Iop_QNarrow32Sx4:
@@ -2426,6 +2428,7 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
          /* I32(rm) x I64/F64 -> I64/F64 */
          return mkLazy2(mce, Ity_I64, vatom1, vatom2);
 
+      case Iop_RoundF32toInt:
       case Iop_SqrtF32:
          /* I32(rm) x I32/F32 -> I32/F32 */
          return mkLazy2(mce, Ity_I32, vatom1, vatom2);

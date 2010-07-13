@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2009 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -92,6 +92,34 @@
 #else
 #  error Unknown platform
 #endif
+
+//----------------------------------------------------------------------
+// VKI_STATIC_ASSERT(). Inspired by BUILD_BUG_ON() from
+// linux-2.6.34/include/linux/kernel.h
+//----------------------------------------------------------------------
+
+/*
+ * Evaluates to zero if 'expr' is true and forces a compilation error if
+ * 'expr' is false. Can be used in a context where no comma expressions
+ * are allowed.
+ */
+#ifdef __cplusplus
+template <bool b> struct vki_static_assert { int m_bitfield:(2*b-1); };
+#define VKI_STATIC_ASSERT(expr)                         \
+    (sizeof(vki_static_assert<(expr)>) - sizeof(int))
+#else
+#define VKI_STATIC_ASSERT(expr) (sizeof(struct { int:-!(expr); }))
+#endif
+
+//----------------------------------------------------------------------
+// Based on _IOC_TYPECHECK() from linux-2.6.34/asm-generic/ioctl.h
+//----------------------------------------------------------------------
+
+/* provoke compile error for invalid uses of size argument */
+#define _VKI_IOC_TYPECHECK(t)                                           \
+    (VKI_STATIC_ASSERT((sizeof(t) == sizeof(t[1])                       \
+                        && sizeof(t) < (1 << _VKI_IOC_SIZEBITS)))       \
+     + sizeof(t))
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/compiler.h
@@ -2642,6 +2670,44 @@ struct vki_perf_counter_attr {
 struct vki_getcpu_cache {
 	unsigned long blob[128 / sizeof(long)];
 };
+
+//----------------------------------------------------------------------
+// From linux-2.6.33.3/include/linux/input.h
+//----------------------------------------------------------------------
+
+/*
+ * IOCTLs (0x00 - 0x7f)
+ */
+
+#define VKI_EVIOCGNAME(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x06, len)		/* get device name */
+#define VKI_EVIOCGPHYS(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x07, len)		/* get physical location */
+#define VKI_EVIOCGUNIQ(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x08, len)		/* get unique identifier */
+
+#define VKI_EVIOCGKEY(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x18, len)		/* get global keystate */
+#define VKI_EVIOCGLED(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x19, len)		/* get all LEDs */
+#define VKI_EVIOCGSND(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x1a, len)		/* get all sounds status */
+#define VKI_EVIOCGSW(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x1b, len)		/* get all switch states */
+
+#define VKI_EVIOCGBIT(ev,len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x20 + ev, len)	/* get event bits */
+
+/*
+ * Event types
+ */
+
+#define VKI_EV_SYN		0x00
+#define VKI_EV_KEY		0x01
+#define VKI_EV_REL		0x02
+#define VKI_EV_ABS		0x03
+#define VKI_EV_MSC		0x04
+#define VKI_EV_SW		0x05
+#define VKI_EV_LED		0x11
+#define VKI_EV_SND		0x12
+#define VKI_EV_REP		0x14
+#define VKI_EV_FF		0x15
+#define VKI_EV_PWR		0x16
+#define VKI_EV_FF_STATUS	0x17
+#define VKI_EV_MAX		0x1f
+#define VKI_EV_CNT		(VKI_EV_MAX+1)
 
 #endif // __VKI_LINUX_H
 

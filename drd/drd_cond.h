@@ -2,7 +2,7 @@
 /*
   This file is part of drd, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bart.vanassche@gmail.com>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -34,6 +34,12 @@
 /* Forward declarations. */
 
 struct cond_info;
+
+
+/* Variable declarations. */
+
+extern Addr DRD_(pthread_cond_initializer);
+extern int DRD_(pthread_cond_initializer_size);
 
 
 /* Function declarations. */

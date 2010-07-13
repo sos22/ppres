@@ -113,6 +113,10 @@ EXTRA_DIST = \
 	rcrl.stderr.exp rcrl.stdout.exp rcrl.vgtest \
 	readline1.stderr.exp readline1.stdout.exp \
 	readline1.vgtest \
+	require-text-symbol-1.vgtest \
+		require-text-symbol-1.stderr.exp \
+	require-text-symbol-2.vgtest \
+		require-text-symbol-2.stderr.exp-libcso6 \
 	res_search.stderr.exp res_search.stdout.exp res_search.vgtest \
 	resolv.stderr.exp resolv.stdout.exp resolv.vgtest \
 	rlimit_nofile.stderr.exp rlimit_nofile.stdout.exp rlimit_nofile.vgtest \
@@ -166,7 +170,9 @@ check_PROGRAMS = \
 	pth_atfork1 pth_blockedsig pth_cancel1 pth_cancel2 pth_cvsimple \
 	pth_empty pth_exit pth_exit2 pth_mutexspeed pth_once pth_rwlock \
 	pth_stackalign \
-	rcrl readline1 res_search resolv \
+	rcrl readline1 \
+	require-text-symbol \
+	res_search resolv \
 	rlimit_nofile selfrun sem semlimit sha1_test \
 	shortpush shorts stackgrowth sigstackgrowth \
 	syscall-restart1 syscall-restart2 \
@@ -237,13 +243,13 @@ thread_exits_LDADD	= -lpthread
 threaded_fork_LDADD	= -lpthread
 threadederrno_LDADD	= -lpthread
 tls_SOURCES		= tls.c tls2.c
-tls_DEPENDENCIES	= tls.so
+tls_DEPENDENCIES	= tls.so tls2.so
 if VGCONF_OS_IS_AIX5
  tls_LDFLAGS		= 
 else
  tls_LDFLAGS		= -Wl,-rpath,$(top_builddir)/none/tests
 endif
-tls_LDADD		= tls.so -lpthread
+tls_LDADD		= tls.so tls2.so -lpthread
 tls_so_SOURCES		= tls_so.c
 tls_so_DEPENDENCIES	= tls2.so
 if VGCONF_OS_IS_AIX5

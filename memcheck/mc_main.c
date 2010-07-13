@@ -9,7 +9,7 @@
    This file is part of MemCheck, a heavyweight Valgrind tool for
    detecting memory errors.
 
-   Copyright (C) 2000-2009 Julian Seward 
+   Copyright (C) 2000-2010 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -4752,8 +4752,6 @@ Int           MC_(clo_mc_level)               = 2;
 static Bool mc_process_cmd_line_options(Char* arg)
 {
    Char* tmp_str;
-   Char* bad_level_msg =
-      "ERROR: --track-origins=yes has no effect when --undef-value-errors=no";
 
    tl_assert( MC_(clo_mc_level) >= 1 && MC_(clo_mc_level) <= 3 );
 
@@ -4768,8 +4766,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
    */
    if (0 == VG_(strcmp)(arg, "--undef-value-errors=no")) {
       if (MC_(clo_mc_level) == 3) {
-         VG_(message)(Vg_DebugMsg, "%s\n", bad_level_msg);
-         return False;
+         goto bad_level;
       } else {
          MC_(clo_mc_level) = 1;
          return True;
@@ -4787,8 +4784,7 @@ static Bool mc_process_cmd_line_options(Char* arg)
    }
    if (0 == VG_(strcmp)(arg, "--track-origins=yes")) {
       if (MC_(clo_mc_level) == 1) {
-         VG_(message)(Vg_DebugMsg, "%s\n", bad_level_msg);
-         return False;
+         goto bad_level;
       } else {
          MC_(clo_mc_level) = 3;
          return True;
@@ -4854,6 +4850,11 @@ static Bool mc_process_cmd_line_options(Char* arg)
       return VG_(replacement_malloc_process_cmd_line_option)(arg);
 
    return True;
+
+
+  bad_level:
+   VG_(fmsg_bad_option)(arg,
+      "--track-origins=yes has no effect when --undef-value-errors=no.\n");
 }
 
 static void mc_print_usage(void)
@@ -5780,7 +5781,7 @@ static void mc_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a memory error detector");
    VG_(details_copyright_author)(
-      "Copyright (C) 2002-2009, and GNU GPL'd, by Julian Seward et al.");
+      "Copyright (C) 2002-2010, and GNU GPL'd, by Julian Seward et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
    VG_(details_avg_translation_sizeB) ( 556 );
 
