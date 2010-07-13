@@ -5,11 +5,15 @@
 #include <sys/mman.h>
 #include <sys/fcntl.h>
 #include <sys/resource.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <linux/sched.h>
 #include <linux/utsname.h>
 #include <linux/futex.h>
 #include <errno.h>
+#include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <setjmp.h>
 #include <time.h>
 #include "pub_tool_basics.h"
@@ -337,11 +341,17 @@ pre_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args)
 	}
 	case __NR_clone: {
 		UWord flags = syscall_args[0];
-		tl_assert(flags ==
-			  (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
-			   CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS |
-			   CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID));
-		emit_record(&logfile, RECORD_new_thread, 0);
+		if (flags == (CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID | SIGCHLD)) {
+			/* Do nothing -- this is a fork(), and so we
+			   don't want to create a new thread. */
+		} else {
+			VG_(printf)("Clone flags %lx\n", flags);
+			tl_assert(flags ==
+				  (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
+				   CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS |
+				   CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID));
+			emit_record(&logfile, RECORD_new_thread, 0);
+		}
 		break;
 	}
 	case __NR_futex: {
@@ -430,11 +440,50 @@ handle_fcntl(UWord *syscall_args, UInt nr_args, SysRes res)
 	case F_DUPFD:
 	case F_GETFD:
 	case F_SETFD:
+	case F_SETFL:
+	case F_GETFL:
+	case F_SETLKW:
 		break;
 	default:
 		VG_(printf)("Don't know how to handle fcntl %lx\n",
 			    syscall_args[1]);
-		VG_(exit)(1);
+	}
+}
+
+static void
+capture_recvmsg(struct msghdr *msg, unsigned flags, SysRes res)
+{
+	unsigned idx;
+	long captured;
+	long this_chunk;
+
+	if (sr_isError(res))
+		return;
+	VG_(printf)("recvmsg flags %x\n", flags);
+	flags &= ~MSG_CMSG_CLOEXEC;
+	tl_assert(flags == 0);
+	if (msg->msg_name != 0) {
+		capture_memory(&msg->msg_namelen,
+			       sizeof(msg->msg_namelen));
+		capture_memory(msg->msg_name,
+			       msg->msg_namelen);
+	}
+	capture_memory(&msg->msg_controllen,
+		       sizeof(msg->msg_controllen));
+	capture_memory(msg->msg_control,
+		       msg->msg_controllen);
+
+	captured = 0;
+	idx = 0;
+	while (captured < sr_Res(res)) {
+		tl_assert(idx < msg->msg_iovlen);
+		this_chunk = msg->msg_iov[idx].iov_len;
+		if (this_chunk + captured > sr_Res(res))
+			this_chunk = captured - sr_Res(res);
+		capture_memory(msg->msg_iov[idx].iov_base,
+			       this_chunk);
+		captured += this_chunk;
+		idx++;
 	}
 }
 
@@ -470,6 +519,28 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_sched_get_priority_min:
 	case __NR_sched_get_priority_max:
 	case __NR_tgkill:
+	case __NR_socket:
+	case __NR_connect:
+	case __NR_sendto:
+	case __NR_mkdir:
+	case __NR_utime:
+	case __NR_writev:
+	case __NR_setsockopt:
+	case __NR_bind:
+	case __NR_listen:
+		break;
+
+	case __NR_accept:
+		if (!sr_isError(res) && syscall_args[1] != 0) {
+			capture_memory((void *)syscall_args[2],
+				       sizeof(int));
+			capture_memory((void *)syscall_args[1],
+				       *(int *)syscall_args[2]);
+		}
+		break;
+
+	case __NR_recvmsg:
+		capture_recvmsg((struct msghdr *)syscall_args[1], syscall_args[2], res);
 		break;
 
 	case __NR_time:
@@ -541,6 +612,19 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[0],
 				       sizeof(struct new_utsname));
+		break;
+	}
+
+	case __NR_pipe: {
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[0],
+				       sizeof(int) * 2);
+		break;
+	}
+
+	case __NR_poll: {
+		capture_memory((void *)syscall_args[0],
+			       syscall_args[1] * sizeof(struct pollfd));
 		break;
 	}
 
@@ -646,6 +730,23 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[1],
 				       sizeof(struct sched_param));
+		break;
+	}
+
+	case __NR_getsockname: {
+		if (!sr_isError(res)) {
+			int addrlen = *(int *)syscall_args[2];
+			capture_memory((void *)syscall_args[2], sizeof(int));
+			capture_memory((void *)syscall_args[1], addrlen);
+		}
+		break;
+	}
+
+	case __NR_wait4: {
+		if (!sr_isError(res)) {
+			capture_memory((void *)syscall_args[1], sizeof(int));
+			capture_memory((void *)syscall_args[3], sizeof(struct rusage));
+		}
 		break;
 	}
 
@@ -894,7 +995,6 @@ record_rdtsc(void)
 	if (!client_in_monitor()) {
 		rr = emit_record(&logfile, RECORD_rdtsc, sizeof(*rr));
 		rr->stashed_tsc = res;
-		VG_(printf)("Recorded a RDTSC.\n");
 	}
 	return res;
 }
