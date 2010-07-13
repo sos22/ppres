@@ -83,6 +83,9 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
    VG_TRACK(pre_thread_first_insn, tid);
 
    tst->os_state.lwpid = VG_(gettid)();
+   /* Set the threadgroup for real.  This overwrites the provisional
+      value set in do_clone() syswrap-*-linux.c.  See comments in
+      do_clone for background, also #226116. */
    tst->os_state.threadgroup = VG_(getpid)();
 
    /* Thread created with all signals blocked; scheduler will set the
@@ -933,8 +936,6 @@ PRE(sys_futex)
       break;
    }
 
-   PRE_MEM_READ( "futex(futex)", ARG1, sizeof(Int) );
-
    *flags |= SfMayBlock;
 
    switch(ARG2 & ~(VKI_FUTEX_PRIVATE_FLAG|VKI_FUTEX_CLOCK_REALTIME)) {
@@ -942,6 +943,7 @@ PRE(sys_futex)
    case VKI_FUTEX_LOCK_PI:
    case VKI_FUTEX_WAIT_BITSET:
    case VKI_FUTEX_WAIT_REQUEUE_PI:
+      PRE_MEM_READ( "futex(futex)", ARG1, sizeof(Int) );
       if (ARG4 != 0)
 	 PRE_MEM_READ( "futex(timeout)", ARG4, sizeof(struct vki_timespec) );
       break;
@@ -950,14 +952,18 @@ PRE(sys_futex)
    case VKI_FUTEX_CMP_REQUEUE:
    case VKI_FUTEX_CMP_REQUEUE_PI:
    case VKI_FUTEX_WAKE_OP:
+      PRE_MEM_READ( "futex(futex)", ARG1, sizeof(Int) );
       PRE_MEM_READ( "futex(futex2)", ARG5, sizeof(Int) );
       break;
 
-   case VKI_FUTEX_WAKE:
    case VKI_FUTEX_FD:
-   case VKI_FUTEX_WAKE_BITSET:
    case VKI_FUTEX_TRYLOCK_PI:
    case VKI_FUTEX_UNLOCK_PI:
+      PRE_MEM_READ( "futex(futex)", ARG1, sizeof(Int) );
+     break;
+
+   case VKI_FUTEX_WAKE:
+   case VKI_FUTEX_WAKE_BITSET:
       /* no additional pointers */
       break;
 
@@ -2582,6 +2588,29 @@ POST(sys_perf_counter_open)
    }
 }
 
+PRE(sys_getcpu)
+{
+   PRINT("sys_getcpu ( %#lx, %#lx, %#lx )" , ARG1,ARG2,ARG3);
+   PRE_REG_READ3(int, "getcpu", 
+                 unsigned *, cpu, unsigned *, node, struct vki_getcpu_cache *, tcache);
+   if (ARG1 != 0)
+      PRE_MEM_WRITE( "getcpu(cpu)", ARG1, sizeof(unsigned) );
+   if (ARG2 != 0)
+      PRE_MEM_WRITE( "getcpu(node)", ARG2, sizeof(unsigned) );
+   if (ARG3 != 0)
+      PRE_MEM_WRITE( "getcpu(tcache)", ARG3, sizeof(struct vki_getcpu_cache) );
+}
+
+POST(sys_getcpu)
+{
+   if (ARG1 != 0)
+      POST_MEM_WRITE( ARG1, sizeof(unsigned) );
+   if (ARG2 != 0)
+      POST_MEM_WRITE( ARG2, sizeof(unsigned) );
+   if (ARG3 != 0)
+      POST_MEM_WRITE( ARG3, sizeof(struct vki_getcpu_cache) );
+}
+
 /* ---------------------------------------------------------------------
    utime wrapper
    ------------------------------------------------------------------ */
@@ -3468,6 +3497,30 @@ PRE(sys_delete_module)
 }
 
 /* ---------------------------------------------------------------------
+   splice wrappers
+   ------------------------------------------------------------------ */
+
+PRE(sys_splice)
+{
+   *flags |= SfMayBlock;
+   PRINT("sys_splice ( %ld, %#lx, %ld, %#lx, %ld, %ld )",
+         ARG1,ARG2,ARG3,ARG4,ARG5,ARG6);
+   PRE_REG_READ6(int32_t, "splice",
+                 int, fd_in, vki_loff_t *, off_in,
+                 int, fd_out, vki_loff_t *, off_out,
+                 vki_size_t, len, unsigned int, flags);
+   if (!ML_(fd_allowed)(ARG1, "splice(fd_in)", tid, False) ||
+       !ML_(fd_allowed)(ARG3, "splice(fd_out)", tid, False)) {
+      SET_STATUS_Failure( VKI_EBADF );
+   } else {
+      if (ARG2 != 0)
+         PRE_MEM_READ( "splice(off_in)", ARG2, sizeof(vki_loff_t));
+      if (ARG4 != 0)
+         PRE_MEM_READ( "splice(off_out)", ARG4, sizeof(vki_loff_t));
+   }
+}
+
+/* ---------------------------------------------------------------------
    oprofile-related wrappers
    ------------------------------------------------------------------ */
 
@@ -4032,6 +4085,7 @@ PRE(sys_ioctl)
    case VKI_SNDCTL_SEQ_NRSYNTHS:
    case VKI_SNDCTL_SEQ_NRMIDIS:
    case VKI_SNDCTL_SEQ_GETTIME:
+   case VKI_SNDCTL_DSP_GETBLKSIZE:
    case VKI_SNDCTL_DSP_GETFMTS:
    case VKI_SNDCTL_DSP_GETTRIGGER:
    case VKI_SNDCTL_DSP_GETODELAY:
@@ -4040,9 +4094,6 @@ PRE(sys_ioctl)
    case VKI_SOUND_PCM_READ_RATE:
    case VKI_SOUND_PCM_READ_CHANNELS:
    case VKI_SOUND_PCM_READ_BITS:
-#if !defined(VGA_ppc32) && !defined(VGA_ppc64)
-   case (VKI_SOUND_PCM_READ_BITS|0x40000000): /* what the fuck ? */
-#endif
    case VKI_SOUND_PCM_READ_FILTER:
       PRE_MEM_WRITE( "ioctl(SNDCTL_XXX|SOUND_XXX (SIOR, int))", 
 		     ARG3, sizeof(int));
@@ -4050,11 +4101,11 @@ PRE(sys_ioctl)
    case VKI_SNDCTL_SEQ_CTRLRATE:
    case VKI_SNDCTL_DSP_SPEED:
    case VKI_SNDCTL_DSP_STEREO:
-   case VKI_SNDCTL_DSP_GETBLKSIZE: 
    case VKI_SNDCTL_DSP_CHANNELS:
    case VKI_SOUND_PCM_WRITE_FILTER:
    case VKI_SNDCTL_DSP_SUBDIVIDE:
    case VKI_SNDCTL_DSP_SETFRAGMENT:
+   case VKI_SNDCTL_DSP_SETFMT:
    case VKI_SNDCTL_DSP_GETCHANNELMASK:
    case VKI_SNDCTL_DSP_BIND_CHANNEL:
    case VKI_SNDCTL_TMR_TIMEBASE:
@@ -5003,7 +5054,9 @@ POST(sys_ioctl)
    case VKI_SNDCTL_SEQ_NRSYNTHS:
    case VKI_SNDCTL_SEQ_NRMIDIS:
    case VKI_SNDCTL_SEQ_GETTIME:
+   case VKI_SNDCTL_DSP_GETBLKSIZE:
    case VKI_SNDCTL_DSP_GETFMTS:
+   case VKI_SNDCTL_DSP_SETFMT:
    case VKI_SNDCTL_DSP_GETTRIGGER:
    case VKI_SNDCTL_DSP_GETODELAY:
    case VKI_SNDCTL_DSP_GETSPDIF:
@@ -5011,16 +5064,12 @@ POST(sys_ioctl)
    case VKI_SOUND_PCM_READ_RATE:
    case VKI_SOUND_PCM_READ_CHANNELS:
    case VKI_SOUND_PCM_READ_BITS:
-#if !defined(VGA_ppc32) && !defined(VGA_ppc64)
-   case (VKI_SOUND_PCM_READ_BITS|0x40000000): /* what the fuck ? */
-#endif
    case VKI_SOUND_PCM_READ_FILTER:
       POST_MEM_WRITE(ARG3, sizeof(int));
       break;
    case VKI_SNDCTL_SEQ_CTRLRATE:
    case VKI_SNDCTL_DSP_SPEED:
    case VKI_SNDCTL_DSP_STEREO:
-   case VKI_SNDCTL_DSP_GETBLKSIZE: 
    case VKI_SNDCTL_DSP_CHANNELS:
    case VKI_SOUND_PCM_WRITE_FILTER:
    case VKI_SNDCTL_DSP_SUBDIVIDE:

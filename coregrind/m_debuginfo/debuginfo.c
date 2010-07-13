@@ -38,6 +38,7 @@
 #include "pub_core_libcassert.h"
 #include "pub_core_libcprint.h"
 #include "pub_core_libcfile.h"
+#include "pub_core_libcproc.h"   // VG_(getenv)
 #include "pub_core_seqmatch.h"
 #include "pub_core_options.h"
 #include "pub_core_redir.h"      // VG_(redir_notify_{new,delete}_SegInfo)
@@ -896,7 +897,7 @@ void VG_(di_notify_pdb_debuginfo)( Int fd_obj, Addr avma_obj,
                                    SizeT total_size,
                                    PtrdiffT unknown_purpose__reloc )
 {
-   Int    r, sz_exename;
+   Int    i, r, sz_exename;
    ULong  obj_mtime, pdb_mtime;
    Char   exename[VKI_PATH_MAX];
    Char*  pdbname = NULL;
@@ -939,27 +940,86 @@ void VG_(di_notify_pdb_debuginfo)( Int fd_obj, Addr avma_obj,
       VG_(message)(Vg_UserMsg, "LOAD_PDB_DEBUGINFO: objname: %s\n", exename);
    }
 
-   /* Try to find a matching PDB file from which to read debuginfo.
-      Windows PE files have symbol tables and line number information,
-      but MSVC doesn't seem to use them. */
-   /* Why +5 ?  Because in the worst case, we could find a dot as the
-      last character of pdbname, and we'd then put "pdb" right after
-      it, hence extending it a bit. */
-   pdbname = ML_(dinfo_zalloc)("di.debuginfo.lpd1", sz_exename+5);
-   VG_(strcpy)(pdbname, exename);
-   vg_assert(pdbname[sz_exename+5-1] == 0);
-   dot = VG_(strrchr)(pdbname, '.');
-   if (!dot)
-      goto out; /* there's no dot in the exe's name ?! */
-   if (dot[1] == 0)
-      goto out; /* hmm, path ends in "." */
+   /* Try to get the PDB file name from the executable. */
+   pdbname = ML_(find_name_of_pdb_file)(exename);
+   if (pdbname) {
+      vg_assert(VG_(strlen)(pdbname) >= 5); /* 5 = strlen("X.pdb") */
+      /* So we successfully extracted a name from the PE file.  But it's
+         likely to be of the form
+            e:\foo\bar\xyzzy\wibble.pdb
+         and we need to change it into something we can actually open
+         in Wine-world, which basically means turning it into
+            $HOME/.wine/drive_e/foo/bar/xyzzy/wibble.pdb
+         We also take into account $WINEPREFIX, if it is set.
+         For the moment, if the name isn't fully qualified, just forget it
+         (we'd have to root around to find where the pdb actually is)
+      */
+      /* Change all the backslashes to forward slashes */
+      for (i = 0; pdbname[i]; i++) {
+         if (pdbname[i] == '\\')
+            pdbname[i] = '/';
+      }
+      Bool is_quald
+         = ('a' <= VG_(tolower)(pdbname[0]) && VG_(tolower)(pdbname[0]) <= 'z')
+           && pdbname[1] == ':'
+           && pdbname[2] == '/';
+      HChar* home = VG_(getenv)("HOME");
+      HChar* wpfx = VG_(getenv)("WINEPREFIX");
+      if (is_quald && wpfx) {
+         /* Change e:/foo/bar/xyzzy/wibble.pdb
+                to $WINEPREFIX/drive_e/foo/bar/xyzzy/wibble.pdb
+         */
+         Int mashedSzB = VG_(strlen)(pdbname) + VG_(strlen)(wpfx) + 50/*misc*/;
+         HChar* mashed = ML_(dinfo_zalloc)("di.debuginfo.dnpdi.1", mashedSzB);
+         VG_(sprintf)(mashed, "%s/drive_%c%s",
+                      wpfx, pdbname[0], &pdbname[2]);
+         vg_assert(mashed[mashedSzB-1] == 0);
+         ML_(dinfo_free)(pdbname);
+         pdbname = mashed;
+      }
+      else if (is_quald && home && !wpfx) {
+         /* Change e:/foo/bar/xyzzy/wibble.pdb
+                to $HOME/.wine/drive_e/foo/bar/xyzzy/wibble.pdb
+         */
+         Int mashedSzB = VG_(strlen)(pdbname) + VG_(strlen)(home) + 50/*misc*/;
+         HChar* mashed = ML_(dinfo_zalloc)("di.debuginfo.dnpdi.2", mashedSzB);
+         VG_(sprintf)(mashed, "%s/.wine/drive_%c%s",
+                      home, pdbname[0], &pdbname[2]);
+         vg_assert(mashed[mashedSzB-1] == 0);
+         ML_(dinfo_free)(pdbname);
+         pdbname = mashed;
+      } else {
+         /* It's not a fully qualified path, or neither $HOME nor $WINE
+            are set (strange).  Give up. */
+         ML_(dinfo_free)(pdbname);
+         pdbname = NULL;
+      }
+   }
 
-   if ('A' <= dot[1] && dot[1] <= 'Z')
-      VG_(strcpy)(dot, ".PDB");
-   else
-      VG_(strcpy)(dot, ".pdb");
+   /* Try s/exe/pdb/ if we don't have a valid pdbname. */
+   if (!pdbname) {
+      /* Try to find a matching PDB file from which to read debuginfo.
+         Windows PE files have symbol tables and line number information,
+         but MSVC doesn't seem to use them. */
+      /* Why +5 ?  Because in the worst case, we could find a dot as the
+         last character of pdbname, and we'd then put "pdb" right after
+         it, hence extending it a bit. */
+      pdbname = ML_(dinfo_zalloc)("di.debuginfo.lpd1", sz_exename+5);
+      VG_(strcpy)(pdbname, exename);
+      vg_assert(pdbname[sz_exename+5-1] == 0);
+      dot = VG_(strrchr)(pdbname, '.');
+      if (!dot)
+         goto out; /* there's no dot in the exe's name ?! */
+      if (dot[1] == 0)
+         goto out; /* hmm, path ends in "." */
 
-   vg_assert(pdbname[sz_exename+5-1] == 0);
+      if ('A' <= dot[1] && dot[1] <= 'Z')
+         VG_(strcpy)(dot, ".PDB");
+      else
+         VG_(strcpy)(dot, ".pdb");
+
+      vg_assert(pdbname[sz_exename+5-1] == 0);
+   }
 
    /* See if we can find it, and check it's in-dateness. */
    sres = VG_(stat)(pdbname, &stat_buf);
@@ -971,13 +1031,19 @@ void VG_(di_notify_pdb_debuginfo)( Int fd_obj, Addr avma_obj,
       goto out;
    }
    pdb_mtime = stat_buf.mtime;
-   if (pdb_mtime < obj_mtime ) {
-      /* PDB file is older than PE file - ignore it or we will either
-         (a) print wrong stack traces or more likely (b) crash. */
+
+   if (obj_mtime > pdb_mtime + 60ULL) {
+      /* PDB file is older than PE file.  Really, the PDB should be
+         newer than the PE, but that doesn't always seem to be the
+         case.  Allow the PDB to be up to one minute older.
+         Otherwise, it's probably out of date, in which case ignore it
+         or we will either (a) print wrong stack traces or more likely
+         (b) crash.
+      */
       VG_(message)(Vg_UserMsg,
-                   "Warning: Ignoring %s since it is older than %s\n",
-                   pdbname, exename);
-      goto out;
+                   "Warning:       %s (mtime = %llu)\n"
+                   " is older than %s (mtime = %llu)\n",
+                   pdbname, pdb_mtime, exename, obj_mtime);
    }
 
    sres = VG_(open)(pdbname, VKI_O_RDONLY, 0);
@@ -1830,7 +1896,8 @@ typedef
 /* Evaluate the CfiExpr rooted at ix in exprs given the context eec.
    *ok is set to False on failure, but not to True on success.  The
    caller must set it to True before calling. */
-static 
+__attribute__((noinline))
+static
 UWord evalCfiExpr ( XArray* exprs, Int ix, 
                     CfiExprEvalContext* eec, Bool* ok )
 {
@@ -2013,7 +2080,7 @@ static void cfsi_cache__invalidate ( void ) {
 }
 
 
-static CFSICacheEnt* cfsi_cache__find ( Addr ip )
+static inline CFSICacheEnt* cfsi_cache__find ( Addr ip )
 {
    UWord         hash = ip % N_CFSI_CACHE;
    CFSICacheEnt* ce = &cfsi_cache[hash];
@@ -2042,6 +2109,7 @@ static CFSICacheEnt* cfsi_cache__find ( Addr ip )
 }
 
 
+inline
 static Addr compute_cfa ( D3UnwindRegs* uregs,
                           Addr min_accessible, Addr max_accessible,
                           DebugInfo* di, DiCfSI* cfsi )
@@ -2171,7 +2239,7 @@ Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
       ML_(ppDiCfSI)(di->cfsi_exprs, cfsi);
    }
 
-   VG_(memset)(&uregsPrev, 0, sizeof(uregsPrev));
+   VG_(bzero_inline)(&uregsPrev, sizeof(uregsPrev));
 
    /* First compute the CFA. */
    cfa = compute_cfa(uregsHere,

@@ -1,42 +1,31 @@
 
 /*--------------------------------------------------------------------*/
-/*---                                                              ---*/
-/*--- This file (guest_arm_toIR.c) is                              ---*/
-/*--- Copyright (C) OpenWorks LLP.  All rights reserved.           ---*/
-/*---                                                              ---*/
+/*--- begin                                       guest_arm_toIR.c ---*/
 /*--------------------------------------------------------------------*/
 
 /*
-   This file is part of LibVEX, a library for dynamic binary
-   instrumentation and translation.
+   This file is part of Valgrind, a dynamic binary instrumentation
+   framework.
 
-   Copyright (C) 2004-2009 OpenWorks LLP.  All rights reserved.
+   Copyright (C) 2004-2010 OpenWorks LLP
+      info@open-works.net
 
-   This library is made available under a dual licensing scheme.
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version.
 
-   If you link LibVEX against other code all of which is itself
-   licensed under the GNU General Public License, version 2 dated June
-   1991 ("GPL v2"), then you may use LibVEX under the terms of the GPL
-   v2, as appearing in the file LICENSE.GPL.  If the file LICENSE.GPL
-   is missing, you can obtain a copy of the GPL v2 from the Free
-   Software Foundation Inc., 51 Franklin St, Fifth Floor, Boston, MA
+   This program is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
    02110-1301, USA.
 
-   For any other uses of LibVEX, you must first obtain a commercial
-   license from OpenWorks LLP.  Please contact info@open-works.co.uk
-   for information about commercial licensing.
-
-   This software is provided by OpenWorks LLP "as is" and any express
-   or implied warranties, including, but not limited to, the implied
-   warranties of merchantability and fitness for a particular purpose
-   are disclaimed.  In no event shall OpenWorks LLP be liable for any
-   direct, indirect, incidental, special, exemplary, or consequential
-   damages (including, but not limited to, procurement of substitute
-   goods or services; loss of use, data, or profits; or business
-   interruption) however caused and on any theory of liability,
-   whether in contract, strict liability, or tort (including
-   negligence or otherwise) arising in any way out of the use of this
-   software, even if advised of the possibility of such damage.
+   The GNU General Public License is contained in the file COPYING.
 */
 
 /* Limitations, etc
@@ -151,7 +140,7 @@ static IRTemp r15kind;
 
 /* Do a little-endian load of a 32-bit word, regardless of the
    endianness of the underlying host. */
-static UInt getUIntLittleEndianly ( UChar* p )
+static inline UInt getUIntLittleEndianly ( UChar* p )
 {
    UInt w = 0;
    w = (w << 8) | p[3];
@@ -181,6 +170,11 @@ static UInt ROR32 ( UInt x, UInt sh ) {
 #define BITS8(_b7,_b6,_b5,_b4,_b3,_b2,_b1,_b0)  \
    ((BITS4((_b7),(_b6),(_b5),(_b4)) << 4) \
     | BITS4((_b3),(_b2),(_b1),(_b0)))
+
+/* produces _uint[_bMax:_bMin] */
+#define SLICE_UInt(_uint,_bMax,_bMin) \
+   (( ((UInt)(_uint)) >> (_bMin)) \
+      & ((1 << ((_bMax) - (_bMin) + 1)) - 1))
 
 
 /*------------------------------------------------------------*/
@@ -1012,7 +1006,7 @@ static Bool mk_shifter_operand ( UInt insn_25, UInt insn_11_0,
                // shco = Rm[0]
                if (shco) {
                   assign( *shco,
-                           binop(Iop_And32, mkexpr(rMt), mkU32(1)));
+                          binop(Iop_And32, mkexpr(rMt), mkU32(1)));
                }
                assign( oldcT, mk_armg_calculate_flag_c() );
                assign( *shop, 
@@ -1337,6 +1331,8 @@ IRExpr* mk_EA_reg_plusminus_imm12 ( UInt rN, UInt bU, UInt imm12,
 }
 
 
+/* NB: This is "DecodeImmShift" in newer versions of the the ARM ARM.
+*/
 static
 IRExpr* mk_EA_reg_plusminus_shifted_reg ( UInt rN, UInt bU, UInt rM,
                                           UInt sh2, UInt imm5,
@@ -1382,12 +1378,10 @@ IRExpr* mk_EA_reg_plusminus_shifted_reg ( UInt rN, UInt bU, UInt rM,
             IRTemp rmT    = newTemp(Ity_I32);
             IRTemp cflagT = newTemp(Ity_I32);
             assign(rmT, getIReg(rM));
-            assign(cflagT, mk_armg_calculate_flag_v());
-            vassert(imm5 >= 1 && imm5 <= 31);
+            assign(cflagT, mk_armg_calculate_flag_c());
             index = binop(Iop_Or32, 
                           binop(Iop_Shl32, mkexpr(cflagT), mkU8(31)),
                           binop(Iop_Shr32, mkexpr(rmT), mkU8(1)));
-            vassert(0); // ATC
             DIS(buf, "[r%u, %cr%u, RRX]", rN, opChar, rM);
          } else {
             IRTemp rmT = newTemp(Ity_I32);
@@ -1396,7 +1390,6 @@ IRExpr* mk_EA_reg_plusminus_shifted_reg ( UInt rN, UInt bU, UInt rM,
             index = binop(Iop_Or32, 
                           binop(Iop_Shl32, mkexpr(rmT), mkU8(32-imm5)),
                           binop(Iop_Shr32, mkexpr(rmT), mkU8(imm5)));
-            vassert(0); // ATC
             DIS(buf, "[r%u, %cr%u, ROR #%u]", rN, opChar, rM, imm5); 
          }
          break;
@@ -1516,6 +1509,78 @@ IRTemp mk_convert_IRCmpF64Result_to_NZCV ( IRTemp irRes )
 
 
 /*------------------------------------------------------------*/
+/*--- Instructions in NV (never) space                     ---*/
+/*------------------------------------------------------------*/
+
+static Bool decode_NV_instruction ( UInt insn )
+{
+#  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+#  define INSN_COND          SLICE_UInt(insn, 31, 28)
+
+   HChar dis_buf[128];
+
+   // Should only be called for NV instructions
+   vassert(BITS4(1,1,1,1) == INSN_COND);
+
+   /* ------------------------ pld ------------------------ */
+   if (BITS8(0,1,0,1, 0, 1,0,1) == (INSN(27,20) & BITS8(1,1,1,1,0,1,1,1))
+       && BITS4(1,1,1,1) == INSN(15,12)) {
+      UInt rN    = INSN(19,16);
+      UInt imm12 = INSN(11,0);
+      UInt bU    = INSN(23,23);
+      DIP("pld [r%u, #%c%u]\n", rN, bU ? '+' : '-', imm12);
+      return True;
+   }
+
+   if (BITS8(0,1,1,1, 0, 1,0,1) == (INSN(27,20) & BITS8(1,1,1,1,0,1,1,1))
+       && BITS4(1,1,1,1) == INSN(15,12)
+       && 0 == INSN(4,4)) {
+      UInt rN   = INSN(19,16);
+      UInt rM   = INSN(3,0);
+      UInt imm5 = INSN(11,7);
+      UInt sh2  = INSN(6,5);
+      UInt bU   = INSN(23,23);
+      if (rM != 15) {
+         IRExpr* eaE = mk_EA_reg_plusminus_shifted_reg(rN, bU, rM,
+                                                       sh2, imm5, dis_buf);
+         IRTemp eaT = newTemp(Ity_I32);
+         /* Bind eaE to a temp merely for debugging-vex purposes, so we
+            can check it's a plausible decoding.  It will get removed
+            by iropt a little later on. */
+         vassert(eaE);
+         assign(eaT, eaE);
+         DIP("pld %s\n", dis_buf);
+         return True;
+      }
+      /* fall through */
+   }
+
+   /* ------------------- v7 barrier insns ------------------- */
+   switch (insn) {
+      case 0xF57FF06F: /* ISB */
+         stmt( IRStmt_MBE(Imbe_Fence) );
+         DIP("ISB\n");
+         return True;
+      case 0xF57FF04F: /* DSB */
+         stmt( IRStmt_MBE(Imbe_Fence) );
+         DIP("DSB\n");
+         return True;
+      case 0xF57FF05F: /* DMB */
+         stmt( IRStmt_MBE(Imbe_Fence) );
+         DIP("DMB\n");
+         return True;
+      default:
+         break;
+   }
+
+   return False;
+
+#  undef INSN_COND
+#  undef INSN
+}
+
+
+/*------------------------------------------------------------*/
 /*--- Disassemble a single instruction                     ---*/
 /*------------------------------------------------------------*/
 
@@ -1528,6 +1593,7 @@ static
 DisResult disInstr_ARM_WRK (
              Bool         put_IP,
              Bool         (*resteerOkFn) ( /*opaque*/void*, Addr64 ),
+             Bool         resteerCisOk,
              void*        callback_opaque,
              UChar*       guest_instr,
              VexArchInfo* archinfo,
@@ -1535,10 +1601,8 @@ DisResult disInstr_ARM_WRK (
           )
 {
    // A macro to fish bits out of 'insn'.
-#  define INSN(_bMax,_bMin) \
-      ((insn >> (_bMin)) & ((1 << ((_bMax) - (_bMin) + 1)) - 1))
-#  define INSN_COND \
-      INSN(31,28)
+#  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+#  define INSN_COND          SLICE_UInt(insn, 31, 28)
 
    DisResult dres;
    UInt      insn;
@@ -1649,8 +1713,15 @@ DisResult disInstr_ARM_WRK (
       condT :: Ity_I32 and is always either zero or one. */
    condT = IRTemp_INVALID;
    switch ( (ARMCondcode)INSN_COND ) {
-      case ARMCondNV: // Illegal instruction prior to v5 (see ARM ARM A3-5)
-         goto decode_failure;
+      case ARMCondNV: {
+         // Illegal instruction prior to v5 (see ARM ARM A3-5), but
+         // some cases are acceptable
+         Bool ok = decode_NV_instruction(insn);
+         if (ok)
+            goto decode_success;
+         else
+            goto decode_failure;
+      }
       case ARMCondAL: // Always executed
          break;
       case ARMCondEQ: case ARMCondNE: case ARMCondHS: case ARMCondLO:
@@ -2579,7 +2650,7 @@ DisResult disInstr_ARM_WRK (
             continue tracing at the destination. */
          if (resteerOkFn( callback_opaque, (Addr64)dst )) {
             /* yes */
-            dres.whatNext   = Dis_Resteer;
+            dres.whatNext   = Dis_ResteerU;
             dres.continueAt = (Addr64)dst;
          } else {
             /* no; terminate the SB at this point. */
@@ -2590,12 +2661,58 @@ DisResult disInstr_ARM_WRK (
          DIP("b%s 0x%x\n", link ? "l" : "", dst);
       } else {
          /* conditional transfer to 'dst' */
-         stmt( IRStmt_Exit( unop(Iop_32to1, mkexpr(condT)),
-                            jk, IRConst_U32(dst) ));
-         irsb->next     = mkU32(guest_R15_curr_instr + 4);
-         irsb->jumpkind = jk;
-         dres.whatNext  = Dis_StopHere;
-         DIP("b%s%s 0x%x\n", link ? "l" : "", nCC(INSN_COND), dst);
+         HChar* comment = "";
+
+         /* First see if we can do some speculative chasing into one
+            arm or the other.  Be conservative and only chase if
+            !link, that is, this is a normal conditional branch to a
+            known destination. */
+         if (!link
+             && resteerCisOk
+             && vex_control.guest_chase_cond
+             && dst < guest_R15_curr_instr
+             && resteerOkFn( callback_opaque, (Addr64)(Addr32)dst) ) {
+            /* Speculation: assume this backward branch is taken.  So
+               we need to emit a side-exit to the insn following this
+               one, on the negation of the condition, and continue at
+               the branch target address (dst). */
+            stmt( IRStmt_Exit( unop(Iop_Not1,
+                                    unop(Iop_32to1, mkexpr(condT))),
+                               Ijk_Boring,
+                               IRConst_U32(guest_R15_curr_instr+4) ));
+            dres.whatNext   = Dis_ResteerC;
+            dres.continueAt = (Addr64)(Addr32)dst;
+            comment = "(assumed taken)";
+         }
+         else
+         if (!link
+             && resteerCisOk
+             && vex_control.guest_chase_cond
+             && dst >= guest_R15_curr_instr
+             && resteerOkFn( callback_opaque, 
+                             (Addr64)(Addr32)(guest_R15_curr_instr+4)) ) {
+            /* Speculation: assume this forward branch is not taken.
+               So we need to emit a side-exit to dst (the dest) and
+               continue disassembling at the insn immediately
+               following this one. */
+            stmt( IRStmt_Exit( unop(Iop_32to1, mkexpr(condT)),
+                               Ijk_Boring,
+                               IRConst_U32(dst) ));
+            dres.whatNext   = Dis_ResteerC;
+            dres.continueAt = (Addr64)(Addr32)(guest_R15_curr_instr+4);
+            comment = "(assumed not taken)";
+         }
+         else {
+            /* Conservative default translation - end the block at
+               this point. */
+            stmt( IRStmt_Exit( unop(Iop_32to1, mkexpr(condT)),
+                               jk, IRConst_U32(dst) ));
+            irsb->next     = mkU32(guest_R15_curr_instr + 4);
+            irsb->jumpkind = jk;
+            dres.whatNext  = Dis_StopHere;
+         }
+         DIP("b%s%s 0x%x %s\n", link ? "l" : "", nCC(INSN_COND),
+             dst, comment);
       }
       goto decode_success;
    }
@@ -4017,13 +4134,13 @@ DisResult disInstr_ARM_WRK (
          goto decode_success;
       } else {
          // FTOUIS
-         //putFReg(fD, unop(Iop_ReinterpI32asF32,
-         //                 binop(Iop_F64toI32U, mkexpr(rmode),
-         //                       unop(Iop_F32toF64, getFReg(fM)))),
-         //        condT);
-         //DIP("ftoui%ss%s s%u, d%u\n", bZ ? "z" : "",
-         //    nCC(INSN_COND), fD, fM);
-         //goto decode_success;
+         putFReg(fD, unop(Iop_ReinterpI32asF32,
+                          binop(Iop_F64toI32U, mkexpr(rmode),
+                                unop(Iop_F32toF64, getFReg(fM)))),
+                 condT);
+         DIP("ftoui%ss%s s%u, d%u\n", bZ ? "z" : "",
+             nCC(INSN_COND), fD, fM);
+         goto decode_success;
       }
    }
 
@@ -4514,15 +4631,16 @@ DisResult disInstr_ARM_WRK (
 
   after_load_store_doubleword:
 
-   /* ------------------- sxtab ------------- */
-   if (BITS8(0,1,1,0,1,0,1,0) == INSN(27,20)
+   /* ------------------- {s,u}xtab ------------- */
+   if (BITS8(0,1,1,0,1,0,1,0) == (INSN(27,20) & BITS8(1,1,1,1,1,0,1,1))
        && BITS4(0,0,0,0) == (INSN(11,8) & BITS4(0,0,1,1))
        && BITS4(0,1,1,1) == INSN(7,4)) {
       UInt rN  = INSN(19,16);
       UInt rD  = INSN(15,12);
       UInt rM  = INSN(3,0);
       UInt rot = (insn >> 10) & 3;
-      if (rN == 15/*it's SXTB*/ || rD == 15 || rM == 15) {
+      UInt isU = INSN(22,22);
+      if (rN == 15/*it's {S,U}XTB*/ || rD == 15 || rM == 15) {
          /* undecodable; fall through */
       } else {
          IRTemp srcL = newTemp(Ity_I32);
@@ -4532,26 +4650,27 @@ DisResult disInstr_ARM_WRK (
          assign(srcL, getIReg(rN));
          assign(res,  binop(Iop_Add32,
                             mkexpr(srcL),
-                            unop(Iop_8Sto32,
+                            unop(isU ? Iop_8Uto32 : Iop_8Sto32,
                                  unop(Iop_32to8, 
                                       genROR32(srcR, 8 * rot)))));
          putIReg(rD, mkexpr(res), condT, Ijk_Boring);
-         DIP("sxtab%s r%u, r%u, r%u, ror #%u\n",
-             nCC(INSN_COND), rD, rN, rM, rot);
+         DIP("%cxtab%s r%u, r%u, r%u, ror #%u\n",
+             isU ? 'u' : 's', nCC(INSN_COND), rD, rN, rM, rot);
          goto decode_success;
       }
       /* fall through */
    }
 
-   /* ------------------- uxtah ------------- */
-   if (BITS8(0,1,1,0,1,1,1,1) == INSN(27,20)
+   /* ------------------- {s,u}xtah ------------- */
+   if (BITS8(0,1,1,0,1,0,1,1) == (INSN(27,20) & BITS8(1,1,1,1,1,0,1,1))
        && BITS4(0,0,0,0) == (INSN(11,8) & BITS4(0,0,1,1))
        && BITS4(0,1,1,1) == INSN(7,4)) {
       UInt rN  = INSN(19,16);
       UInt rD  = INSN(15,12);
       UInt rM  = INSN(3,0);
       UInt rot = (insn >> 10) & 3;
-      if (rN == 15/*it's UXTH*/ || rD == 15 || rM == 15) {
+      UInt isU = INSN(22,22);
+      if (rN == 15/*it's {S,U}XTH*/ || rD == 15 || rM == 15) {
          /* undecodable; fall through */
       } else {
          IRTemp srcL = newTemp(Ity_I32);
@@ -4561,13 +4680,13 @@ DisResult disInstr_ARM_WRK (
          assign(srcL, getIReg(rN));
          assign(res,  binop(Iop_Add32,
                             mkexpr(srcL),
-                            unop(Iop_16Uto32,
+                            unop(isU ? Iop_16Uto32 : Iop_16Sto32,
                                  unop(Iop_32to16, 
                                       genROR32(srcR, 8 * rot)))));
          putIReg(rD, mkexpr(res), condT, Ijk_Boring);
 
-         DIP("uxtah%s r%u, r%u, r%u, ror #%u\n",
-             nCC(INSN_COND), rD, rN, rM, rot);
+         DIP("%cxtah%s r%u, r%u, r%u, ror #%u\n",
+             isU ? 'u' : 's', nCC(INSN_COND), rD, rN, rM, rot);
          goto decode_success;
       }
       /* fall through */
@@ -4594,6 +4713,37 @@ DisResult disInstr_ARM_WRK (
          goto decode_success;
       }
       /* fall through */
+   }
+
+   /* Handle various kinds of barriers.  This is rather indiscriminate
+      in the sense that they are all turned into an IR Fence, which
+      means we don't know which they are, so the back end has to
+      re-emit them all when it comes acrosss an IR Fence.
+   */
+   switch (insn) {
+      case 0xEE070F9A: /* v6 */
+         /* mcr 15, 0, r0, c7, c10, 4 (v6) equiv to DSB (v7).  Data
+            Synch Barrier -- ensures completion of memory accesses. */
+         stmt( IRStmt_MBE(Imbe_Fence) );
+         DIP("mcr 15, 0, r0, c7, c10, 4 (data synch barrier)\n");
+         goto decode_success;
+      case 0xEE070FBA: /* v6 */
+         /* mcr 15, 0, r0, c7, c10, 5 (v6) equiv to DMB (v7).  Data
+            Memory Barrier -- ensures ordering of memory accesses. */
+         stmt( IRStmt_MBE(Imbe_Fence) );
+         DIP("mcr 15, 0, r0, c7, c10, 5 (data memory barrier)\n");
+         goto decode_success;
+      case 0xEE070F95: /* v6 */
+         /* mcr 15, 0, r0, c7, c5, 4 (v6) equiv to ISB (v7).
+            Instruction Synchronisation Barrier (or Flush Prefetch
+            Buffer) -- a pipe flush, I think.  I suspect we could
+            ignore those, but to be on the safe side emit a fence
+            anyway. */
+         stmt( IRStmt_MBE(Imbe_Fence) );
+         DIP("mcr 15, 0, r0, c7, c5, 4 (insn synch barrier)\n");
+         goto decode_success;
+      default:
+         break;
    }
 
    /* ----------------------------------------------------------- */
@@ -4675,8 +4825,8 @@ DisResult disInstr_ARM_WRK (
 
    return dres;
 
-#  undef INSN
 #  undef INSN_COND
+#  undef INSN
 }
 
 #undef DIP
@@ -4693,6 +4843,7 @@ DisResult disInstr_ARM_WRK (
 DisResult disInstr_ARM ( IRSB*        irsb_IN,
                          Bool         put_IP,
                          Bool         (*resteerOkFn) ( void*, Addr64 ),
+                         Bool         resteerCisOk,
                          void*        callback_opaque,
                          UChar*       guest_code_IN,
                          Long         delta,
@@ -4710,7 +4861,8 @@ DisResult disInstr_ARM ( IRSB*        irsb_IN,
    host_is_bigendian    = host_bigendian_IN;
    guest_R15_curr_instr = (Addr32)guest_IP;
 
-   dres = disInstr_ARM_WRK ( put_IP, resteerOkFn, callback_opaque,
+   dres = disInstr_ARM_WRK ( put_IP, resteerOkFn,
+                             resteerCisOk, callback_opaque,
                              &guest_code_IN[delta],
                              archinfo, abiinfo );
 

@@ -39,7 +39,7 @@
  * - Vector clocks are compared by comparing all counters of all threads.
  * - When a thread synchronization action is performed that guarantees that
  *   new actions of the current thread are executed after the actions of the
- *   other thread, the vector clock of the synchronization object and the 
+ *   other thread, the vector clock of the synchronization object and the
  *   current thread are combined (by taking the component-wise maximum).
  * - A vector clock is incremented during actions such as
  *   pthread_create(), pthread_mutex_unlock(), sem_post(). (Actions where
@@ -108,14 +108,14 @@ Bool DRD_(vc_lte)(const VectorClock* const vc1, const VectorClock* const vc2)
    for (i = 0; i < vc1->size; i++)
    {
       while (j < vc2->size && vc2->vc[j].threadid < vc1->vc[i].threadid)
-      {
          j++;
-      }
       if (j >= vc2->size || vc2->vc[j].threadid > vc1->vc[i].threadid)
          return False;
 #ifdef ENABLE_DRD_CONSISTENCY_CHECKS
-      /* This assert statement has been commented out because of performance */
-      /* reasons.*/
+      /*
+       * This assert statement has been commented out because of performance
+       * reasons.
+       */
       tl_assert(j < vc2->size && vc2->vc[j].threadid == vc1->vc[i].threadid);
 #endif
       if (vc1->vc[i].count > vc2->vc[j].count)

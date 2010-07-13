@@ -51,6 +51,7 @@
 #include "pub_core_syswrap.h"
 #include "pub_core_tooliface.h"
 #include "pub_core_stacks.h"        // VG_(register_stack)
+#include "pub_core_transtab.h"      // VG_(discard_translations)
 
 #include "priv_types_n_macros.h"
 #include "priv_syswrap-generic.h"   /* for decls of generic wrappers */
@@ -200,6 +201,17 @@ static SysRes do_clone ( ThreadId ptid,
    ctst->sig_mask = ptst->sig_mask;
    ctst->tmp_sig_mask = ptst->sig_mask;
 
+   /* Start the child with its threadgroup being the same as the
+      parent's.  This is so that any exit_group calls that happen
+      after the child is created but before it sets its
+      os_state.threadgroup field for real (in thread_wrapper in
+      syswrap-linux.c), really kill the new thread.  a.k.a this avoids
+      a race condition in which the thread is unkillable (via
+      exit_group) because its threadgroup is not set.  The race window
+      is probably only a few hundred or a few thousand cycles long.
+      See #226116. */
+   ctst->os_state.threadgroup = ptst->os_state.threadgroup;
+
    seg = VG_(am_find_nsegment)((Addr)sp);
    if (seg && seg->kind != SkResvn) {
       ctst->client_stack_highest_word = (Addr)VG_PGROUNDUP(sp);
@@ -320,18 +332,14 @@ DECL_TEMPLATE(arm_linux, sys_getpeername);
 DECL_TEMPLATE(arm_linux, sys_socketpair);
 DECL_TEMPLATE(arm_linux, sys_send);
 DECL_TEMPLATE(arm_linux, sys_recv);
-DECL_TEMPLATE(arm_linux, sys_mmap);
 DECL_TEMPLATE(arm_linux, sys_mmap2);
 DECL_TEMPLATE(arm_linux, sys_stat64);
 DECL_TEMPLATE(arm_linux, sys_lstat64);
 DECL_TEMPLATE(arm_linux, sys_fstatat64);
 DECL_TEMPLATE(arm_linux, sys_fstat64);
-DECL_TEMPLATE(arm_linux, sys_ipc);
 DECL_TEMPLATE(arm_linux, sys_clone);
 DECL_TEMPLATE(arm_linux, sys_sigreturn);
 DECL_TEMPLATE(arm_linux, sys_rt_sigreturn);
-DECL_TEMPLATE(arm_linux, sys_sigaction);
-DECL_TEMPLATE(arm_linux, sys_sigsuspend);
 DECL_TEMPLATE(arm_linux, sys_set_tls);
 DECL_TEMPLATE(arm_linux, sys_cacheflush);
 
@@ -914,7 +922,7 @@ PRE(sys_socketpair)
 {
    PRINT("sys_socketpair ( %ld, %ld, %ld, %#lx )",ARG1,ARG2,ARG3,ARG4);
    PRE_REG_READ4(long, "socketpair",
-                 int, d, int, type, int, protocol, int [2], sv);
+                 int, d, int, type, int, protocol, int*, sv);
    ML_(generic_PRE_sys_socketpair)(tid, ARG1,ARG2,ARG3,ARG4);
 }
 POST(sys_socketpair)
@@ -947,11 +955,6 @@ PRE(sys_recv)
 POST(sys_recv)
 {
    ML_(generic_POST_sys_recv)( tid, RES, ARG1, ARG2, ARG3 );
-}
-
-PRE(sys_mmap)
-{
-    I_die_here;
 }
 
 PRE(sys_mmap2)
@@ -1034,17 +1037,6 @@ PRE(sys_fstat64)
 POST(sys_fstat64)
 {
    POST_MEM_WRITE( ARG2, sizeof(struct vki_stat64) );
-}
-
-
-PRE(sys_ipc)
-{   
-    I_die_here;
-}
-
-POST(sys_ipc)
-{   
-    I_die_here;
 }
 
 PRE(sys_clone)
@@ -1188,19 +1180,6 @@ PRE(sys_rt_sigreturn)
    *flags |= SfPollAfter;
 }
 
-PRE(sys_sigaction)
-{   
-    I_die_here;
-}
-
-POST(sys_sigaction)
-{   I_die_here;
-}
-
-PRE(sys_sigsuspend)
-{   I_die_here;
-}
-
 /* Very much ARM specific */
 
 PRE(sys_set_tls)
@@ -1214,6 +1193,10 @@ PRE(sys_cacheflush)
 {
    PRINT("cacheflush (%lx, %#lx, %#lx)",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "cacheflush", void*, addrlow,void*, addrhigh,int, flags);
+   VG_(discard_translations)( (Addr64)ARG1,
+                              ((ULong)ARG2) - ((ULong)ARG1) + 1ULL/*paranoia*/,
+                              "PRE(sys_cacheflush)" );
+   SET_STATUS_Success(0);
 }
 
 
@@ -1322,13 +1305,13 @@ static SyscallTableEntry syscall_main_table[] = {
 
    GENX_(__NR_getpgrp,           sys_getpgrp),        // 65
    GENX_(__NR_setsid,            sys_setsid),         // 66
-   PLAXY(__NR_sigaction,         sys_sigaction),      // 67
+//      _____(__NR_sigaction,         sys_sigaction),      // 67
 //zz    //   (__NR_sgetmask,          sys_sgetmask),       // 68 */* (ANSI C)
 //zz    //   (__NR_ssetmask,          sys_ssetmask),       // 69 */* (ANSI C)
 //zz 
    LINX_(__NR_setreuid,          sys_setreuid16),     // 70
    LINX_(__NR_setregid,          sys_setregid16),     // 71
-   PLAX_(__NR_sigsuspend,        sys_sigsuspend),     // 72
+//   _____(__NR_sigsuspend,        sys_sigsuspend),     // 72
    LINXY(__NR_sigpending,        sys_sigpending),     // 73
 //zz    //   (__NR_sethostname,       sys_sethostname),    // 74 */*
 //zz 
@@ -1350,7 +1333,7 @@ static SyscallTableEntry syscall_main_table[] = {
 //zz    //   (__NR_reboot,            sys_reboot),         // 88 */Linux
 //zz    //   (__NR_readdir,           old_readdir),        // 89 -- superseded
 //zz 
-//   PLAX_(__NR_mmap,              old_mmap),           // 90
+//   _____(__NR_mmap,              old_mmap),           // 90
    GENXY(__NR_munmap,            sys_munmap),         // 91
    GENX_(__NR_truncate,          sys_truncate),       // 92
    GENX_(__NR_ftruncate,         sys_ftruncate),      // 93
@@ -1382,7 +1365,7 @@ static SyscallTableEntry syscall_main_table[] = {
 //zz 
 //zz    //   (__NR_swapoff,           sys_swapoff),        // 115 */Linux 
    LINXY(__NR_sysinfo,           sys_sysinfo),        // 116
-   PLAXY(__NR_ipc,               sys_ipc),            // 117
+//   _____(__NR_ipc,               sys_ipc),            // 117
    GENX_(__NR_fsync,             sys_fsync),          // 118
    PLAX_(__NR_sigreturn,         sys_sigreturn),      // 119 ?/Linux
 

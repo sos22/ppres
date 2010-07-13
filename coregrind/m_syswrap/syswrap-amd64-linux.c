@@ -251,6 +251,17 @@ static SysRes do_clone ( ThreadId ptid,
    ctst->sig_mask = ptst->sig_mask;
    ctst->tmp_sig_mask = ptst->sig_mask;
 
+   /* Start the child with its threadgroup being the same as the
+      parent's.  This is so that any exit_group calls that happen
+      after the child is created but before it sets its
+      os_state.threadgroup field for real (in thread_wrapper in
+      syswrap-linux.c), really kill the new thread.  a.k.a this avoids
+      a race condition in which the thread is unkillable (via
+      exit_group) because its threadgroup is not set.  The race window
+      is probably only a few hundred or a few thousand cycles long.
+      See #226116. */
+   ctst->os_state.threadgroup = ptst->os_state.threadgroup;
+
    /* We don't really know where the client stack is, because its
       allocated by the client.  The best we can do is look at the
       memory mappings and try to derive some useful information.  We
@@ -803,7 +814,7 @@ PRE(sys_socketpair)
 {
    PRINT("sys_socketpair ( %ld, %ld, %ld, %#lx )",ARG1,ARG2,ARG3,ARG4);
    PRE_REG_READ4(long, "socketpair",
-                 int, d, int, type, int, protocol, int [2], sv);
+                 int, d, int, type, int, protocol, int*, sv);
    ML_(generic_PRE_sys_socketpair)(tid, ARG1,ARG2,ARG3,ARG4);
 }
 POST(sys_socketpair)
@@ -866,11 +877,11 @@ PRE(sys_semctl)
                     int, semid, int, semnum, int, cmd);
       break;
    }
-   ML_(generic_PRE_sys_semctl)(tid, ARG1,ARG2,ARG3,ARG4);
+   ML_(generic_PRE_sys_semctl)(tid, ARG1,ARG2,ARG3|VKI_IPC_64,ARG4);
 }
 POST(sys_semctl)
 {
-   ML_(generic_POST_sys_semctl)(tid, RES,ARG1,ARG2,ARG3,ARG4);
+   ML_(generic_POST_sys_semctl)(tid, RES,ARG1,ARG2,ARG3|VKI_IPC_64,ARG4);
 }
 
 PRE(sys_msgget)
@@ -956,11 +967,11 @@ PRE(sys_shmctl)
    PRINT("sys_shmctl ( %ld, %ld, %#lx )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "shmctl",
                  int, shmid, int, cmd, struct shmid_ds *, buf);
-   ML_(generic_PRE_sys_shmctl)(tid, ARG1,ARG2,ARG3);
+   ML_(generic_PRE_sys_shmctl)(tid, ARG1,ARG2|VKI_IPC_64,ARG3);
 }
 POST(sys_shmctl)
 {
-   ML_(generic_POST_sys_shmctl)(tid, RES,ARG1,ARG2,ARG3);
+   ML_(generic_POST_sys_shmctl)(tid, RES,ARG1,ARG2|VKI_IPC_64,ARG3);
 }
 
 PRE(sys_fadvise64)
@@ -1371,7 +1382,7 @@ static SyscallTableEntry syscall_table[] = {
    LINX_(__NR_set_robust_list,	 sys_set_robust_list),  // 273
    LINXY(__NR_get_robust_list,	 sys_get_robust_list),  // 274
 
-//   LINX_(__NR_splice,            sys_ni_syscall),       // 275
+   LINX_(__NR_splice,            sys_splice),           // 275
 //   LINX_(__NR_tee,               sys_ni_syscall),       // 276
    LINX_(__NR_sync_file_range,   sys_sync_file_range),  // 277
 //   LINX_(__NR_vmsplice,          sys_ni_syscall),       // 278

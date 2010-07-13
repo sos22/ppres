@@ -1868,6 +1868,7 @@ struct vki_cdrom_generic_command
 #define VKI_SNDCTL_DSP_SETFRAGMENT	_VKI_SIOWR('P',10, int)
 
 #define VKI_SNDCTL_DSP_GETFMTS		_VKI_SIOR ('P',11, int) /* Returns a mask */
+#define VKI_SNDCTL_DSP_SETFMT		_VKI_SIOWR('P', 5, int) /* Selects ONE fmt */
 
 typedef struct vki_audio_buf_info {
 			int fragments;	/* # of available fragments (partially usend ones not counted) */
@@ -2632,6 +2633,14 @@ struct vki_perf_counter_attr {
 	__vki_u32			__reserved_2;
 
 	__vki_u64			__reserved_3;
+};
+
+/*--------------------------------------------------------------------*/
+// From linux-2.6.32.4/include/linux/getcpu.h
+/*--------------------------------------------------------------------*/
+
+struct vki_getcpu_cache {
+	unsigned long blob[128 / sizeof(long)];
 };
 
 #endif // __VKI_LINUX_H
