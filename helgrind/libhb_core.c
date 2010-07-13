@@ -9,7 +9,7 @@
    This file is part of LibHB, a library for implementing and checking
    the happens-before relationship in concurrent programs.
 
-   Copyright (C) 2008-2009 OpenWorks Ltd
+   Copyright (C) 2008-2010 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -341,6 +341,16 @@ static UWord stats__cline_16to8splits    = 0; // # 16-bit accesses split
 static UWord stats__cline_64to32pulldown = 0; // # calls to pulldown_to_32
 static UWord stats__cline_32to16pulldown = 0; // # calls to pulldown_to_16
 static UWord stats__cline_16to8pulldown  = 0; // # calls to pulldown_to_8
+static UWord stats__vts__tick            = 0; // # calls to VTS__tick
+static UWord stats__vts__join            = 0; // # calls to VTS__join
+static UWord stats__vts__cmpLEQ          = 0; // # calls to VTS__cmpLEQ
+static UWord stats__vts__cmp_structural  = 0; // # calls to VTS__cmp_structural
+static UWord stats__vts__cmp_structural_slow = 0; // # calls to VTS__cmp_structural w/ slow case
+static UWord stats__vts__indexat_slow    = 0; // # calls to VTS__indexAt_SLOW
+static UWord stats__vts_set__fadoa       = 0; // # calls to vts_set__find_and_dealloc__or_add
+static UWord stats__vts_set__fadoa_d     = 0; // # calls to vts_set__find_and_dealloc__or_add
+                                              // that lead to a deallocation
+
 
 static inline Addr shmem__round_to_SecMap_base ( Addr a ) {
    return a & ~(N_SECMAP_ARANGE - 1);
@@ -1660,6 +1670,9 @@ VTS* VTS__tick ( Thr* me, VTS* vts )
    ScalarTS  tmp;
    VTS*      res;
    Word      i, n; 
+
+   stats__vts__tick++;
+
    tl_assert(me);
    tl_assert(is_sane_VTS(vts));
    //if (0) VG_(printf)("tick vts thrno %ld szin %d\n",
@@ -1729,6 +1742,8 @@ VTS* VTS__join ( VTS* a, VTS* b )
    ULong    tyma, tymb, tymMax;
    Thr*     thr;
    VTS*     res;
+
+   stats__vts__join++;
 
    tl_assert(a && a->ts);
    tl_assert(b && b->ts);
@@ -1821,6 +1836,8 @@ static Thr* VTS__cmpLEQ ( VTS* a, VTS* b )
    Word  ia, ib, useda, usedb;
    ULong tyma, tymb;
 
+   stats__vts__cmpLEQ++;
+
    tl_assert(a && a->ts);
    tl_assert(b && b->ts);
    useda = VG_(sizeXA)( a->ts );
@@ -1903,37 +1920,59 @@ static Thr* VTS__cmpLEQ ( VTS* a, VTS* b )
 
 /* Compute an arbitrary structural (total) ordering on the two args,
    based on their VCs, so they can be looked up in a table, tree, etc.
-   Returns -1, 0 or 1.  (really just 'deriving Ord' :-)
+   Returns -1, 0 or 1.  (really just 'deriving Ord' :-) This can be
+   performance critical so there is some effort expended to make it sa
+   fast as possible.
 */
 Word VTS__cmp_structural ( VTS* a, VTS* b )
 {
    /* We just need to generate an arbitrary total ordering based on
       a->ts and b->ts.  Preferably do it in a way which comes across likely
       differences relatively quickly. */
-   Word     i, useda, usedb;
-   ScalarTS *tmpa, *tmpb;
+   Word     i;
+   Word     useda = 0,    usedb = 0;
+   ScalarTS *ctsa = NULL, *ctsb = NULL;
 
-   tl_assert(a && a->ts);
-   tl_assert(b && b->ts);
-   useda = VG_(sizeXA)( a->ts );
-   usedb = VG_(sizeXA)( b->ts );
+   stats__vts__cmp_structural++;
+
+   tl_assert(a);
+   tl_assert(b);
+
+   VG_(getContentsXA_UNSAFE)( a->ts, (void**)&ctsa, &useda );
+   VG_(getContentsXA_UNSAFE)( b->ts, (void**)&ctsb, &usedb );
+
+   if (LIKELY(useda == usedb)) {
+      ScalarTS *tmpa = NULL, *tmpb = NULL;
+      stats__vts__cmp_structural_slow++;
+      /* Same length vectors.  Find the first difference, if any, as
+         fast as possible. */
+      for (i = 0; i < useda; i++) {
+         tmpa = &ctsa[i];
+         tmpb = &ctsb[i];
+         if (LIKELY(tmpa->tym == tmpb->tym && tmpa->thr == tmpb->thr))
+            continue;
+         else
+            break;
+      }
+      if (UNLIKELY(i == useda)) {
+         /* They're identical. */
+         return 0;
+      } else {
+         tl_assert(i >= 0 && i < useda);
+         if (tmpa->tym < tmpb->tym) return -1;
+         if (tmpa->tym > tmpb->tym) return 1;
+         if (tmpa->thr < tmpb->thr) return -1;
+         if (tmpa->thr > tmpb->thr) return 1;
+         /* we just established them as non-identical, hence: */
+      }
+      /*NOTREACHED*/
+      tl_assert(0);
+   }
 
    if (useda < usedb) return -1;
    if (useda > usedb) return 1;
-
-   /* Same length vectors, so let's step through them together. */
-   tl_assert(useda == usedb);
-   for (i = 0; i < useda; i++) {
-      tmpa = VG_(indexXA)( a->ts, i );
-      tmpb = VG_(indexXA)( b->ts, i );
-      if (tmpa->tym < tmpb->tym) return -1;
-      if (tmpa->tym > tmpb->tym) return 1;
-      if (tmpa->thr < tmpb->thr) return -1;
-      if (tmpa->thr > tmpb->thr) return 1;
-   }
-
-   /* They're identical. */
-   return 0;
+   /*NOTREACHED*/
+   tl_assert(0);
 }
 
 
@@ -1972,6 +2011,7 @@ void VTS__show ( HChar* buf, Int nBuf, VTS* vts ) {
 */
 ULong VTS__indexAt_SLOW ( VTS* vts, Thr* idx ) {
    UWord i, n;
+   stats__vts__indexat_slow++;
    tl_assert(vts && vts->ts);
    n = VG_(sizeXA)( vts->ts );
    for (i = 0; i < n; i++) {
@@ -2029,12 +2069,14 @@ static void vts_set_init ( void )
 static VTS* vts_set__find_and_dealloc__or_add ( VTS* cand )
 {
    UWord keyW, valW;
+   stats__vts_set__fadoa++;
    /* lookup cand (by value) */
    if (VG_(lookupFM)( vts_set, &keyW, &valW, (UWord)cand )) {
       /* found it */
       tl_assert(valW == 0);
       /* if this fails, cand (by ref) was already present (!) */
       tl_assert(keyW != (UWord)cand);
+      stats__vts_set__fadoa_d++;
       VTS__delete(cand);
       return (VTS*)keyW;
    } else {
@@ -3183,7 +3225,7 @@ static UWord stats__ctxt_tab_cmps = 0;
 
 
 ///////////////////////////////////////////////////////
-//// Part (1): An OSet of RCECs
+//// Part (1): A hash table of RCECs
 ///
 
 #define N_FRAMES 8
@@ -3250,7 +3292,7 @@ static void free_RCEC ( RCEC* rcec ) {
    tl_assert(rcec->magic == RCEC_MAGIC);
    gal_Free( &rcec_group_allocator, rcec );
 }
-//////////// END OldRef group allocator
+//////////// END RCEC group allocator
 
 
 /* Find 'ec' in the RCEC list whose head pointer lives at 'headp' and
@@ -5469,14 +5511,24 @@ void libhb_shutdown ( Bool show_stats )
 
       VG_(printf)("%s","\n");
 
-      VG_(printf)("   libhb: %'13llu msmcread  (%'llu changed)\n",
+      VG_(printf)("   libhb: %'13llu msmcread  (%'llu dragovers)\n",
                   stats__msmcread, stats__msmcread_change);
-      VG_(printf)("   libhb: %'13llu msmcwrite (%'llu changed)\n",
+      VG_(printf)("   libhb: %'13llu msmcwrite (%'llu dragovers)\n",
                   stats__msmcwrite, stats__msmcwrite_change);
       VG_(printf)("   libhb: %'13llu cmpLEQ queries (%'llu misses)\n",
                   stats__cmpLEQ_queries, stats__cmpLEQ_misses);
       VG_(printf)("   libhb: %'13llu join2  queries (%'llu misses)\n",
                   stats__join2_queries, stats__join2_misses);
+
+      VG_(printf)("%s","\n");
+      VG_(printf)( "   libhb: VTSops: tick %'lu,  join %'lu,  cmpLEQ %'lu\n",
+                   stats__vts__tick, stats__vts__join,  stats__vts__cmpLEQ );
+      VG_(printf)( "   libhb: VTSops: cmp_structural %'lu (%'lu slow)\n",
+                   stats__vts__cmp_structural, stats__vts__cmp_structural_slow );
+      VG_(printf)( "   libhb: VTSset: find_and_dealloc__or_add %'lu (%'lu deallocd)\n",
+                   stats__vts_set__fadoa, stats__vts_set__fadoa_d );
+      VG_(printf)( "   libhb: VTSops: indexAt_SLOW %'lu\n",
+                   stats__vts__indexat_slow );
 
       VG_(printf)("%s","\n");
       VG_(printf)(
@@ -5659,7 +5711,8 @@ void libhb_so_recv ( Thr* thr, SO* so, Bool strong_recv )
          //VtsID__rcinc(thr->viW);
       }
 
-      Filter__clear(thr->filter, "libhb_so_recv");
+      if (thr->filter)
+         Filter__clear(thr->filter, "libhb_so_recv");
       note_local_Kw_n_stack_for(thr);
 
       if (strong_recv) 

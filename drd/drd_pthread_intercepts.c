@@ -7,7 +7,7 @@
 /*
   This file is part of DRD, a thread error detector.
 
-  Copyright (C) 2006-2009 Bart Van Assche <bart.vanassche@gmail.com>.
+  Copyright (C) 2006-2010 Bart Van Assche <bart.vanassche@gmail.com>.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -339,9 +339,7 @@ static void DRD_(set_main_thread_state)(void)
    // Make sure that DRD knows about the main thread's POSIX thread ID.
    VALGRIND_DO_CLIENT_REQUEST(res, -1, VG_USERREQ__SET_PTHREADID,
                               pthread_self(), 0, 0, 0, 0);
-
 }
-
 
 /*
  * Note: as of today there exist three different versions of pthread_create

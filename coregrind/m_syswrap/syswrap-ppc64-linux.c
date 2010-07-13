@@ -7,8 +7,8 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2009 Nicholas Nethercote <njn@valgrind.org>
-   Copyright (C) 2005-2009 Cerion Armour-Brown <cerion@open-works.co.uk>
+   Copyright (C) 2005-2010 Nicholas Nethercote <njn@valgrind.org>
+   Copyright (C) 2005-2010 Cerion Armour-Brown <cerion@open-works.co.uk>
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -1479,7 +1479,7 @@ static SyscallTableEntry syscall_table[] = {
    LINX_(__NR_mq_unlink,         sys_mq_unlink),          // 263
    LINX_(__NR_mq_timedsend,      sys_mq_timedsend),       // 264
 
-   LINX_(__NR_mq_timedreceive,   sys_mq_timedreceive),    // 265
+   LINXY(__NR_mq_timedreceive,   sys_mq_timedreceive),    // 265
    LINX_(__NR_mq_notify,         sys_mq_notify),          // 266
    LINXY(__NR_mq_getsetattr,     sys_mq_getsetattr),      // 267
 // _____(__NR_kexec_load,        sys_kexec_load),         // 268

@@ -57,13 +57,16 @@ usage: valgrind [options] prog-and-args
     --kernel-variant=variant1,variant2,...  known variants: bproc [none]
                               handle non-standard kernel variants
     --show-emwarns=no|yes     show warnings about emulation limits? [no]
+    --require-text-symbol=:sonamepattern:symbolpattern    abort run if the
+                              stated shared object doesn't have the stated
+                              text symbol.  Patterns can contain ? and *.
 
   user options for Nulgrind:
     (none)
 
   debugging options for all Valgrind tools:
-    --stats=no|yes            show tool and core statistics [no]
     -d                        show verbose debugging output
+    --stats=no|yes            show tool and core statistics [no]
     --sanity-level=<number>   level of sanity checking to do [1]
     --trace-flags=<XXXXXXXX>   show generated code? (X = 0|1) [00000000]
     --profile-flags=<XXXXXXXX> ditto, but for profiling (X = 0|1) [00000000]
@@ -114,9 +117,9 @@ usage: valgrind [options] prog-and-args
 
   Extra options read from ~/.valgrindrc, $VALGRIND_OPTS, ./.valgrindrc
 
-  Nulgrind is Copyright (C) 2002-2009, and GNU GPL'd, by Nicholas Nethercote.
-  Valgrind is Copyright (C) 2000-2009, and GNU GPL'd, by Julian Seward et al.
-  LibVEX is Copyright (C) 2004-2009, and GNU GPL'd, by OpenWorks LLP.
+  Nulgrind is Copyright (C) 2002-2010, and GNU GPL'd, by Nicholas Nethercote.
+  Valgrind is Copyright (C) 2000-2010, and GNU GPL'd, by Julian Seward et al.
+  LibVEX is Copyright (C) 2004-2010, and GNU GPL'd, by OpenWorks LLP.
 
   Bug reports, feedback, admiration, abuse, etc, to: www.valgrind.org.
 
