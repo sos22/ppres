@@ -41,6 +41,8 @@ mk_helpers(unsigned char, 8)
 mk_helpers(unsigned short, 16)
 mk_helpers(unsigned, 32)
 mk_helpers(unsigned long, 64)
+mk_helpers(float, F32)
+mk_helpers(double, F64)
 
 typedef struct {
 	unsigned long long a;
@@ -123,12 +125,16 @@ log_reads_expr(IRSB *sb, IRExpr *exp)
 			HLP(16);
 			break;
 		case Ity_I32:
-		case Ity_F32:
 			HLP(32);
 			break;
 		case Ity_I64:
-		case Ity_F64:
 			HLP(64);
+			break;
+		case Ity_F32:
+			HLP(F32);
+			break;
+		case Ity_F64:
+			HLP(F64);
 			break;
 		case Ity_I128:
 			HLP(128);

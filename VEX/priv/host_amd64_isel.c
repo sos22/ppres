@@ -3979,6 +3979,10 @@ static void iselStmt ( ISelEnv* env, IRStmt* stmt )
          HReg dst = lookupIRTemp(env, d->tmp);
          addInstr(env, mk_iMOVsd_RR(hregAMD64_RAX(),dst) );
          return;
+      } else if (retty == Ity_F64) {
+         HReg dst = lookupIRTemp(env, d->tmp);
+         addInstr(env, mk_vMOVsd_RR(hregAMD64_XMM0(),dst) );
+         return;
       } else if (retty == Ity_I128) {
 	 HReg dstHi, dstLo;
 	 /* Low bits of return are in rax, high bits in rdx. */
