@@ -53,7 +53,7 @@ UWord VG_(run_innerloop) ( void* guest_state, UWord do_profiling );
 */
 
 .text
-.globl VG_(run_innerloop)
+//.globl VG_(run_innerloop)
 .type  VG_(run_innerloop), @function
 VG_(run_innerloop):
 	/* %rdi holds guest_state */

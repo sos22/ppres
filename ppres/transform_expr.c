@@ -14,7 +14,7 @@
 #endif
 
 #define mk_helper_load(typ, suffix)                            \
-static typ                                                     \
+typ						               \
  helper_load_ ## suffix (const typ *ptr, unsigned long rsp,    \
 			 unsigned long rip)		       \
 {							       \
@@ -25,7 +25,7 @@ static typ                                                     \
 }
 
 #define mk_helper_store(typ, suffix)                           \
-static void						       \
+void						               \
  helper_store_ ## suffix (typ *ptr, typ val, unsigned long rsp,\
 			  unsigned long rip)		       \
 {							       \
@@ -54,7 +54,7 @@ mk_helpers(ultralong_t, 128)
 /* We're single-threaded, so these don't have to worry about locking
    or anything like that. */
 #define mk_helper_cas(typ, suffix)				       \
-static typ						               \
+typ						                       \
 helper_cas_ ## suffix (typ *addr,				       \
 		       typ expected,				       \
 		       typ data,				       \
@@ -356,20 +356,14 @@ instrument_func(VgCallbackClosure *closure,
 		case Ist_WrTmp:
 			out_stmt->Ist.WrTmp.data = log_reads_expr(sb_out, out_stmt->Ist.WrTmp.data);
 			break;
-		case Ist_Store: {
-			IRExpr *addr = current_in_stmt->Ist.Store.addr;
-			IRExpr *data = current_in_stmt->Ist.Store.data;
-
-			out_stmt = log_write_stmt(
-				log_reads_expr(sb_out, addr),
-				log_reads_expr(sb_out, data),
-				typeOfIRExpr(
-					sb_in->tyenv,
-					current_in_stmt->Ist.Store.data));
+		case Ist_Store:
+			out_stmt->Ist.Store.addr = log_reads_expr(sb_out, out_stmt->Ist.Store.addr);
+			out_stmt->Ist.Store.data = log_reads_expr(sb_out, out_stmt->Ist.Store.data);
 			break;
-		}
 		case Ist_CAS:
-			out_stmt = log_cas_stmt(sb_out, out_stmt->Ist.CAS.details);
+			out_stmt->Ist.CAS.details->addr = log_reads_expr(sb_out, out_stmt->Ist.CAS.details->addr);
+			out_stmt->Ist.CAS.details->dataLo = log_reads_expr(sb_out, out_stmt->Ist.CAS.details->dataLo);
+			out_stmt->Ist.CAS.details->expdLo = log_reads_expr(sb_out, out_stmt->Ist.CAS.details->expdLo);
 			break;
 		case Ist_LLSC:
 			VG_(printf)("Don't handle LLSC\n");

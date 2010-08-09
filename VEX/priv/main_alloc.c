@@ -86,6 +86,8 @@ do_gc(void)
   struct alloc_header *p;
   struct alloc_header *n;
 
+  zap_cache();
+
   for (h = first_alloc_header(); h; h = next_alloc_header(h))
     h->flags &= ~ ALLOC_FLAG_GC_MARK;
   for (x = 0; x < nr_gc_roots; x++)

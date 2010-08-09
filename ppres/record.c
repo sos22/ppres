@@ -179,7 +179,7 @@ close_logfile(struct record_emitter *re)
 
 
 
-static void
+void
 record_instr(Word addr, Word reg0, Word reg1, Word reg2, Word reg3, Word reg4)
 {
 	struct footstep_record *fr;
@@ -1020,7 +1020,7 @@ fini(Int ignore)
 	close_logfile(&logfile);
 }
 
-static ULong
+ULong
 record_rdtsc(void)
 {
 	UInt eax, edx;
@@ -1088,3 +1088,5 @@ pre_clo_init(void)
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)
+
+
