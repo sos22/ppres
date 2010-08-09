@@ -207,9 +207,21 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 		helper_addr = helper_store_32;
 		data = IRExpr_Unop(Iop_32Uto64, data);
 		break;
+	case Ity_F32:
+		helper_name = "helper_store_32";
+		helper_addr = helper_store_32;
+		data =
+			IRExpr_Unop(Iop_32Uto64,
+				    IRExpr_Unop(Iop_ReinterpF32asI32, data));
+		break;
 	case Ity_I64:
 		helper_name = "helper_store_64";
 		helper_addr = helper_store_64;
+		break;
+	case Ity_F64:
+		helper_name = "helper_store_64";
+		helper_addr = helper_store_64;
+		data = IRExpr_Unop(Iop_ReinterpF64asI64, data);
 		break;
 	case Ity_I128:
 		helper_name = "helper_store_128";
@@ -230,6 +242,7 @@ log_write_stmt(IRExpr *addr, IRExpr *data, IRType typ)
 				     rip);
 		break;
 	default:
+		ppIRType(typ);
 		VG_(tool_panic)((signed char *)"Bad write");
 	}
 	if (!args)
@@ -377,6 +390,8 @@ instrument_func(VgCallbackClosure *closure,
 			out_stmt->Ist.Exit.guard =
 				log_reads_expr(sb_out, out_stmt->Ist.Exit.guard);
 			break;
+		default:
+			abort();
 		}
 		addStmtToIRSB(sb_out, out_stmt);
 	}

@@ -419,6 +419,11 @@ handle_ioctl(UWord *syscall_args, UInt nr_args, SysRes res)
 			capture_memory((void *)syscall_args[2],
 				       sizeof(struct winsize));
 		break;
+	case FIONREAD:
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[2],
+				       sizeof(int));
+		break;
 	default:
 		VG_(printf)("don't know what to do with ioctl %lx (_IOC(%ld=%s,%ld=%c,%ld,%ld))\n",
 			    code,
@@ -428,7 +433,6 @@ handle_ioctl(UWord *syscall_args, UInt nr_args, SysRes res)
 			    (unsigned char)_IOC_TYPE(code),
 			    _IOC_NR(code),
 			    _IOC_SIZE(code));
-		VG_(exit)(1);
 	}
 }
 
@@ -443,6 +447,10 @@ handle_fcntl(UWord *syscall_args, UInt nr_args, SysRes res)
 	case F_SETFL:
 	case F_GETFL:
 	case F_SETLKW:
+	case F_SETLK:
+		break;
+	case F_GETLK:
+		capture_memory(syscall_args[2], sizeof(struct flock));
 		break;
 	default:
 		VG_(printf)("Don't know how to handle fcntl %lx\n",
@@ -528,6 +536,12 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_setsockopt:
 	case __NR_bind:
 	case __NR_listen:
+	case __NR_madvise:
+	case __NR_sched_setscheduler:
+	case __NR_symlink:
+	case __NR_unlink:
+	case __NR_umask:
+	case __NR_sched_yield:
 		break;
 
 	case __NR_accept:
@@ -576,12 +590,12 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 
 		if (sr_isError(res))
 			break;
-		if (flags & CLONE_CHILD_SETTID) {
+		if (syscall_args[2] && (flags & CLONE_CHILD_SETTID)) {
 			VG_(printf)("Child ptr %lx\n",
 				    syscall_args[3]);
 			capture_memory((void *)syscall_args[2], 4);
 		}
-		if (flags & CLONE_PARENT_SETTID) {
+		if (syscall_args[3] && (flags & CLONE_PARENT_SETTID)) {
 			VG_(printf)("Parent ptr %lx (%x)\n",
 				    syscall_args[4],
 				    *(unsigned *)(syscall_args[3]));
@@ -638,7 +652,8 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	}
 
 	case __NR_stat:
-	case __NR_fstat: {
+	case __NR_fstat:
+	case __NR_lstat: {
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[1],
 				       sizeof(struct kernel_stat));
@@ -733,7 +748,8 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		break;
 	}
 
-	case __NR_getsockname: {
+	case __NR_getsockname:
+	case __NR_getpeername: {
 		if (!sr_isError(res)) {
 			int addrlen = *(int *)syscall_args[2];
 			capture_memory((void *)syscall_args[2], sizeof(int));
@@ -750,9 +766,30 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		break;
 	}
 
+	case __NR_getresuid:
+	case __NR_getresgid:
+		if (!sr_isError(res)) {
+			capture_memory((void *)syscall_args[0], sizeof(uid_t));
+			capture_memory((void *)syscall_args[1], sizeof(uid_t));
+			capture_memory((void *)syscall_args[2], sizeof(uid_t));
+		}
+		break;
+
+	case __NR_select:
+		/* Do this even if the syscall returns an error. */
+		if (syscall_args[1])
+			capture_memory((void *)syscall_args[1], sizeof(vki_fd_set));
+		if (syscall_args[2])
+			capture_memory((void *)syscall_args[2], sizeof(vki_fd_set));
+		if (syscall_args[3])
+			capture_memory((void *)syscall_args[3], sizeof(vki_fd_set));
+		if (syscall_args[4])
+			capture_memory((void *)syscall_args[4], sizeof(struct timeval));
+		break;
+
 	default:
 		VG_(printf)("don't know what to do with syscall %d\n", syscall_nr);
-		VG_(exit)(1);
+		//VG_(exit)(1);
 	}
 }
 
