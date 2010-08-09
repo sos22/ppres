@@ -699,6 +699,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		case Iop_Or64:
 			dest->lo = arg1.lo | arg2.lo;
 			break;
+		case Iop_Shl16:
 		case Iop_Shl32:
 		case Iop_Shl64:
 			dest->lo = arg1.lo << arg2.lo;
