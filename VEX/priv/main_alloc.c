@@ -24,6 +24,8 @@ struct alloc_header {
 #define NR_GC_ROOTS 128
 static unsigned nr_gc_roots;
 static void **gc_roots[NR_GC_ROOTS];
+static unsigned long heap_used;
+static struct alloc_header *allocation_cursor;
 
 static void *
 header_to_alloc(struct alloc_header *ah)
@@ -34,7 +36,7 @@ header_to_alloc(struct alloc_header *ah)
 static struct alloc_header *
 alloc_to_header(const void *x)
 {
-  return (struct alloc_header *)x - 1;
+  return (struct alloc_header *)(void *)x - 1;
 }
 
 static struct alloc_header *
@@ -89,12 +91,14 @@ do_gc(void)
   for (x = 0; x < nr_gc_roots; x++)
     gc_visit(*gc_roots[x]);
 
+  allocation_cursor = NULL;
   h = first_alloc_header();
   p = NULL;
   while (h) {
     n = next_alloc_header(h);
     if (h->type && !(h->flags & ALLOC_FLAG_GC_MARK)) {
       /* We're going to free off this block. */
+      heap_used -= h->size;
       if (h->type->destruct)
 	h->type->destruct(header_to_alloc(h));
       h->type = NULL;
@@ -110,6 +114,8 @@ do_gc(void)
 	h->size += n->size;
 	n = next_alloc_header(h);
       }
+      if (!allocation_cursor || allocation_cursor->size < h->size)
+	allocation_cursor = h;
     }
 
     p = h;
@@ -130,7 +136,8 @@ void vexSetAllocModeTEMP_and_clear ( void )
     done_init = True;
   }
 
-  do_gc();
+  if (heap_used > N_TEMPORARY_BYTES / 2)
+    do_gc();
 }
 
 
@@ -161,7 +168,7 @@ alloc_bytes(const VexAllocType *type, unsigned size, const char *file, unsigned 
   size = (size + 15) & ~15;
 
   /* First-fit policy */
-  for (cursor = first_alloc_header();
+  for (cursor = allocation_cursor;
        cursor != NULL;
        cursor = next_alloc_header(cursor)) {
     vassert(!(cursor->flags & ~ALLOC_FLAG_GC_MARK));
@@ -169,9 +176,18 @@ alloc_bytes(const VexAllocType *type, unsigned size, const char *file, unsigned 
       break;
   }
   if (!cursor) {
-    /* Whoops, out of memory */
-    vpanic("VEX temporary storage exhausted.\n"
-	   "Increase N_TEMPORARY_BYTES and recompile.");
+    for (cursor = first_alloc_header();
+	 cursor != allocation_cursor;
+	 cursor = next_alloc_header(cursor)) {
+      vassert(!(cursor->flags & ~ALLOC_FLAG_GC_MARK));
+      if (!cursor->type && cursor->size >= size)
+	break;
+    }
+    if (!cursor) {
+      /* Whoops, out of memory */
+      vpanic("VEX temporary storage exhausted.\n"
+	     "Increase N_TEMPORARY_BYTES and recompile.");
+    }
   }
 
   /* Consider splitting the block */
@@ -184,11 +200,15 @@ alloc_bytes(const VexAllocType *type, unsigned size, const char *file, unsigned 
     next->type = NULL;
     next->size = old_size - size;
     next->flags = 0;
+    allocation_cursor = next;
+  } else {
+    allocation_cursor = next_alloc_header(cursor);
   }
 
   cursor->type = type;
   cursor->file = file;
   cursor->line = line;
+  heap_used += cursor->size;
   res = header_to_alloc(cursor);
   poison(res, size - sizeof(struct alloc_header), 0xaabbccdd);
   return res;
