@@ -103,7 +103,7 @@ extern Bool VG_(tool_handles_synchronisation);
 /* Defines the thread-scheduling timeslice, in terms of the number of
    basic blocks we attempt to run each thread for.  Smaller values
    give finer interleaving but much increased scheduling overheads. */
-#define SCHEDULING_QUANTUM   1
+#define SCHEDULING_QUANTUM   100000
 
 /* If False, a fault is Valgrind-internal (ie, a bug) */
 Bool VG_(in_generated_code) = False;
