@@ -329,6 +329,20 @@ calculate_condition_flags_XXX(ait op,
 			      (dep1 ^ res)) >> bits;			\
 			*pf = parity_table[(UChar)res];			\
 		} while (0)
+#define ACTIONS_ADC(bits)	 		                        \
+		do {							\
+			ait oldC = ndep & AMD64G_CC_MASK_C;		\
+			ait argR = dep2 ^ oldC;				\
+			ait res = ((dep1 + argR) + oldC) & MASK(bits);	\
+			if (oldC)					\
+				*cf = res <= (dep1 & MASK(bits));	\
+			else						\
+				*cf = res < (dep1 & MASK(bits));	\
+			*zf = res == 0;					\
+			*sf = res >> bits;				\
+			*of = (~(dep1 ^ argR) & (dep1 ^ res)) >> bits;	\
+			*pf = parity_table[(UChar)res];			\
+		} while (0)
 #define ACTIONS_SUB(bits)						\
 		do {							\
 			ait res;					\
@@ -383,6 +397,7 @@ calculate_condition_flags_XXX(ait op,
 	ACTION(INC);
 	ACTION(DEC);
 	ACTION(SHR);
+	ACTION(ADC);
 #undef DO_ACT
 #undef ACTION
 #undef ACTIONS_ADD
@@ -1203,6 +1218,32 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			dest->hi = arg1.hi;
 			break;
 
+		case Iop_SinF64: {
+			union {
+				double f;
+				unsigned long l;
+			} in, out;
+			in.l = arg2.lo;
+			asm ("fsin\n"
+			     : "=t" (out.f)
+			     : "0" (in.f));
+			dest->lo = out.l;
+			break;
+		}
+
+		case Iop_CosF64: {
+			union {
+				double f;
+				unsigned long l;
+			} in, out;
+			in.l = arg2.lo;
+			asm ("fcos\n"
+			     : "=t" (out.f)
+			     : "0" (in.f));
+			dest->lo = out.l;
+			break;
+		}
+
 		default:
 			ppIRExpr(expr);
 			VG_(printf)("Not implemented; guessing.\n");
@@ -1385,32 +1426,6 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			} in, out;
 			in.l = arg.lo;
 			asm ("fsqrt\n"
-			     : "=t" (out.f)
-			     : "0" (in.f));
-			dest->lo = out.l;
-			break;
-		}
-
-		case Iop_Sin64F0x2: {
-			union {
-				double f;
-				unsigned long l;
-			} in, out;
-			in.l = arg.lo;
-			asm ("fsin\n"
-			     : "=t" (out.f)
-			     : "0" (in.f));
-			dest->lo = out.l;
-			break;
-		}
-
-		case Iop_Cos64F0x2: {
-			union {
-				double f;
-				unsigned long l;
-			} in, out;
-			in.l = arg.lo;
-			asm ("fcos\n"
 			     : "=t" (out.f)
 			     : "0" (in.f));
 			dest->lo = out.l;
