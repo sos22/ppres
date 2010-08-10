@@ -10,7 +10,7 @@ VG_LDFLAGS=-Wall -fno-stack-protector -static -Wl,-defsym,valt_load_address=0x38
 AUDIT_LDFLAGS=-fPIC -nostdlib -shared -Wl,-u -Wl,la_version
 AUDIT_CFLAGS=-Wall -I/usr/local/include -I../include -shared -c -fPIC
 
-all: ppres_record ppres_replay2 ppres_audit.so driver/UI pplogfile
+all: ppres_record ppres_audit.so driver/UI pplogfile
 
 .depend: Makefile
 	for x in $(DEP_OBJS); \

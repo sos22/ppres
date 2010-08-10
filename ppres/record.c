@@ -7,6 +7,7 @@
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/utsname.h>
 #include <linux/futex.h>
@@ -137,14 +138,19 @@ _emit_record(struct record_emitter *re,
 	     unsigned tid)
 {
 	struct record_header *hdr;
+	static unsigned long real_size;
 
 	if (!(re->nr_records % INDEX_PERIOD))
 		write_index_record(re->index_fd, re->nr_records, re->offset_in_file);
 	tl_assert(record_size <= MAX_RECORD_SIZE);
 	record_size += sizeof(*hdr);
 	if (re->current_block_used + record_size > RECORD_BLOCK_SIZE) {
-		VG_(write)(re->fd, re->current_block,
-			   re->current_block_used);
+		//VG_(write)(re->fd, re->current_block,
+		//re->current_block_used);
+		if (real_size / 100000000 != (real_size + re->current_block_used) / 100000000)
+			VG_(printf)("Log file %ld bytes\n",
+				    real_size);
+		real_size += re->current_block_used;
 		re->current_block_used = 0;
 	}
 	hdr = re->current_block + re->current_block_used;
@@ -542,6 +548,9 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_unlink:
 	case __NR_umask:
 	case __NR_sched_yield:
+	case __NR_shmget:
+	case __NR_dup2:
+	case __NR_dup:
 		break;
 
 	case __NR_accept:
@@ -785,6 +794,11 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 			capture_memory((void *)syscall_args[3], sizeof(vki_fd_set));
 		if (syscall_args[4])
 			capture_memory((void *)syscall_args[4], sizeof(struct timeval));
+		break;
+
+	case __NR_sysinfo:
+		if (!sr_isError(res))
+			capture_memory((void *)syscall_args[0], sizeof(struct sysinfo));
 		break;
 
 	default:

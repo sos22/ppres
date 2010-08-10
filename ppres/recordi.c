@@ -189,6 +189,8 @@ my_amd64g_dirtyhelper_CPUID_sse3_and_cx16(VexGuestAMD64State *regs)
 #undef SET_ABCD
 }
 
+void amd64g_dirtyhelper_storeF80le(ULong addrU, ULong f64);
+
 static struct expression_result
 do_dirty_call(IRDirty *details, struct interpret_state *is)
 {
@@ -232,12 +234,55 @@ do_dirty_call(IRDirty *details, struct interpret_state *is)
 			     args[3].lo,
 			     args[4].lo,
 			     args[5].lo);
+	} else if (!strcmp(details->cee->name, "amd64g_dirtyhelper_storeF80le") ||
+		   !strcmp(details->cee->name, "amd64g_dirtyhelper_loadF80le")) {
+		res.lo = ((ULong (*)(ULong, ULong, ULong,
+				     ULong, ULong, ULong))
+			  details->cee->addr)
+			(args[0].lo, args[1].lo, args[2].lo,
+			 args[3].lo, args[4].lo, args[5].lo);
 	} else {
 		VG_(printf)("Unknown dirty call %s\n", details->cee->name);
+		VG_(printf)("%d regparms\n", details->cee->regparms);
 		VG_(tool_panic)((Char *)"dead");
 	}
 	return res;
 }
+
+static const UChar parity_table[256] = {
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    1, 0, 0, 1, 0, 1, 1, 0,
+    0, 1, 1, 0, 1, 0, 0, 1,
+};
 
 static void
 calculate_condition_flags_XXX(ait op,
@@ -247,9 +292,10 @@ calculate_condition_flags_XXX(ait op,
 			      ait *cf,
 			      ait *zf,
 			      ait *sf,
-			      ait *of)
+			      ait *of,
+			      ait *pf)
 {
-	*cf = *zf = *sf = *of = mkConst(0);
+	*cf = *zf = *sf = *of = *pf = mkConst(0);
 
 	switch (force(op)) {
 	case AMD64G_CC_OP_COPY:
@@ -257,6 +303,7 @@ calculate_condition_flags_XXX(ait op,
 		*zf = dep1 >> mkConst(6);
 		*sf = dep1 >> mkConst(7);
 		*of = dep1 >> mkConst(11);
+		*pf = dep1 >> mkConst(2);
 		break;
 
 #define DO_ACT(name, type_tag, bits)					\
@@ -280,6 +327,7 @@ calculate_condition_flags_XXX(ait op,
 			*sf = (res >> bits);				\
 			*of = (~(dep1 ^ dep2) &				\
 			      (dep1 ^ res)) >> bits;			\
+			*pf = parity_table[(UChar)res];			\
 		} while (0)
 #define ACTIONS_SUB(bits)						\
 		do {							\
@@ -292,6 +340,7 @@ calculate_condition_flags_XXX(ait op,
 			*sf = res >> bits;				\
 			*of = ( (dep1 ^ dep2) &				\
 			       (dep1 ^ res) ) >> bits;			\
+			*pf = parity_table[(UChar)res];			\
 		} while (0)
 #define ACTIONS_LOGIC(bits)						\
 		do {							\
@@ -299,6 +348,7 @@ calculate_condition_flags_XXX(ait op,
 			*zf = (dep1 & MASK(bits)) == mkConst(0);	\
 			*sf = (dep1 & MASK(bits)) >> bits;		\
 			*of = mkConst(0);				\
+			*pf = parity_table[(UChar)dep1];		\
 		} while (0)
 #define ACTIONS_INC(bits)			                        \
 		do {				                        \
@@ -307,6 +357,7 @@ calculate_condition_flags_XXX(ait op,
 			*zf = (res == mkConst(0));			\
 			*sf = res >> bits;				\
 			*of = res == (mkConst(1) << bits);		\
+			*pf = parity_table[(UChar)res];			\
 		} while (0)
 #define ACTIONS_DEC(bits)			                        \
 		do {				                        \
@@ -315,6 +366,7 @@ calculate_condition_flags_XXX(ait op,
 			*zf = (res == mkConst(0));			\
 			*sf = res >> bits;				\
 			*of = ((res + mkConst(1)) & MASK(bits)) == (mkConst(1) << bits); \
+			*pf = parity_table[(UChar)res];			\
 		} while (0)
 #define ACTIONS_SHR(bits)			                        \
 		do {				                        \
@@ -322,6 +374,7 @@ calculate_condition_flags_XXX(ait op,
 			*zf = (dep1 == mkConst(0));			\
 			*sf = dep1 >> bits;				\
 			*of = (dep1 ^ dep2) >> bits;			\
+			*pf = parity_table[(UChar)dep1];		\
 		} while (0)
 
 	ACTION(ADD);
@@ -359,7 +412,7 @@ do_ccall_calculate_condition(struct expression_result *args)
 	struct expression_result ndep     = args[4];
 	struct expression_result res;
 	ait inv;
-	ait cf, zf, sf, of;
+	ait cf, zf, sf, of, pf;
 
 	calculate_condition_flags_XXX(op.lo,
 				      dep1.lo,
@@ -368,7 +421,8 @@ do_ccall_calculate_condition(struct expression_result *args)
 				      &cf,
 				      &zf,
 				      &sf,
-				      &of);
+				      &of,
+				      &pf);
 
 	inv = condcode.lo & mkConst(1);
 	switch (force(condcode.lo & ~mkConst(1))) {
@@ -390,6 +444,9 @@ do_ccall_calculate_condition(struct expression_result *args)
 	case AMD64CondS:
 		res.lo = sf;
 		break;
+	case AMD64CondP:
+		res.lo = pf;
+		break;
 
 	default:
 		VG_(printf)("Strange cond code %ld (op %ld)\n", force(condcode.lo), force(op.lo));
@@ -409,7 +466,7 @@ do_ccall_calculate_rflags_c(struct expression_result *args)
 	struct expression_result dep2 = args[2];
 	struct expression_result ndep = args[3];
 	struct expression_result res;
-	ait cf, zf, sf, of;
+	ait cf, zf, sf, of, pf;
 
 	calculate_condition_flags_XXX(op.lo,
 				      dep1.lo,
@@ -418,7 +475,8 @@ do_ccall_calculate_rflags_c(struct expression_result *args)
 				      &cf,
 				      &zf,
 				      &sf,
-				      &of);
+				      &of,
+				      &pf);
 
 	res.lo = cf;
 	return res;
@@ -542,17 +600,22 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 {
 	struct expression_result res;
 	struct expression_result *dest = &res;
+	ait v1;
+	unsigned sub_word_offset;
+	unsigned offset;
+	IRType getType;
 
 	res.lo = mkConst(0);
 	res.hi = mkConst(0);
 	
 	switch (expr->tag) {
-	case Iex_Get: {
-		ait v1;
-		unsigned sub_word_offset = expr->Iex.Get.offset & 7;
-		v1 = read_reg(is->regs,
-			      expr->Iex.Get.offset - sub_word_offset);
-		switch (expr->Iex.Get.ty) {
+	case Iex_Get:
+		offset = expr->Iex.Get.offset;
+		getType = expr->Iex.Get.ty;
+	do_get:
+		sub_word_offset = offset & 7;
+		v1 = read_reg(is->regs, offset - sub_word_offset);
+		switch (getType) {
 		case Ity_I64:
 		case Ity_F64:
 			tl_assert(!sub_word_offset);
@@ -561,8 +624,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		case Ity_V128:
 			tl_assert(!sub_word_offset);
 			dest->lo = v1;
-			dest->hi = read_reg(is->regs,
-					    expr->Iex.Get.offset - sub_word_offset + 8);
+			dest->hi = read_reg(is->regs, offset - sub_word_offset + 8);
 			break;
 		case Ity_I32:
 		case Ity_F32:
@@ -581,6 +643,16 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			VG_(tool_panic)((Char *)"NotImplementedException");
 		}
 		break;
+
+	case Iex_GetI: {
+		struct expression_result idx = eval_expression(is, expr->Iex.GetI.ix);
+		idx.lo += expr->Iex.GetI.bias;
+		idx.lo %= expr->Iex.GetI.descr->nElems;
+		idx.lo *= sizeofIRType(expr->Iex.GetI.descr->elemTy);
+		idx.lo += expr->Iex.GetI.descr->base;
+		offset = idx.lo;
+		getType = expr->Iex.GetI.descr->elemTy;
+		goto do_get;
 	}
 
 	case Iex_RdTmp:
@@ -707,6 +779,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		case Iop_Sar64:
 			dest->lo = (long)arg1.lo >> arg2.lo;
 			break;
+		case Iop_Shr16:
 		case Iop_Shr32:
 		case Iop_Shr64:
 			dest->lo = arg1.lo >> arg2.lo;
@@ -897,9 +970,247 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			break;
 		}
 
+		case Iop_Mul64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d * r2.d;
+			dest->lo = res.l;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Div64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d / r2.d;
+			dest->lo = res.l;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Add64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d + r2.d;
+			dest->lo = res.l;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Min64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			if (r1.d < r2.d)
+				res.d = r1.d;
+			else
+				res.d = r2.d;
+			dest->lo = res.l;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Max64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			if (r1.d > r2.d)
+				res.d = r1.d;
+			else
+				res.d = r2.d;
+			dest->lo = res.l;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Sub64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d - r2.d;
+			dest->lo = res.l;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_CmpLT64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			dest->lo = r1.d < r2.d;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_CmpEQ64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			dest->lo = r1.d == r2.d;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_CmpLE64F0x2: {
+			union {
+				double d;
+				unsigned long l;
+			} r1, r2;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			dest->lo = r1.d <= r2.d;
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Div32F0x4: {
+			union {
+				float d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d / r2.d;
+			dest->lo = (res.l & 0xffffffff) | (arg1.lo & 0xffffffff00000000ul);
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Mul32F0x4: {
+			union {
+				float d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d * r2.d;
+			dest->lo = (res.l & 0xffffffff) | (arg1.lo & 0xffffffff00000000ul);
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Add32F0x4: {
+			union {
+				float d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d + r2.d;
+			dest->lo = (res.l & 0xffffffff) | (arg1.lo & 0xffffffff00000000ul);
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_Sub32F0x4: {
+			union {
+				float d;
+				unsigned long l;
+			} r1, r2, res;
+			r1.l = arg1.lo;
+			r2.l = arg2.lo;
+			res.d = r1.d - r2.d;
+			dest->lo = (res.l & 0xffffffff) | (arg1.lo & 0xffffffff00000000ul);
+			dest->hi = arg1.hi;
+			break;
+		}
+
+		case Iop_AndV128:
+			dest->lo = arg1.lo & arg2.lo;
+			dest->hi = arg1.hi & arg2.hi;
+			break;
+
+		case Iop_OrV128:
+			dest->lo = arg1.lo | arg2.lo;
+			dest->hi = arg1.hi | arg2.hi;
+			break;
+
+		case Iop_I64StoF64: {
+			long t = arg2.lo;
+			union {
+				double res_d;
+				unsigned long res_l;
+			} u;
+			u.res_d = t;
+			dest->lo = u.res_l;
+			break;
+		}
+
+		case Iop_F64toI32S: {
+			union {
+				double res_d;
+				unsigned long res_l;
+			} u;
+			u.res_l = arg2.lo;
+			dest->lo = (unsigned long)(int)u.res_d & 0xffffffff;
+			break;
+		}
+
+		case Iop_F64toI64S: {
+			union {
+				double res_d;
+				unsigned long res_l;
+			} u;
+			u.res_l = arg2.lo;
+			dest->lo = (long)u.res_d;
+			break;
+		}
+
+		case Iop_F64toF32: {
+			union {
+				double d;
+				unsigned long l;
+			} in;
+			union {
+				float f;
+				unsigned long l;
+			} out;
+			in.l = arg2.lo;
+			out.f = in.d;
+			dest->lo = out.l;
+			break;
+		}
+
+		case Iop_SetV128lo64:
+			dest->lo = arg2.lo;
+			dest->hi = arg1.hi;
+			break;
+
 		default:
 			ppIRExpr(expr);
-			VG_(tool_panic)((Char *)"NotImplementedException()");
+			VG_(printf)("Not implemented; guessing.\n");
+			if (arg1.lo)
+				*dest = arg1;
+			else
+				*dest = arg2;
+			break;
 		}
 
 		IRType t, ign1, ign2, ign3, ign4;
@@ -936,6 +1247,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 
 	case Iex_Unop: {
 		struct expression_result arg = eval_expression(is, expr->Iex.Unop.arg);
+		*dest = arg;
 		switch (expr->Iex.Unop.op) {
 		case Iop_64HIto32:
 			dest->lo = arg.lo >> mkConst(32);
@@ -944,9 +1256,12 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			dest->lo = arg.lo & mkConst(0xffffffff);
 			break;
 		case Iop_64to16:
+		case Iop_32to16:
 			dest->lo = arg.lo & mkConst(0xffff);
 			break;
 		case Iop_64to8:
+		case Iop_32to8:
+		case Iop_16to8:
 			dest->lo = arg.lo & mkConst(0xff);
 			break;
 		case Iop_128to64:
@@ -954,6 +1269,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			dest->lo = arg.lo;
 			break;
 		case Iop_64UtoV128:
+		case Iop_32UtoV128:
 			dest->lo = arg.lo;
 			break;
 		case Iop_64to1:
@@ -964,12 +1280,16 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		case Iop_16Uto32:
 		case Iop_1Uto64:
 		case Iop_1Uto8:
-		case Iop_8Uto32:
 		case Iop_8Uto64:
+		case Iop_8Uto32:
+		case Iop_8Uto16:
 			*dest = arg;
 			break;
-		case Iop_32Sto64:
-			dest->lo = (long)(arg.lo << mkConst(32)) >> mkConst(32);
+		case Iop_8Sto32:
+			dest->lo = ((long)(arg.lo << mkConst(56)) >> mkConst(56)) & mkConst(0xffffffff);
+			break;
+		case Iop_8Sto16:
+			dest->lo = ((long)(arg.lo << mkConst(56)) >> mkConst(56)) & mkConst(0xffff);
 			break;
 		case Iop_8Sto64:
 			dest->lo = (long)(arg.lo << mkConst(56)) >> mkConst(56);
@@ -977,11 +1297,11 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		case Iop_16Sto32:
 			dest->lo = ((long)(arg.lo << mkConst(48)) >> mkConst(48)) & mkConst(0xffffffff);
 			break;
-		case Iop_8Sto32:
-			dest->lo = ((long)(arg.lo << mkConst(56)) >> mkConst(56)) & mkConst(0xffffffff);
-			break;
 		case Iop_16Sto64:
 			dest->lo = ((long)(arg.lo << mkConst(48)) >> mkConst(48));
+			break;
+		case Iop_32Sto64:
+			dest->lo = (long)(arg.lo << mkConst(32)) >> mkConst(32);
 			break;
 		case Iop_128HIto64:
 		case Iop_V128HIto64:
@@ -999,7 +1319,12 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		case Iop_Not64:
 			dest->lo = ~arg.lo;
 			break;
-			
+
+		case Iop_NotV128:
+			dest->lo = ~arg.lo;
+			dest->hi = ~arg.hi;
+			break;
+
 		case Iop_Clz64: {
 			unsigned long v = force(arg.lo);
 			unsigned res = 0;
@@ -1020,9 +1345,121 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			break;
 		}
 
+		case Iop_I32StoF64: {
+			int t = arg.lo;
+			union {
+				double res_d;
+				unsigned long res_l;
+			} u;
+			u.res_d = t;
+			dest->lo = u.res_l;
+			break;
+		}
+
+		case Iop_F32toF64: {
+			union {
+				float f;
+				unsigned long l;
+			} in;
+			union {
+				double f;
+				unsigned long l;
+			} out;
+			in.l = arg.lo;
+			out.f = in.f;
+			dest->lo = out.l;
+			break;
+		}
+
+		case Iop_ReinterpF64asI64:
+		case Iop_ReinterpF32asI32:
+		case Iop_ReinterpI64asF64:
+		case Iop_ReinterpI32asF32:
+			*dest = arg;
+			break;
+
+		case Iop_Sqrt64F0x2: {
+			union {
+				double f;
+				unsigned long l;
+			} in, out;
+			in.l = arg.lo;
+			asm ("fsqrt\n"
+			     : "=t" (out.f)
+			     : "0" (in.f));
+			dest->lo = out.l;
+			break;
+		}
+
+		case Iop_Sin64F0x2: {
+			union {
+				double f;
+				unsigned long l;
+			} in, out;
+			in.l = arg.lo;
+			asm ("fsin\n"
+			     : "=t" (out.f)
+			     : "0" (in.f));
+			dest->lo = out.l;
+			break;
+		}
+
+		case Iop_Cos64F0x2: {
+			union {
+				double f;
+				unsigned long l;
+			} in, out;
+			in.l = arg.lo;
+			asm ("fcos\n"
+			     : "=t" (out.f)
+			     : "0" (in.f));
+			dest->lo = out.l;
+			break;
+		}
+
 		default:
 			ppIRExpr(expr);
-			VG_(tool_panic)((Char *)"NotImplementedException()");
+			VG_(printf)("Can't handle this unop; guessing.\n");
+			*dest = arg;
+		}
+		break;
+	}
+
+	case Iex_Triop: {
+		struct expression_result arg1 = eval_expression(is, expr->Iex.Triop.arg1);
+		struct expression_result arg2 = eval_expression(is, expr->Iex.Triop.arg2);
+		struct expression_result arg3 = eval_expression(is, expr->Iex.Triop.arg3);
+		switch (expr->Iex.Triop.op) {
+		case Iop_PRemF64: {
+			union {
+				double d;
+				unsigned long l;
+			} a1, a2, res;
+			a1.l = arg2.lo;
+			a2.l = arg3.lo;
+			asm ("fprem\n"
+			     : "=t" (res.d)
+			     : "0" (a1.d), "u" (a2.d));
+			dest->lo = res.l;
+			break;
+		}
+		case Iop_PRemC3210F64: {
+			union {
+				double d;
+				unsigned long l;
+			} a1, a2, clobber;
+			unsigned short res;
+			a1.l = arg2.lo;
+			a2.l = arg3.lo;
+			asm ("fprem\nfstsw %%ax\n"
+			     : "=t" (clobber.d), "=a" (res)
+			     : "0" (a1.d), "u" (a2.d));
+			dest->lo = ((res >> 8) & 7) | ((res & 0x400) >> 11);
+			break;
+		}
+		default:
+			ppIRExpr(expr);
+			VG_(printf)("Can't handle triop expression!\n");
 		}
 		break;
 	}
@@ -1047,7 +1484,6 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 	default:
 		ppIRExpr(expr);
 		VG_(printf)("Bad expression tag %x\n", expr->tag);
-		VG_(tool_panic)((Char *)"dead");
 	}
 
 	return res;
@@ -1200,6 +1636,11 @@ static void translateNextBlock(struct interpret_state *is)
 static unsigned
 runToEvent(struct interpret_state *is)
 {
+	unsigned offset;
+	struct expression_result put_data;
+	IRType put_type;
+	static unsigned long nr_ops;
+
 	while (1) {
 		if (!is->currentIRSB) {
 			if (VG_(dispatch_ctr) == 1)
@@ -1208,10 +1649,13 @@ runToEvent(struct interpret_state *is)
 			translateNextBlock(is);
 			tl_assert(is->currentIRSB);
 		}
-		//ppIRSB(is->currentIRSB);
 		while (is->currentIRSBOffset < is->currentIRSB->stmts_used) {
 			IRStmt *stmt = is->currentIRSB->stmts[is->currentIRSBOffset];
 			is->currentIRSBOffset++;
+
+			nr_ops++;
+			if (nr_ops % 10000000 == 0)
+				VG_(printf)("Done %ld ops\n", nr_ops);
 
 			switch (stmt->tag) {
 			case Ist_NoOp:
@@ -1338,52 +1782,56 @@ runToEvent(struct interpret_state *is)
 			}
 
 			case Ist_Put: {
-				unsigned byte_offset = stmt->Ist.Put.offset & 7;
-				ait dest = read_reg(is->regs,
-						    stmt->Ist.Put.offset - byte_offset);
-				struct expression_result data =
-					eval_expression(is, stmt->Ist.Put.data);
+				ait dest;
+				unsigned byte_offset;
+				offset = stmt->Ist.Put.offset;
+				put_data = eval_expression(is, stmt->Ist.Put.data);
+				put_type = typeOfIRExpr(is->currentIRSB->tyenv, stmt->Ist.Put.data);
+
+				do_put:
+				byte_offset = offset & 7;
+				dest = read_reg(is->regs, offset - byte_offset);
 				DBG("put %d -> %016lx%016lx\n",
-				    stmt->Ist.Put.offset, data.hi, data.lo);
-				switch (typeOfIRExpr(is->currentIRSB->tyenv, stmt->Ist.Put.data)) {
+				    offset, put_data.hi, put_data.lo);
+				switch (put_type) {
 				case Ity_I8:
 					dest &= ~(0xFF << (byte_offset * 8));
-					dest |= data.lo << (byte_offset * 8);
+					dest |= put_data.lo << (byte_offset * 8);
 					break;
 
 				case Ity_I16:
 					tl_assert(!(byte_offset % 2));
 					dest &= ~(0xFFFFul << (byte_offset * 8));
-					dest |= data.lo << (byte_offset * 8);
+					dest |= put_data.lo << (byte_offset * 8);
 					break;
 
 				case Ity_I32:
 				case Ity_F32:
 					tl_assert(!(byte_offset % 4));
 					dest &= ~(0xFFFFFFFFul << (byte_offset * 8));
-					dest |= data.lo << (byte_offset * 8);
+					dest |= put_data.lo << (byte_offset * 8);
 					break;
 
 				case Ity_I64:
 				case Ity_F64:
 					tl_assert(byte_offset == 0);
-					dest = data.lo;
+					dest = put_data.lo;
 					break;
 
 				case Ity_I128:
 				case Ity_V128:
 					tl_assert(byte_offset == 0);
-					dest = data.lo;
+					dest = put_data.lo;
 					write_reg(is->regs,
-						  stmt->Ist.Put.offset + 8,
-						  data.hi);
+						  offset + 8,
+						  put_data.hi);
 					break;
 				default:
 					ppIRStmt(stmt);
 					VG_(tool_panic)((Char *)"NotImplementedException()");
 				}
 
-				write_reg(is->regs, stmt->Ist.Put.offset - byte_offset, dest);
+				write_reg(is->regs, offset - byte_offset, dest);
 				break;
 			}
 
@@ -1412,6 +1860,21 @@ runToEvent(struct interpret_state *is)
 				goto finished_block;
 			}
 
+			case Ist_PutI: {
+				struct expression_result idx = eval_expression(is, stmt->Ist.PutI.ix);
+
+				/* Crazy bloody encoding scheme */
+				idx.lo += stmt->Ist.PutI.bias;
+				idx.lo %= stmt->Ist.PutI.descr->nElems;
+				idx.lo *= sizeofIRType(stmt->Ist.PutI.descr->elemTy);
+				idx.lo += stmt->Ist.PutI.descr->base;
+
+				offset = idx.lo;
+				put_data = eval_expression(is, stmt->Ist.PutI.data);
+				put_type = stmt->Ist.PutI.descr->elemTy;
+				goto do_put;
+			}
+
 			default:
 				VG_(printf)("Don't know how to interpret statement ");
 				ppIRStmt(stmt);
@@ -1420,9 +1883,10 @@ runToEvent(struct interpret_state *is)
 		}
 
 		tl_assert(is->currentIRSB->jumpkind == Ijk_Boring ||
-		       is->currentIRSB->jumpkind == Ijk_Call ||
-		       is->currentIRSB->jumpkind == Ijk_Ret ||
-		       is->currentIRSB->jumpkind == Ijk_Sys_syscall);
+			  is->currentIRSB->jumpkind == Ijk_Call ||
+			  is->currentIRSB->jumpkind == Ijk_Ret ||
+			  is->currentIRSB->jumpkind == Ijk_Sys_syscall ||
+			  is->currentIRSB->jumpkind == Ijk_Yield);
 
 		{
 			struct expression_result next_addr =
@@ -1430,6 +1894,12 @@ runToEvent(struct interpret_state *is)
 			sanity_check_ait(next_addr.lo);
 			is->regs->guest_RIP = next_addr.lo;
 		}
+
+		if (is->currentIRSB->jumpkind == Ijk_Yield) {
+			is->currentIRSB = NULL;
+			return VEX_TRC_JMP_YIELD;
+		}
+
 		if (is->currentIRSB->jumpkind == Ijk_Sys_syscall) {
 			is->currentIRSB = NULL;
 			return VEX_TRC_JMP_SYS_SYSCALL;
