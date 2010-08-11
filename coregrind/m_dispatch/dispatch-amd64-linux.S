@@ -107,8 +107,8 @@ VG_(run_innerloop):
 
 	/* fall into main loop  (the right one) */
 	cmpq	$0, %rsi
-	je	VG_(run_innerloop__dispatch_unprofiled)
-	jmp	VG_(run_innerloop__dispatch_profiled)
+	je	VG_(run_innerloop__dispatch_unprofiled)@PLT
+	jmp	VG_(run_innerloop__dispatch_profiled)@PLT
 	/*NOTREACHED*/	
 
 /*----------------------------------------------------*/
@@ -136,10 +136,10 @@ VG_(run_innerloop__dispatch_unprofiled):
 	subl	$1, 0(%rsp)
 	jz	counter_is_zero
 
-	cmpl    $0, VG_(run_natively)
+	cmpl    $0, VG_(run_natively)@GOTPCREL(%rip)
 	jne     run_natively
 	
-	cmpq    $0, VG_(interpret)
+	cmpq    $0, VG_(interpret)@GOTPCREL(%rip)
 	jne     interpret
 	
 	/* try a fast lookup in the translation cache */
@@ -330,7 +330,7 @@ run_innerloop_exit_REALLY:
 
 interpret:
 	movq %rbp, %rdi
-	call VG_(do_interpret)
+	call VG_(do_interpret)@PLT
 	
 	jmp run_innerloop_exit
 	

@@ -1,0 +1,27 @@
+CPPFLAGS=-DHAVE_CONFIG_H -I. -I.. -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -I. -DVG_LIBDIR="\"/usr/local/lib/valgrind"\" -DVG_PLATFORM="\"amd64-linux\""
+CFLAGS=$(CPPFLAGS) -m64 -fomit-frame-pointer -g -Wall -Wmissing-prototypes -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-declarations -Wno-format-zero-length -fno-strict-aliasing -Wno-long-long -Wno-pointer-sign -fno-stack-protector
+ASFLAGS=$(CPPFLAGS) -m64
+
+OBJECTS=m_commandline.o m_clientstate.o m_cpuid.o m_debugger.o m_debuglog.o m_errormgr.o m_execontext.o m_hashtable.o m_libcbase.o m_libcassert.o m_libcfile.o m_libcprint.o m_libcproc.o m_libcsignal.o m_machine.o m_main.o m_mallocfree.o m_options.o m_oset.o m_redir.o m_seqmatch.o m_signals.o m_sparsewa.o m_stacks.o m_stacktrace.o m_syscall.o m_threadstate.o m_tooliface.o m_trampoline.o m_translate.o m_transtab.o m_vki.o m_vkiscnums.o m_wordfm.o m_xarray.o m_aspacehl.o m_aspacemgr/aspacemgr-common.o m_aspacemgr/aspacemgr-linux.o m_coredump/coredump-elf.o m_debuginfo/misc.o m_debuginfo/d3basics.o m_debuginfo/debuginfo.o m_debuginfo/readdwarf.o m_debuginfo/readdwarf3.o m_debuginfo/readelf.o m_debuginfo/storage.o m_debuginfo/tytypes.o m_dispatch/dispatch-amd64-linux.o m_initimg/initimg-linux.o m_initimg/initimg-pathscan.o m_replacemalloc/replacemalloc_core.o m_scheduler/scheduler.o m_scheduler/sema.o m_sigframe/sigframe-amd64-linux.o m_syswrap/syscall-amd64-linux.o m_syswrap/syswrap-main.o m_syswrap/syswrap-generic.o m_syswrap/syswrap-linux.o m_syswrap/syswrap-linux-variants.o m_syswrap/syswrap-amd64-linux.o m_ume/elf.o m_ume/main.o m_ume/script.o
+
+POBJECTS=$(patsubst %.o,%.po,$(OBJECTS))
+
+all: libcoregrind_amd64_linux.a libcoregrind_amd64_linux.pa
+
+libcoregrind_amd64_linux.a: $(OBJECTS)
+	rm -f $@ ; ar crus $@ $^
+
+libcoregrind_amd64_linux.pa: $(POBJECTS)
+	rm -f $@ ; ar crus $@ $^
+
+%.o: %.c
+	gcc $(CFLAGS) -c $< -o $@
+
+%.po: %.c
+	gcc -fPIC $(CFLAGS) -c $< -o $@
+
+%.o: %.S
+	gcc $(ASFLAGS) -c $< -o $@
+
+%.po: %.S
+	gcc -fPIC $(ASFLAGS) -c $< -o $@

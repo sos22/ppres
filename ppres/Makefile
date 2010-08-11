@@ -1,6 +1,7 @@
 CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef
 
 RECORD_OBJS=record.o recordi.o
+RECORD_POBJS=record.po recordi.po
 REPLAY_OBJS=replay2.o coroutines.o ui.o expression.o interpreter.o debug.o
 VG_OBJS=../coregrind/libcoregrind-amd64-linux.a ../VEX/libvex-amd64-linux.a
 
@@ -10,7 +11,7 @@ VG_LDFLAGS=-Wall -fno-stack-protector -static -Wl,-defsym,valt_load_address=0x38
 AUDIT_LDFLAGS=-fPIC -nostdlib -shared -Wl,-u -Wl,la_version
 AUDIT_CFLAGS=-Wall -I/usr/local/include -I../include -shared -c -fPIC
 
-all: ppres_record ppres_audit.so driver/UI pplogfile
+all: ppres_record ppres_record.so ppres_audit.so driver/UI pplogfile
 
 .depend: Makefile
 	for x in $(DEP_OBJS); \
@@ -26,11 +27,17 @@ include .depend
 ppres_record: $(RECORD_OBJS) $(VG_OBJS)
 	gcc  $(VG_LDFLAGS) $^ -o $@
 
+ppres_record.so: $(RECORD_POBJS) record_so.po
+	gcc -shared -nodefaultlibs -nostartfiles -u _start ../coregrind/libcoregrind_amd64_linux.pa ../VEX/libvex_amd64_linux.pa $^ -o $@
+
 ppres_replay2: $(REPLAY_OBJS) $(VG_OBJS)
 	gcc  $(VG_LDFLAGS) $^ -o $@
 
 %.o: %.c
 	gcc $(CFLAGS) -c $<
+
+%.po: %.c
+	gcc -fPIC $(CFLAGS) -c $< -o $@
 
 ppres_audit.so: catch_pthread.o /usr/local/lib/libaudit.a
 	gcc $(AUDIT_LDFLAGS) -o ppres_audit.so /usr/local/lib/libaudit.a catch_pthread.o

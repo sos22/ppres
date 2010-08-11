@@ -140,7 +140,7 @@ void VG_(print_scheduler_stats)(void)
 }
 
 /* CPU semaphore, so that threads can run exclusively */
-static vg_sema_t the_BigLock;
+vg_sema_t the_BigLock;
 
 
 /* ---------------------------------------------------------------------
@@ -1542,7 +1542,6 @@ void do_client_request ( ThreadId tid )
          break;
 
       case VG_USERREQ__LOAD_PDB_DEBUGINFO:
-         VG_(di_notify_pdb_debuginfo)( arg[1], arg[2], arg[3], arg[4] );
          SET_CLREQ_RETVAL( tid, 0 );     /* return value is meaningless */
          break;
 

@@ -190,55 +190,6 @@ VG_(amd64_linux_REDIR_FOR_strlen):
 .size VG_(amd64_linux_REDIR_FOR_strlen), .-VG_(amd64_linux_REDIR_FOR_strlen)
 
 
-/* A CIE for the above three functions, followed by their FDEs */
-	.section .eh_frame,"a",@progbits
-.Lframe1:
-        .long   .LEcie1-.LScie1
-.LScie1:
-        .long   0x0
-        .byte   0x1
-        .string "zR"
-        .uleb128 0x1
-        .sleb128 -8
-        .byte   0x10
-        .uleb128 0x1
-        .byte   0x3
-        .byte   0xc
-        .uleb128 0x7
-        .uleb128 0x8
-        .byte   0x90
-        .uleb128 0x1
-        .align 8
-.LEcie1:
-.LSfde2:
-        .long   .LEfde2-.LASfde2
-.LASfde2:
-        .long   .LASfde2-.Lframe1
-        .long   .LfnB2
-        .long   .LfnE2-.LfnB2
-        .uleb128 0x0
-        .align 8
-.LEfde2:
-.LSfde3:
-        .long   .LEfde3-.LASfde3
-.LASfde3:
-        .long   .LASfde3-.Lframe1
-        .long   .LfnB3
-        .long   .LfnE3-.LfnB3
-        .uleb128 0x0
-        .align 8
-.LEfde3:
-.LSfde4:
-        .long   .LEfde4-.LASfde4
-.LASfde4:
-        .long   .LASfde4-.Lframe1
-        .long   .LfnB4
-        .long   .LfnE4-.LfnB4
-        .uleb128 0x0
-        .align 8
-.LEfde4:
-	.previous
-
 .global VG_(trampoline_stuff_end)
 VG_(trampoline_stuff_end):
 

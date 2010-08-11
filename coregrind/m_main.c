@@ -1189,7 +1189,7 @@ static void print_preamble ( Bool logging_to_fd,
    it's own use - just a small constant. */
 #define N_RESERVED_FDS (10)
 
-static void setup_file_descriptors(void)
+void setup_file_descriptors(void)
 {
    struct vki_rlimit rl;
    Bool show = False;
@@ -1336,7 +1336,7 @@ void show_BB_profile ( BBProfEntry tops[], UInt n_tops, ULong score_total )
    marked global even though it isn't, because assembly code below
    needs to reference the name. */
 
-/*static*/ VgStack VG_(interim_stack);
+static VgStack VG_(interim_stack);
 
 /* These are the structures used to hold info for creating the initial
    client image.
@@ -2597,23 +2597,10 @@ void* memset(void *s, int c, SizeT n) {
   return VG_(memset)(s,c,n);
 }
 
-/* BVA: abort() for those platforms that need it (PPC and ARM). */
-void abort(void);
-void abort(void){
-   VG_(printf)("Something called raise().\n");
-   vg_assert(0);
-}
-
 /* EAZG: ARM's EABI will call floating point exception handlers in
    libgcc which boil down to an abort or raise, that's usually defined
    in libc. Instead, define them here. */
 #if defined(VGP_arm_linux)
-void raise(void);
-void raise(void){
-   VG_(printf)("Something called raise().\n");
-   vg_assert(0);
-}
-
 void __aeabi_unwind_cpp_pr0(void);
 void __aeabi_unwind_cpp_pr0(void){
    VG_(printf)("Something called __aeabi_unwind_cpp_pr0()\n");
@@ -2658,7 +2645,7 @@ asm("\n"
     "\t.type _start,@function\n"
     "_start:\n"
     /* set up the new stack in %eax */
-    "\tmovl  $vgPlain_interim_stack, %eax\n"
+    "\tmovl  %0, %%eax\n"
     "\taddl  $"VG_STRINGIFY(VG_STACK_GUARD_SZB)", %eax\n"
     "\taddl  $"VG_STRINGIFY(VG_STACK_ACTIVE_SZB)", %eax\n"
     "\tsubl  $16, %eax\n"
@@ -2670,6 +2657,8 @@ asm("\n"
     "\tcall  _start_in_C_linux\n"
     "\thlt\n"
     ".previous\n"
+    :
+    : "i" VG_(interim_stack)
 );
 #elif defined(VGP_amd64_linux)
 asm("\n"
@@ -2678,14 +2667,14 @@ asm("\n"
     "\t.type _start,@function\n"
     "_start:\n"
     /* set up the new stack in %rdi */
-    "\tmovq  $vgPlain_interim_stack, %rdi\n"
+    "\tmovq  vgPlain_interim_stack(%rip), %rdi\n"
     "\taddq  $"VG_STRINGIFY(VG_STACK_GUARD_SZB)", %rdi\n"
     "\taddq  $"VG_STRINGIFY(VG_STACK_ACTIVE_SZB)", %rdi\n"
     "\tandq  $~15, %rdi\n"
     /* install it, and collect the original one */
     "\txchgq %rdi, %rsp\n"
     /* call _start_in_C_linux, passing it the startup %rsp */
-    "\tcall  _start_in_C_linux\n"
+    "\tcall  _start_in_C_linux@PLT\n"
     "\thlt\n"
     ".previous\n"
 );
@@ -2995,7 +2984,7 @@ asm("\n"
     ".align 3,0x90\n"
     "__start:\n"
     /* set up the new stack in %rdi */
-    "\tmovabsq $_vgPlain_interim_stack, %rdi\n"
+    "\tmovabsq $_vgPlain_interim_stack(%rip), %rdi\n"
     "\taddq    $"VG_STRINGIFY(VG_STACK_GUARD_SZB)", %rdi\n"
     "\taddq    $"VG_STRINGIFY(VG_STACK_ACTIVE_SZB)", %rdi\n"
     "\tandq    $~15, %rdi\n"

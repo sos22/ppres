@@ -1,0 +1,29 @@
+CPPFLAGS=-DHAVE_CONFIG_H -I. -I.. -I../include -Ipub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -Ipriv
+CFLAGS=$(CPPFLAGS) -m64 -fomit-frame-pointer -O2 -g -Wall -Wmissing-prototypes -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-declarations -Wno-format-zero-length -fno-strict-aliasing -Wbad-function-cast -Wcast-qual -Wcast-align -fstrict-aliasing -Wno-long-long -Wno-pointer-sign -fno-stack-protector
+
+OBJECTS=priv/main_globals.o priv/main_main.o priv/main_util.o priv/ir_defs.o priv/ir_match.o priv/ir_opt.o priv/guest_generic_bb_to_IR.o priv/guest_generic_x87.o priv/guest_amd64_helpers.o priv/guest_amd64_toIR.o priv/host_generic_regs.o priv/host_generic_simd64.o priv/host_generic_simd128.o priv/host_generic_reg_alloc2.o priv/host_amd64_defs.o priv/host_amd64_isel.o priv/main_alloc.o
+POBJECTS=$(patsubst %.o,%.po,$(OBJECTS))
+
+all: libvex_amd64_linux.a libvex_amd64_linux.pa pub/libvex_guest_offsets.h
+
+pub/libvex_guest_offsets.h: auxprogs/genoffsets.s
+	grep xyzzy $< | grep define \
+	   | sed 's/xyzzy\$$//g' \
+           | sed 's/xyzzy#//g' \
+           | sed 's/xyzzy//g' \
+           > $@
+
+auxprogs/genoffsets.s: auxprogs/genoffsets.c
+	gcc -Wbad-function-cast -Wcast-qual -Wcast-align -fstrict-aliasing -O -S -o $@ $<
+
+libvex_amd64_linux.a: $(OBJECTS)
+	rm -f $@ ; ar crus $@ $^
+
+libvex_amd64_linux.pa: $(POBJECTS)
+	rm -f $@ ; ar crus $@ $^
+
+%.o: %.c
+	gcc $(CFLAGS) -c $< -o $@
+
+%.po: %.c
+	gcc -fPIC $(CFLAGS) -c $< -o $@

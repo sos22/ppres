@@ -1639,7 +1639,7 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
                     "        sp_at_startup = 0x%010llx (supplied)\n", 
                     (ULong)sp_at_startup );
 
-   aspacem_minAddr = (Addr) 0x04000000; // 64M
+   aspacem_minAddr = (Addr) 0x00200000; // 2M
 
 #  if VG_WORDSIZE == 8
      aspacem_maxAddr = (Addr)0x800000000 - 1; // 32G

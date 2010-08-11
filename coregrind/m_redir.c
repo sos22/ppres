@@ -359,8 +359,11 @@ void VG_(redir_notify_new_DebugInfo)( DebugInfo* newsi )
    for (i = 0; i < nsyms; i++) {
       VG_(DebugInfo_syms_getidx)( newsi, i, &sym_addr, &sym_toc,
                                   NULL, &sym_name, &isText, NULL );
+#if 0
       ok = VG_(maybe_Z_demangle)( sym_name, demangled_sopatt, N_DEMANGLED,
                                   demangled_fnpatt, N_DEMANGLED, &isWrap );
+#endif
+      ok = 0;
       /* ignore data symbols */
       if (!isText)
          continue;
