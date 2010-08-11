@@ -78,15 +78,9 @@ static void block_signals(void)
    VG_(sigprocmask)(VKI_SIG_SETMASK, &mask, NULL);
 }
 
-void
-start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
+static void
+initialise_valgrind(unsigned long initial_rsp)
 {
-    ThreadState *tas;
-    unsigned mxcsr;
-    struct fpu_save fpu_save;
-    VexGuestArchState *gas;
-    unsigned x;
-    ThreadId tid;
     Bool ok;
 
     VG_(brk_base) = (ULong)sbrk(0);
@@ -112,6 +106,19 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 	VG_(printf)("Whoops: can't create brk segment\n");
     VG_(am_mmap_anon_fixed_client)(VG_(brk_base), VKI_PAGE_SIZE,
 				   VKI_PROT_READ|VKI_PROT_WRITE|VKI_PROT_EXEC);
+
+    LibVEX_default_VexControl(& VG_(clo_vex_control));
+}
+
+static void
+run_thread(unsigned long initial_rsp, unsigned long initial_rip)
+{
+    ThreadState *tas;
+    unsigned mxcsr;
+    struct fpu_save fpu_save;
+    VexGuestArchState *gas;
+    unsigned x;
+    ThreadId tid;
 
     tid = VG_(alloc_ThreadState)();
     tas = &VG_(threads)[tid];
@@ -203,12 +210,7 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
     gas->guest_FC3210 = ((fpu_save.status >> 8) & 7) |
 	((fpu_save.status >> 11) & 8);
 
-    LibVEX_default_VexControl(& VG_(clo_vex_control));
-
-    VG_(running_tid) = VG_INVALID_THREADID;
-
     VG_(acquire_BigLock)(tid, "thread starts");
-
     VG_(dispatch_ctr) = 10000;
     while (!VG_(is_exiting)(tid)) {
 	int r;
@@ -243,6 +245,14 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 	    VG_(tool_panic)((Char *)"dead");
 	}
     }
+}
+
+void
+start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
+{
+    initialise_valgrind(initial_rsp);
+
+    run_thread(initial_rsp, initial_rip);
 
     VG_(printf)("Thread exitted?\n");
 }
