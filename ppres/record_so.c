@@ -79,11 +79,9 @@ static void block_signals(void)
 }
 
 void
-start_interpreting(void *old_stack)
+start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 {
-    unsigned long rsp;
     ThreadState *tas;
-    unsigned long *initial_integer_registers;
     unsigned mxcsr;
     struct fpu_save fpu_save;
     VexGuestArchState *gas;
@@ -96,11 +94,7 @@ start_interpreting(void *old_stack)
 
     VG_(debugLog_startup)(0, "Stage 2 (main)");
 
-    VG_(printf)("Starting up, old stack %p\n", old_stack);
-    asm ("movq %%rsp, %0\n" : "=r" (rsp));
-    VG_(printf)("Current rsp %lx\n", rsp);
-
-    VG_(am_startup)( (unsigned long)old_stack);
+    VG_(am_startup)(initial_rsp);
 
     VG_(tl_pre_clo_init)();
     VG_TDICT_CALL(tool_post_clo_init);
@@ -123,9 +117,8 @@ start_interpreting(void *old_stack)
     tas = &VG_(threads)[tid];
     gas = &tas->arch.vex;
 
-    initial_integer_registers = old_stack;
-    gas->guest_RSP = (ULong)old_stack;
-    gas->guest_RIP = initial_integer_registers[14];
+    gas->guest_RSP = initial_rsp;
+    gas->guest_RIP = initial_rip;
     arch_prctl(ARCH_GET_FS, &gas->guest_FS_ZERO);
 
     asm ("stmxcsr %0\n"
@@ -261,44 +254,19 @@ _init()
 
     printf("init() called\n");
 
-    asm ("lea 1f(%%rip), %%rax\n"
-	 "pushq %%rax\n"
-	 "pushf\n"
-	 "pushq %%rbx\n"
-	 "pushq %%rcx\n"
-	 "pushq %%rdx\n"
-	 "pushq %%rsi\n"
-	 "pushq %%rbp\n"
-	 "pushq %%r8\n"
-	 "pushq %%r9\n"
-	 "pushq %%r10\n"
-	 "pushq %%r11\n"
-	 "pushq %%r12\n"
-	 "pushq %%r13\n"
-	 "pushq %%r14\n"
-	 "pushq %%r15\n"
+    asm ("pushq %%rbp\n"
+	 "lea 1f(%%rip), %%rsi\n"
 	 "xchg %%rsp, %%rdi\n"
 	 "call start_interpreting@PLT\n"
 
-	 "1: popq %%r15\n" /* We never actually run this, but it's the
-			      first thing which gets interpreted. */
-	 "popq %%r14\n"
-	 "popq %%r13\n"
-	 "popq %%r12\n"
-	 "popq %%r11\n"
-	 "popq %%r10\n"
-	 "popq %%r9\n"
-	 "popq %%r8\n"
+	 "1:\n" /* We never actually run this, but it's the first
+		   thing which gets interpreted. */
 	 "popq %%rbp\n"
-	 "popq %%rsi\n"
-	 "popq %%rdx\n"
-	 "popq %%rcx\n"
-	 "popq %%rbx\n"
-	 "popf\n"
-	 "popq %%rdi\n"
 	 : "=D" (ign)
 	 : "0" (interim_stack + sizeof(interim_stack))
-	 : "rax" );
+	 : "rax", "rbx", "rcx", "rdx", "rsi",
+	   "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+	   "flags" );
 
     printf("Should now be being interpreted\n");
 }
