@@ -133,53 +133,6 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
 
     gas->guest_SSEROUND = (mxcsr >> 13) & 3;
 
-    /* Save XMM registers.  Done in two statements to make things a
-       bit easier on gcc. */
-    asm (
-#define DO_REG(x) "movdqu %%xmm" #x ", %" #x "\n"
-	DO_REG(0)
-	DO_REG(1)
-	DO_REG(2)
-	DO_REG(3)
-	DO_REG(4)
-	DO_REG(5)
-	DO_REG(6)
-	DO_REG(7)
-#undef DO_REG
-#define DO_REG(x) "=m" (gas->guest_XMM ## x)
-	: DO_REG(0),
-	  DO_REG(1),
-	  DO_REG(2),
-	  DO_REG(3),
-	  DO_REG(4),
-	  DO_REG(5),
-	  DO_REG(6),
-	  DO_REG(7)
-#undef DO_REG
-	);
-    asm (
-#define DO_REG(x,y) "movdqu %%xmm" #x ", %" #y "\n"
-	DO_REG(8,0)
-	DO_REG(9,1)
-	DO_REG(10,2)
-	DO_REG(11,3)
-	DO_REG(12,4)
-	DO_REG(13,5)
-	DO_REG(14,6)
-	DO_REG(15,7)
-#undef DO_REG
-#define DO_REG(x) "=m" (gas->guest_XMM ## x)
-	: DO_REG(8),
-	  DO_REG(9),
-	  DO_REG(10),
-	  DO_REG(11),
-	  DO_REG(12),
-	  DO_REG(13),
-	  DO_REG(14),
-	  DO_REG(15)
-#undef DO_REG
-	);
-
     memset(&fpu_save, 0, sizeof(fpu_save));
     asm("fsave %0"
 	: "=m" (fpu_save));
@@ -270,13 +223,18 @@ _init()
 	 "call start_interpreting@PLT\n"
 
 	 "1:\n" /* We never actually run this, but it's the first
-		   thing which gets interpreted. */
-	 "popq %%rbp\n"
+		   thing which gets interpreted.  Everything register
+		   except rip, rsp, and the floating point state is
+		   clobbered when we get here. */
+	 "popq %%rbp\n" /* Can't asm clobber rbp, so save it
+			 * ourselves. */
 	 : "=D" (ign)
 	 : "0" (interim_stack + sizeof(interim_stack))
 	 : "rax", "rbx", "rcx", "rdx", "rsi",
 	   "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-	   "flags" );
+	   "flags", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",
+	   "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11",
+	   "xmm12", "xmm13", "xmm14", "xmm15" );
 
     printf("Should now be being interpreted\n");
 }
