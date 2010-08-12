@@ -3,9 +3,14 @@
 #include <asm/prctl.h>
 #include <asm/unistd.h>
 #include <sys/prctl.h>
+#include <sys/ptrace.h>
+#include <sys/user.h>
 #include <dirent.h>
 #include <err.h>
+#include <errno.h>
+#include <sched.h>
 #include <setjmp.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -41,6 +46,7 @@
 
 int arch_prctl(int code, unsigned long *addr);
 void setup_file_descriptors(void);
+Addr ML_(allocstack)(ThreadId tid);
 extern UInt VG_(dispatch_ctr);
 extern vg_sema_t the_BigLock;
 extern VgSchedReturnCode (*VG_(tool_provided_scheduler))(ThreadId);
@@ -175,6 +181,9 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
     VgSchedReturnCode res;
 
     tid = VG_(alloc_ThreadState)();
+
+    VG_(acquire_BigLock)(tid, "thread starts");
+
     tas = &VG_(threads)[tid];
     gas = &tas->arch.vex;
 
@@ -217,7 +226,6 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
     gas->guest_FC3210 = ((fpu_save.status >> 8) & 7) |
 	((fpu_save.status >> 11) & 8);
 
-    VG_(acquire_BigLock)(tid, "thread starts");
     tas->os_state.lwpid = VG_(gettid)();
     tas->os_state.threadgroup = VG_(getpid)();
     res = my_scheduler(tid);
@@ -234,30 +242,223 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
     }
 }
 
-void
-start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
+static void
+new_thread_capture(ThreadId tid)
 {
-    initialise_valgrind(initial_rsp);
+    ThreadState *tas = &VG_(threads)[tid];
+    VgSchedReturnCode res;
 
-    run_thread(initial_rsp, initial_rip);
+    VG_(printf)("Capturing %d\n", tid);
+    VG_(acquire_BigLock)(tid, "thread starts");
 
-    VG_(printf)("Thread exitted?\n");
+    /* Most of the capture work is already done. */
+    tas->os_state.lwpid = VG_(gettid)();
+    tas->os_state.threadgroup = VG_(getpid)();
+
+    /* Start interpreting. */
+    res = my_scheduler(tid);
+
+    VG_(printf)("Thread %d going away; VG state %d, OS status %ld\n", tid, res,
+		tas->os_state.exitcode);
+
+    if (VG_(count_living_threads)() == 1) {
+	( * VG_(address_of_m_main_shutdown_actions_NORETURN) ) (tid, res);
+    } else {
+	VG_(exit_thread)(tid);
+	asm volatile (
+	    "movl	%1, %0\n"	/* set tst->status = VgTs_Empty */
+	    "syscall\n"		/* exit(tst->os_state.exitcode) */
+	    : "=m" (tas->status)
+	    : "n" (VgTs_Empty), "rax" (__NR_exit), "rdi" (tas->os_state.exitcode));
+    }
+
+}
+
+static int
+my_waitpid(pid_t pid)
+{
+    int status;
+    unsigned long res;
+    unsigned long ign;
+
+    asm ("syscall\n"
+	 : "=a" (res), "=c" (ign)
+	 : "0" (__NR_wait4),
+	   "D" (pid),
+	   "S" (&status),
+	   "d" (0),
+	   "1" (0)
+	 : "r11", "memory");
+
+    return res;
+}
+
+static void
+slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
+{
+    ThreadState *tas;
+    VexGuestArchState *gas;
+    struct user_regs_struct regs;
+    struct user_fpregs_struct fpregs;
+    unsigned x;
+    unsigned long errn;
+    unsigned long ign;
+
+    tas = &VG_(threads)[tid];
+    gas = &tas->arch.vex;
+
+    if (ptrace(PTRACE_ATTACH, other, NULL, NULL) < 0)
+	err(1, "attaching to %d", other);
+
+    /* Slurp out its brains XXX can we share any of this with the main
+     * thread conversion bits? */
+    while (ptrace(PTRACE_GETREGS, other, NULL, &regs) < 0) {
+	warn("getting registers");
+    }
+
+    /* Initialise the guest state. */
+    memset(gas, 0, sizeof(*gas));
+#define DO_REG(vg_name, linux_name)		\
+    gas->guest_ ## vg_name = regs. linux_name
+    DO_REG(RAX, rax);
+    DO_REG(RCX, rcx);
+    DO_REG(RDX, rdx);
+    DO_REG(RBX, rbx);
+    DO_REG(RSP, rsp);
+    DO_REG(RBP, rbp);
+    DO_REG(RSI, rsi);
+    DO_REG(RDI, rdi);
+    DO_REG(R8, r8);
+    DO_REG(R9, r9);
+    DO_REG(R10, r10);
+    DO_REG(R11, r11);
+    DO_REG(R12, r12);
+    DO_REG(R13, r13);
+    DO_REG(R14, r14);
+    DO_REG(R15, r15);
+    gas->guest_CC_OP = AMD64G_CC_OP_COPY;
+    DO_REG(CC_DEP1, eflags);
+    if (regs.eflags & (1 << 10))
+	gas->guest_DFLAG = -1;
+    else
+	gas->guest_DFLAG = 1;
+    DO_REG(RIP, rip);
+    gas->guest_IDFLAG = !!(regs.eflags & (1 << 21));
+    DO_REG(FS_ZERO, fs_base);
+#undef DO_REG
+
+    if (ptrace(PTRACE_GETFPREGS, other, NULL, &fpregs) < 0)
+	err(1, "getting FP registers");
+    gas->guest_SSEROUND = (fpregs.mxcsr >> 13) & 3;
+    gas->guest_FTOP = (fpregs.swd >> 10) & 7;
+
+    /* transfer FP registers.  Annoyingly, Valgrind stores them as 64
+     * bit doubles (which is wrong, but whatever), while Linux uses 80
+     * bit extended doubles padded to 128 bits.  This means we need to
+     * do an annoying conversion step. */
+    /* Note that we truncate rather than rounding, which isn't
+     * actually correct but seems to mostly work. */
+    for (x = 0; x < 8; x++) {
+	unsigned long frac = (fpregs.st_space[x * 2] & ~(1ul << 63)) >> 11;
+	unsigned long exponent = fpregs.st_space[x * 2 + 1] & 0x7ff;
+	unsigned long sign = (fpregs.st_space[x * 2 + 1] >> 15) & 1;
+	gas->guest_FPREG[x] = (sign << 63) |
+	    (exponent << 52) |
+	    frac;
+    }
+
+    for (x = 0; x < 8; x++)
+	gas->guest_FPTAG[x] = (fpregs.ftw >> (x * 2)) & 3;
+    gas->guest_FPROUND = (fpregs.cwd >> 9) & 3;
+    gas->guest_FC3210 = ((fpregs.swd >> 8) & 7) | ((fpregs.swd >> 11) & 8);
+    memcpy(&gas->guest_XMM0, fpregs.xmm_space, 256);
+
+    /* Okay, the thread is now properly captured.  Allocate a new
+       stack for it and then cajole it onto the trampoline. */
+    regs.rsp = stack;
+    regs.rdi = tid;
+    regs.rip = (unsigned long)new_thread_capture + 2;
+    regs.r13 = 0x1122334455667788ul;
+    if (ptrace(PTRACE_SETREGS, other, NULL, &regs) < 0)
+	err(1, "imposing will on %d", other);
+
+    if (ptrace(PTRACE_GETREGS, other, NULL, &regs) < 0)
+	err(1, "regetting registers of %d", other);
+
+    VG_(printf)("detaching, rip %lx, stack %lx\n",
+		regs.rip, regs.rsp);
+
+    /* Let it go, and hope for the best.  Have to be a little bit
+       careful here: when we let it go, it'll be running on our stack,
+       so we have to not touch the stack after the detach syscall
+       succeeds.  That means doing it in assembly. */
+    asm ("syscall\n"
+	 "testq %%rax, %%rax\n"
+	 "jl 1f\n"
+	 "movq %7, %%rax\n"
+	 "xorq %%rdi, %%rdi\n"
+	 "syscall\n"
+	 "1:\n"
+	 : "=a" (errn), "=c" (ign)
+	 : "0" (__NR_ptrace),
+	   "D" (PTRACE_DETACH),
+	   "S" (other),
+	   "d" (NULL),
+	   "1" (NULL),
+	   "i" (__NR_exit)
+	 : "r11", "memory");
+
+    errno = -errn;
+    err(1, "detaching %d", other);
+}
+
+static void
+attach_thread(pid_t other)
+{
+    ThreadId tid;
+    unsigned long new_stack;
+    unsigned long worker;
+    int r;
+
+    tid = VG_(alloc_ThreadState)();
+
+    new_stack = ML_(allocstack)(tid);
+
+    /* Annoyingly, you can't ptrace another thread in the same
+     * process, so have to do a clone() here and do all the work from
+     * the child. */
+    new_stack -= 24;
+    ((unsigned long *)new_stack)[0] = other;
+    ((unsigned long *)new_stack)[1] = tid;
+    ((unsigned long *)new_stack)[2] = new_stack;
+
+    asm ("syscall\n"
+	 "cmpq $0, %%rax\n"
+	 "jnz 1f\n"
+	 "popq %%rdi\n"
+	 "popq %%rsi\n"
+	 "popq %%rdx\n"
+	 "jmp slurp_via_ptrace@PLT\n"
+	 "1:\n"
+	 : "=a" (worker)
+	 : "0" (__NR_clone),
+	   "D" (SIGCHLD|CLONE_VM),
+	   "S" (new_stack)
+	 : "memory", "rcx", "r11");
+
+    r = my_waitpid(worker);
 }
 
 void
-_init()
+start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 {
     pid_t self = getpid();
     pid_t other;
-    unsigned long ign;
     char *path;
     DIR *d;
     struct dirent *de;
-    unsigned x;
 
-    printf("init() called\n");
-    for (x = 0; x < VG_N_THREADS; x++)
-	VG_(threads)[x].tid = x;
+    initialise_valgrind(initial_rsp);
 
     asprintf(&path, "/proc/%d/task", self);
     d = opendir(path);
@@ -278,9 +479,25 @@ _init()
 	other = atoi(de->d_name);
 	if (other == self)
 	    continue;
-	printf("Should attach to thread %d\n", other);
+
+	attach_thread(other);
     }
     closedir(d);
+
+    run_thread(initial_rsp, initial_rip);
+
+    VG_(printf)("Thread exitted?\n");
+}
+
+void
+_init()
+{
+    unsigned long ign;
+    unsigned x;
+
+    printf("init() called\n");
+    for (x = 0; x < VG_N_THREADS; x++)
+	VG_(threads)[x].tid = x;
 
     VG_(tool_provided_scheduler) = my_scheduler;
 
