@@ -1,6 +1,12 @@
+#define _GNU_SOURCE
+#include <sys/types.h>
 #include <asm/prctl.h>
+#include <asm/unistd.h>
 #include <sys/prctl.h>
+#include <dirent.h>
+#include <err.h>
 #include <setjmp.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -13,6 +19,7 @@
 #include <pub_tool_libcassert.h>
 #include <pub_tool_libcprint.h>
 #include <pub_tool_vki.h>
+#include <pub_tool_libcproc.h>
 #include <pub_tool_mallocfree.h>
 #include <pub_tool_options.h>
 #include <pub_tool_tooliface.h>
@@ -36,6 +43,7 @@ int arch_prctl(int code, unsigned long *addr);
 void setup_file_descriptors(void);
 extern UInt VG_(dispatch_ctr);
 extern vg_sema_t the_BigLock;
+extern VgSchedReturnCode (*VG_(tool_provided_scheduler))(ThreadId);
 
 unsigned char interim_stack[16384];
 
@@ -110,6 +118,51 @@ initialise_valgrind(unsigned long initial_rsp)
     LibVEX_default_VexControl(& VG_(clo_vex_control));
 }
 
+static VgSchedReturnCode
+my_scheduler(ThreadId tid)
+{
+    ThreadState *tas = VG_(get_ThreadState)(tid);
+
+    block_signals();
+
+    VG_(dispatch_ctr) = 10000;
+    while (!VG_(is_exiting)(tid)) {
+	int r;
+
+	r = VG_(run_innerloop)(&tas->arch, 0);
+	switch (r) {
+	case VEX_TRC_JMP_SYS_SYSCALL: {
+	    VG_(printf)("Client syscall in %d\n", tid);
+	    Bool jumped =  __builtin_setjmp(tas->sched_jmpbuf);
+	    if (!jumped) {
+		tas->sched_jmpbuf_valid = True;
+		VG_(client_syscall)(tid, r);
+	    }
+	    tas->sched_jmpbuf_valid = False;
+	    if (jumped) {
+		block_signals();
+		VG_(poll_signals)(tid);
+	    }
+	    break;
+	}
+
+	case VG_TRC_INNER_COUNTERZERO:
+	    VG_(release_BigLock)(tid, VgTs_Yielding,
+				 "scheduler timeslice");
+	    VG_(acquire_BigLock)(tid, "scheduler timeslice");
+	    VG_(poll_signals)(tid);
+	    VG_(dispatch_ctr) = 10000;
+	    break;
+
+	default:
+	    VG_(printf)("Unknown VEX trace return %d\n", r);
+	    VG_(tool_panic)((Char *)"dead");
+	}
+    }
+
+    return tas->exitreason;
+}
+
 static void
 run_thread(unsigned long initial_rsp, unsigned long initial_rip)
 {
@@ -119,6 +172,7 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
     VexGuestArchState *gas;
     unsigned x;
     ThreadId tid;
+    VgSchedReturnCode res;
 
     tid = VG_(alloc_ThreadState)();
     tas = &VG_(threads)[tid];
@@ -164,39 +218,19 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
 	((fpu_save.status >> 11) & 8);
 
     VG_(acquire_BigLock)(tid, "thread starts");
-    VG_(dispatch_ctr) = 10000;
-    while (!VG_(is_exiting)(tid)) {
-	int r;
+    tas->os_state.lwpid = VG_(gettid)();
+    tas->os_state.threadgroup = VG_(getpid)();
+    res = my_scheduler(tid);
 
-	r = VG_(run_innerloop)(&tas->arch, 0);
-	switch (r) {
-	case VEX_TRC_JMP_SYS_SYSCALL: {
-	    VG_(printf)("Client syscall\n");
-	    Bool jumped =  __builtin_setjmp(tas->sched_jmpbuf);
-	    if (!jumped) {
-		tas->sched_jmpbuf_valid = True;
-		VG_(client_syscall)(tid, r);
-	    }
-	    tas->sched_jmpbuf_valid = False;
-	    if (jumped) {
-		block_signals();
-		VG_(poll_signals)(tid);
-	    }
-	    break;
-	}
-
-	case VG_TRC_INNER_COUNTERZERO:
-	    VG_(release_BigLock)(tid, VgTs_Yielding,
-				 "scheduler timeslice");
-	    VG_(acquire_BigLock)(tid, "scheduler timeslice");
-	    VG_(poll_signals)(tid);
-	    VG_(dispatch_ctr) = 10000;
-	    break;
-
-	default:
-	    VG_(printf)("Unknown VEX trace return %d\n", r);
-	    VG_(tool_panic)((Char *)"dead");
-	}
+    if (VG_(count_living_threads)() == 1) {
+	( * VG_(address_of_m_main_shutdown_actions_NORETURN) ) (tid, res);
+    } else {
+	VG_(exit_thread)(tid);
+	asm volatile (
+	    "movl	%1, %0\n"	/* set tst->status = VgTs_Empty */
+	    "syscall\n"		/* exit(tst->os_state.exitcode) */
+	    : "=m" (tas->status)
+	    : "n" (VgTs_Empty), "rax" (__NR_exit), "rdi" (tas->os_state.exitcode));
     }
 }
 
@@ -213,9 +247,42 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 void
 _init()
 {
+    pid_t self = getpid();
+    pid_t other;
     unsigned long ign;
+    char *path;
+    DIR *d;
+    struct dirent *de;
+    unsigned x;
 
     printf("init() called\n");
+    for (x = 0; x < VG_N_THREADS; x++)
+	VG_(threads)[x].tid = x;
+
+    asprintf(&path, "/proc/%d/task", self);
+    d = opendir(path);
+    if (!d) {
+	/* Give up */
+	warn("opening %s", path);
+	free(path);
+	return;
+    }
+    free(path);
+    while (1) {
+	de = readdir(d);
+	if (!de)
+	    break;
+	if (!strcmp(de->d_name, ".") ||
+	    !strcmp(de->d_name, ".."))
+	    continue;
+	other = atoi(de->d_name);
+	if (other == self)
+	    continue;
+	printf("Should attach to thread %d\n", other);
+    }
+    closedir(d);
+
+    VG_(tool_provided_scheduler) = my_scheduler;
 
     asm ("pushq %%rbp\n"
 	 "lea 1f(%%rip), %%rsi\n"

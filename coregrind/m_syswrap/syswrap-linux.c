@@ -60,6 +60,7 @@
 
 
 void (*VG_(tool_provided_thread_starting))(void);
+VgSchedReturnCode (*VG_(tool_provided_scheduler))(ThreadId);
 
 // Run a thread from beginning to end and return the thread's
 // scheduler-return-code.
@@ -94,9 +95,12 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
       appropriate mask */
 
    if (VG_(tool_provided_thread_starting))
-	   VG_(tool_provided_thread_starting)();
+     VG_(tool_provided_thread_starting)();
 
-   ret = VG_(scheduler)(tid);
+   if (VG_(tool_provided_scheduler))
+     ret = VG_(tool_provided_scheduler)(tid);
+   else
+     ret = VG_(scheduler)(tid);
 
    vg_assert(VG_(is_exiting)(tid));
    
