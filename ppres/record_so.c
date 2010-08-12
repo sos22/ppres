@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <linux/futex.h>
 
 #include <libvex.h>
 #include <libvex_guest_amd64.h>
@@ -51,7 +52,8 @@ extern UInt VG_(dispatch_ctr);
 extern vg_sema_t the_BigLock;
 extern VgSchedReturnCode (*VG_(tool_provided_scheduler))(ThreadId);
 
-unsigned char interim_stack[16384];
+static unsigned char interim_stack[16384];
+static int memory_snapshot_completed;
 
 struct fpu_save {
     unsigned short control;
@@ -182,6 +184,10 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
 
     tid = VG_(alloc_ThreadState)();
 
+    if (tid == 1)
+	VG_(sigstartup_actions)();
+
+
     VG_(acquire_BigLock)(tid, "thread starts");
 
     tas = &VG_(threads)[tid];
@@ -226,6 +232,17 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
     gas->guest_FC3210 = ((fpu_save.status >> 8) & 7) |
 	((fpu_save.status >> 11) & 8);
 
+    snapshot_memory();
+
+    memory_snapshot_completed = 1;
+    /* sys_futex() semantics don't include a wake-everyone operation,
+       so just iterate a few times waking up 100 threads each time.
+       This is really paranoia: you only need multiple iterations if
+       you have >100 threads, which sounds unlikely. */
+    while (syscall(__NR_futex, &memory_snapshot_completed,
+		   FUTEX_WAKE, 100, NULL))
+	;
+
     tas->os_state.lwpid = VG_(gettid)();
     tas->os_state.threadgroup = VG_(getpid)();
     res = my_scheduler(tid);
@@ -249,6 +266,12 @@ new_thread_capture(ThreadId tid)
     VgSchedReturnCode res;
 
     VG_(printf)("Capturing %d\n", tid);
+
+    /* Wait for the big memory snapshot to be completed */
+    while (!memory_snapshot_completed)
+	syscall(__NR_futex, &memory_snapshot_completed,
+		FUTEX_WAIT, 0, NULL);
+
     VG_(acquire_BigLock)(tid, "thread starts");
 
     /* Most of the capture work is already done. */
@@ -421,6 +444,16 @@ attach_thread(pid_t other)
     int r;
 
     tid = VG_(alloc_ThreadState)();
+
+    if (tid == 1) {
+	VG_(printf)("Spin up sighandlers\n");
+	VG_(sigstartup_actions)();
+	/* sigstartup blocks sync signals as well, so unblock them
+	   here. */
+	/* Yes, block_signals() really is the right function to use to
+	   unblock sync signals. */
+	block_signals();
+    }
 
     new_stack = ML_(allocstack)(tid);
 

@@ -11,23 +11,26 @@
 #include <linux/sched.h>
 #include <linux/utsname.h>
 #include <linux/futex.h>
+#include <ctype.h>
 #include <errno.h>
 #include <poll.h>
 #include <sched.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <stdlib.h>
 #include <time.h>
 #include "pub_tool_basics.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcprint.h"
+#include "pub_tool_vki.h"
+#include "pub_tool_libcproc.h"
 #include "pub_tool_machine.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_options.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_signals.h"
 #include "pub_tool_threadstate.h"
-#include "pub_tool_vki.h"
 #include "pub_tool_libcfile.h"
 #include "pub_tool_libcsignal.h"
 #include "libvex_guest_amd64.h"
@@ -145,8 +148,7 @@ _emit_record(struct record_emitter *re,
 	tl_assert(record_size <= MAX_RECORD_SIZE);
 	record_size += sizeof(*hdr);
 	if (re->current_block_used + record_size > RECORD_BLOCK_SIZE) {
-		//VG_(write)(re->fd, re->current_block,
-		//re->current_block_used);
+		VG_(write)(re->fd, re->current_block, re->current_block_used);
 		if (real_size / 100000000 != (real_size + re->current_block_used) / 100000000)
 			VG_(printf)("Log file %ld bytes\n",
 				    real_size);
@@ -456,7 +458,7 @@ handle_fcntl(UWord *syscall_args, UInt nr_args, SysRes res)
 	case F_SETLK:
 		break;
 	case F_GETLK:
-		capture_memory(syscall_args[2], sizeof(struct flock));
+		capture_memory((void *)syscall_args[2], sizeof(struct flock));
 		break;
 	default:
 		VG_(printf)("Don't know how to handle fcntl %lx\n",
@@ -966,8 +968,13 @@ dump_snapshot(void)
 	for (x = 0; x < 64; x++)
 		VG_(do_sys_sigaction)(x, NULL, &isr->handlers[x]);
 
-	regs = _emit_record(&logfile, RECORD_initial_registers, sizeof(*regs), 1);
-	*regs = VG_(threads)[1].arch.vex;
+	for (x = 1; x < VG_N_THREADS; x++) {
+		VG_(printf)("Thread %d status %d\n", x, VG_(threads)[x].status);
+		if (VG_(threads)[x].status != VgTs_Empty) {
+			regs = _emit_record(&logfile, RECORD_initial_registers, sizeof(*regs), 1);
+			*regs = VG_(threads)[x].arch.vex;
+		}
+	}
 
 	sr = VG_(open)((Char *)"/proc/self/maps", VKI_O_RDONLY, 0);
 	if (sr_isError(sr)) {
@@ -1103,4 +1110,8 @@ pre_clo_init(void)
 
 VG_DETERMINE_INTERFACE_VERSION(pre_clo_init)
 
-
+void
+snapshot_memory(void)
+{
+	dump_snapshot();
+}
