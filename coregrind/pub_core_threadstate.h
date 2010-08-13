@@ -285,7 +285,7 @@ typedef
 
 
 /* Overall thread state */
-typedef struct {
+typedef struct ThreadState {
    /* ThreadId == 0 (and hence vg_threads[0]) is NEVER USED.
       The thread identity is simply the index in vg_threads[].
       ThreadId == 1 is the root thread and has the special property
@@ -355,6 +355,10 @@ typedef struct {
    /* Per-thread jmp_buf to resume scheduler after a signal */
    Bool    sched_jmpbuf_valid;
    jmp_buf sched_jmpbuf;
+
+  int has_run_token;
+  struct ThreadState *next_waking_thread;
+  int priority;
 }
 ThreadState;
 

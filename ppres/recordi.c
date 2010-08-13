@@ -1604,6 +1604,7 @@ void zap_cache()
 static void translateNextBlock(struct interpret_state *is)
 {
 	IRSB **cache_slot;
+	unsigned input, output;
 
 	VG_(init_vex)();
 
@@ -1645,6 +1646,14 @@ static void translateNextBlock(struct interpret_state *is)
 
 	tl_assert(irsb->tyenv->types_used <= LibVEX_N_SPILL_BYTES / sizeof(struct expression_result));
 
+	output = 0;
+	for (input = 0; input < irsb->stmts_used; input++) {
+		if (irsb->stmts[input]->tag != Ist_IMark) {
+			irsb->stmts[output] = irsb->stmts[input];
+			output++;
+		}
+	}
+	irsb->stmts_used = output;
 	*cache_slot = is->currentIRSB = irsb;
 }
 
@@ -1676,12 +1685,14 @@ runToEvent(struct interpret_state *is)
 			case Ist_NoOp:
 				break;
 			case Ist_IMark:
+#if 0
 				record_instr(stmt->Ist.IMark.addr,
 					     read_reg(is->regs, FOOTSTEP_REG_0_OFFSET),
 					     read_reg(is->regs, FOOTSTEP_REG_1_OFFSET),
 					     read_reg(is->regs, FOOTSTEP_REG_2_OFFSET),
 					     read_reg(is->regs, FOOTSTEP_REG_3_OFFSET),
 					     read_reg(is->regs, FOOTSTEP_REG_4_OFFSET));
+#endif
 				break;
 			case Ist_AbiHint:
 				break;

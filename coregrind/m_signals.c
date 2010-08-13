@@ -1994,13 +1994,13 @@ static
 void async_signalhandler ( Int sigNo,
                            vki_siginfo_t *info, struct vki_ucontext *uc )
 {
-   ThreadId     tid = VG_(running_tid);
+   ThreadId     tid = VG_(lwpid_to_vgtid)(VG_(gettid)());
    ThreadState* tst = VG_(get_ThreadState)(tid);
    SysRes       sres;
 
    /* The thread isn't currently running, make it so before going on */
    vg_assert(tst->status == VgTs_WaitSys);
-   VG_(acquire_BigLock)(tid, "async_signalhandler");
+   finish_slow_syscall(tid);
 
    info->si_code = sanitize_si_code(info->si_code);
 
@@ -2419,7 +2419,7 @@ static void sigvgkill_handler(int signo, vki_siginfo_t *si,
    if (VG_(clo_trace_signals))
       VG_(dmsg)("sigvgkill for lwp %d tid %d\n", VG_(gettid)(), tid);
 
-   VG_(acquire_BigLock)(tid, "sigvgkill_handler");
+   finish_slow_syscall(tid);
 
    vg_assert(signo == VG_SIGVGKILL);
    vg_assert(si->si_signo == signo);

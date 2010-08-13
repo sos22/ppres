@@ -52,36 +52,6 @@ extern void VG_(get_thread_out_of_syscall)(ThreadId tid);
 extern void VG_(nuke_all_threads_except) ( ThreadId me,
                                            VgSchedReturnCode reason );
 
-/* Make a thread the running thread.  The thread must previously been
-   sleeping, and not holding the CPU lock.  This will set the
-   thread state to VgTs_Runnable, and the thread will attempt to take
-   the CPU lock.  By the time it returns, tid will be the running
-   thread. */
-extern void VG_(acquire_BigLock) ( ThreadId tid, HChar* who );
-
-/* Simple version, which simply acquires the lock, but does not mess
-   with the guest state in the same way as the non _LL version
-   does. */
-extern void VG_(acquire_BigLock_LL) ( HChar* who );
-
-/* Set a thread into a sleeping state.  Before the call, the thread
-   must be runnable, and holding the CPU lock.  When this call
-   returns, the thread will be set to the specified sleeping state,
-   and will not be holding the CPU lock.  Note that another
-   thread could be running by the time this call returns, so the
-   caller must be careful not to touch any shared state.  It is also
-   the caller's responsibility to actually block until the thread is
-   ready to run again. */
-extern void VG_(release_BigLock) ( ThreadId tid,
-                                   ThreadStatus state, HChar* who );
-
-/* Matching function to acquire_BigLock_LL. */
-extern void VG_(release_BigLock_LL) ( HChar* who );
-
-/* Yield the CPU for a while.  Drops/acquires the lock using the
-   normal (non _LL) functions. */
-extern void VG_(vg_yield)(void);
-
 // The scheduler.
 extern VgSchedReturnCode VG_(scheduler) ( ThreadId tid );
 

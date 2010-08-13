@@ -1541,7 +1541,7 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
          putSyscallArgsIntoGuestState( &sci->args, &tst->arch.vex );
 
          /* Drop the bigLock */
-         VG_(release_BigLock)(tid, VgTs_WaitSys, "VG_(client_syscall)[async]");
+	 start_slow_syscall();
          /* Urr.  We're now in a race against other threads trying to
             acquire the bigLock.  I guess that doesn't matter provided
             that do_syscall_for_client only touches thread-local
@@ -1567,7 +1567,7 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
             VG_(fixup_guest_state_after_syscall_interrupted). */
 
          /* Reacquire the lock */
-         VG_(acquire_BigLock)(tid, "VG_(client_syscall)[async]");
+	 finish_slow_syscall(tid);
 
          /* Even more impedance matching.  Extract the syscall status
             from the guest state. */
@@ -1759,7 +1759,7 @@ void VG_(post_syscall) (ThreadId tid)
    /* Similarly, the wrappers might have asked for a yield
       afterwards. */
    if (sci->flags & SfYieldAfter)
-      VG_(vg_yield)();
+     maybe_yield();
 }
 
 

@@ -57,6 +57,8 @@
    way back for the moment, until we do an OS port in earnest...]
  */
 
+#include <linux/futex.h>
+
 #include "pub_core_basics.h"
 #include "pub_core_debuglog.h"
 #include "pub_core_vki.h"
@@ -140,8 +142,7 @@ void VG_(print_scheduler_stats)(void)
 }
 
 /* CPU semaphore, so that threads can run exclusively */
-vg_sema_t the_BigLock;
-
+//vg_sema_t the_BigLock;
 
 /* ---------------------------------------------------------------------
    Helper functions for the scheduler.
@@ -195,101 +196,204 @@ ThreadId VG_(alloc_ThreadState) ( void )
    /*NOTREACHED*/
 }
 
-/* 
-   Mark a thread as Runnable.  This will block until the_BigLock is
-   available, so that we get exclusive access to all the shared
-   structures and the CPU.  Up until we get the_BigLock, we must not
-   touch any shared state.
+/* Low bit -> is it held, rest -> how many people are waiting. */
+static int sched_lock;
+static ThreadState *head_waiting_thread;
+static int nobody_has_run_token = 1;
 
-   When this returns, we'll actually be running.
- */
-void VG_(acquire_BigLock)(ThreadId tid, HChar* who)
+static int
+cmpxchg(int *ptr, int expected, int new)
 {
-   ThreadState *tst;
-
-#if 0
-   if (VG_(clo_trace_sched)) {
-      HChar buf[100];
-      vg_assert(VG_(strlen)(who) <= 100-50);
-      VG_(sprintf)(buf, "waiting for lock (%s)", who);
-      print_sched_event(tid, buf);
-   }
-#endif
-
-   /* First, acquire the_BigLock.  We can't do anything else safely
-      prior to this point.  Even doing debug printing prior to this
-      point is, technically, wrong. */
-   ML_(sema_down)(&the_BigLock, False/*not LL*/);
-
-   tst = VG_(get_ThreadState)(tid);
-
-   vg_assert(tst->status != VgTs_Runnable);
-   
-   tst->status = VgTs_Runnable;
-
-   if (VG_(running_tid) != VG_INVALID_THREADID)
-      VG_(printf)("tid %d found %d running\n", tid, VG_(running_tid));
-   vg_assert(VG_(running_tid) == VG_INVALID_THREADID);
-   VG_(running_tid) = tid;
-
-   { Addr gsp = VG_(get_SP)(tid);
-     VG_(unknown_SP_update)(gsp, gsp, 0/*unknown origin*/);
-   }
-
-   if (VG_(clo_trace_sched)) {
-      HChar buf[150];
-      vg_assert(VG_(strlen)(who) <= 150-50);
-      VG_(sprintf)(buf, " acquired lock (%s)", who);
-      print_sched_event(tid, buf);
-   }
+  int res;
+  /* The memory clobber makes it into a compile barrier. */
+  asm volatile ("lock cmpxchgl %3, %2\n"
+		: "=a" (res)
+		: "0" (expected),
+		  "m" (*ptr),
+		  "r" (new)
+		: "memory");
+  return res;
 }
 
-/* 
-   Set a thread into a sleeping state, and give up exclusive access to
-   the CPU.  On return, the thread must be prepared to block until it
-   is ready to run again (generally this means blocking in a syscall,
-   but it may mean that we remain in a Runnable state and we're just
-   yielding the CPU to another thread).
- */
-void VG_(release_BigLock)(ThreadId tid, ThreadStatus sleepstate, HChar* who)
+static void
+acquire_sched_lock(void)
 {
-   ThreadState *tst = VG_(get_ThreadState)(tid);
+  int old;
+  int new;
+  int seen;
 
-   vg_assert(tst->status == VgTs_Runnable);
+  while (1) {
+    old = sched_lock;
+    if (!(old & 1)) {
+      /* Lock not held -> try to grab it. */
+      seen = cmpxchg(&sched_lock, old, old + 1);
+      if (seen == old)
+	return;
+    } else {
+      /* Lock held -> register as a waiter */
+      new = old + 2;
+      seen = cmpxchg(&sched_lock, old, new);
+      if (seen == old)
+	break;
+    }
+  }
 
-   vg_assert(sleepstate == VgTs_WaitSys ||
-	     sleepstate == VgTs_Yielding);
+  while (1) {
+    /* We're now registered as a waiter.  Actually wait. */
+    old = sched_lock;
+    if (old & 1) {
+      /* It's still held, so go back to sleep. */
+      syscall(__NR_futex, &sched_lock, FUTEX_WAIT, old, NULL);
+    } else {
+      /* Nobody holds it, so we can have a go at grabbing it.  Need to
+	 clear ourselves from waiters (-= 2) and set the in-use bit
+	 (+=1), which is equivalent to just -= 1. */
+      seen = cmpxchg(&sched_lock, old, old - 1);
+      if (seen == old)
+	return;
 
-   tst->status = sleepstate;
-
-   vg_assert(VG_(running_tid) == tid);
-   VG_(running_tid) = VG_INVALID_THREADID;
-
-   if (VG_(clo_trace_sched)) {
-      Char buf[200];
-      vg_assert(VG_(strlen)(who) <= 200-100);
-      VG_(sprintf)(buf, "releasing lock (%s) -> %s",
-                        who, VG_(name_of_ThreadStatus)(sleepstate));
-      print_sched_event(tid, buf);
-   }
-
-   /* Release the_BigLock; this will reschedule any runnable
-      thread. */
-   ML_(sema_up)(&the_BigLock, False/*not LL*/);
+      /* cmpxchg failed, try again. */
+    }
+  }
 }
 
-/* See pub_core_scheduler.h for description */
-void VG_(acquire_BigLock_LL) ( HChar* who )
+static void
+release_sched_lock(void)
 {
-  ML_(sema_down)(&the_BigLock, True/*LL*/);
+  int old;
+  int seen;
+
+  do {
+    /* Release the lock */
+    old = sched_lock;
+    seen = cmpxchg(&sched_lock, old, old - 1);
+  } while (seen != old);
+
+  if (seen != 1) {
+    /* wake up a waiter */
+    syscall(__NR_futex, &sched_lock, FUTEX_WAKE, 1, NULL);
+  }
 }
 
-/* See pub_core_scheduler.h for description */
-void VG_(release_BigLock_LL) ( HChar* who )
+static void
+acquire_run_token(ThreadId tid)
 {
-   ML_(sema_up)(&the_BigLock, True/*LL*/);
+  ThreadState *ts = &VG_(threads)[tid];
+  ThreadState *rival;
+
+  vg_assert(ts->status != VgTs_Runnable);
+  vg_assert(!ts->has_run_token);
+  if (nobody_has_run_token) {
+    nobody_has_run_token = 0;
+    ts->has_run_token = 1;
+  } else {
+    ts->next_waking_thread = NULL;
+    if (!head_waiting_thread) {
+      head_waiting_thread = ts;
+    } else {
+      for (rival = head_waiting_thread;
+	   rival->next_waking_thread && rival->next_waking_thread->priority >= ts->priority;
+	   rival = rival->next_waking_thread)
+	;
+      ts->next_waking_thread = rival->next_waking_thread;
+      rival->next_waking_thread = ts;
+    }
+    while (!ts->has_run_token) {
+      release_sched_lock();
+      syscall(__NR_futex, &ts->has_run_token, FUTEX_WAIT, 0, NULL);
+      acquire_sched_lock();
+    }
+
+    if (head_waiting_thread == ts) {
+      head_waiting_thread = ts->next_waking_thread;
+    } else {
+      for (rival = head_waiting_thread;
+	   rival->next_waking_thread && rival->next_waking_thread != ts;
+	   rival = rival->next_waking_thread)
+	;
+      vg_assert(rival->next_waking_thread == ts);
+      rival->next_waking_thread = ts->next_waking_thread;
+      ts->next_waking_thread = NULL;
+    }
+  }
+  ts->status = VgTs_Runnable;
+  VG_(running_tid) = tid;
+  vg_assert(ts->has_run_token);
+  vg_assert(!nobody_has_run_token);
+  VG_(printf)("Thread %d runs\n", tid);
 }
 
+static void
+release_run_token(ThreadStatus status)
+{
+  ThreadState *ts = &VG_(threads)[VG_(running_tid)];
+  vg_assert(ts->status == VgTs_Runnable);
+  vg_assert(ts->has_run_token);
+  vg_assert(!nobody_has_run_token);
+  ts->status = status;
+  ts->has_run_token = 0;
+  if (head_waiting_thread) {
+    head_waiting_thread->has_run_token = 1;
+    syscall(__NR_futex, &head_waiting_thread->has_run_token, FUTEX_WAKE,
+	    0, NULL);
+  } else {
+    nobody_has_run_token = 1;
+  }
+  VG_(running_tid) = VG_INVALID_THREADID;
+}
+
+void
+start_slow_syscall(void)
+{
+  acquire_sched_lock();
+  release_run_token(VgTs_WaitSys);
+  release_sched_lock();
+}
+
+void
+finish_slow_syscall(ThreadId tid)
+{
+  ThreadState *ts = &VG_(threads)[tid];
+  vg_assert(ts->status == VgTs_WaitSys);
+
+  acquire_sched_lock();
+  ts->status = VgTs_Yielding;
+  acquire_run_token(tid);
+  release_sched_lock();
+}
+
+void
+maybe_yield(void)
+{
+  ThreadId me = VG_(running_tid);
+  if (head_waiting_thread) {
+    acquire_sched_lock();
+    if (head_waiting_thread && head_waiting_thread->priority > VG_(threads)[me].priority) {
+      release_run_token(VgTs_Yielding);
+      acquire_run_token(me);
+    }
+    release_sched_lock();
+  }
+  vg_assert(me == VG_(running_tid));
+}
+
+void
+start_thread(ThreadId tid)
+{
+  acquire_sched_lock();
+  acquire_run_token(tid);
+  release_sched_lock();
+  VG_(printf)("Thread %d starting\n", tid);
+}
+
+void
+finish_thread(void)
+{
+  VG_(printf)("Thread %d finishing\n", VG_(running_tid));
+  acquire_sched_lock();
+  release_run_token(VgTs_Zombie);
+  release_sched_lock();
+}
 
 /* Clear out the ThreadState and release the semaphore. Leaves the
    ThreadState in VgTs_Zombie state, so that it doesn't get
@@ -301,7 +405,6 @@ void VG_(exit_thread)(ThreadId tid)
    vg_assert(VG_(is_exiting)(tid));
 
    mostly_clear_thread_record(tid);
-   VG_(running_tid) = VG_INVALID_THREADID;
 
    /* There should still be a valid exitreason for this thread */
    vg_assert(VG_(threads)[tid].exitreason != VgSrc_None);
@@ -309,7 +412,7 @@ void VG_(exit_thread)(ThreadId tid)
    if (VG_(clo_trace_sched))
       print_sched_event(tid, "release lock in VG_(exit_thread)");
 
-   ML_(sema_up)(&the_BigLock, False/*not LL*/);
+   finish_thread();
 }
 
 /* If 'tid' is blocked in a syscall, send it SIGVGKILL so as to get it
@@ -356,30 +459,6 @@ void VG_(get_thread_out_of_syscall)(ThreadId tid)
 #     endif
    }
 }
-
-/* 
-   Yield the CPU for a short time to let some other thread run.
- */
-void VG_(vg_yield)(void)
-{
-   ThreadId tid = VG_(running_tid);
-
-   if (VG_(tool_handles_synchronisation))
-      return;
-
-   vg_assert(tid != VG_INVALID_THREADID);
-   vg_assert(VG_(threads)[tid].os_state.lwpid == VG_(gettid)());
-
-   VG_(release_BigLock)(tid, VgTs_Yielding, "VG_(vg_yield)");
-
-   /* 
-      Tell the kernel we're yielding.
-    */
-   VG_(do_syscall0)(__NR_sched_yield);
-
-   VG_(acquire_BigLock)(tid, "VG_(vg_yield)");
-}
-
 
 /* Set the standard set of blocked signals, used whenever we're not
    running a client syscall. */
@@ -502,10 +581,12 @@ static void sched_fork_cleanup(ThreadId me)
       }
    }
 
+#if 0
    /* re-init and take the sema */
    ML_(sema_deinit)(&the_BigLock);
    ML_(sema_init)(&the_BigLock);
    ML_(sema_down)(&the_BigLock, False/*not LL*/);
+#endif
 }
 
 
@@ -520,7 +601,7 @@ ThreadId VG_(scheduler_init_phase1) ( void )
 
    VG_(debugLog)(1,"sched","sched_init_phase1\n");
 
-   ML_(sema_init)(&the_BigLock);
+   //ML_(sema_init)(&the_BigLock);
 
    for (i = 0 /* NB; not 1 */; i < VG_N_THREADS; i++) {
       /* Paranoia .. completely zero it out. */
@@ -990,25 +1071,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 /* 3 Aug 06: doing sys__nsleep works but crashes some apps.
             sys_yield also helps the problem, whilst not crashing apps. */
 
-	 VG_(release_BigLock)(tid, VgTs_Yielding, 
-                                   "VG_(scheduler):timeslice");
-	 /* ------------ now we don't have The Lock ------------ */
-
-#        if defined(VGP_ppc32_aix5) || defined(VGP_ppc64_aix5)
-         { static Int ctr=0;
-           vg_assert(__NR_AIX5__nsleep != __NR_AIX5_UNKNOWN);
-           vg_assert(__NR_AIX5_yield   != __NR_AIX5_UNKNOWN);
-           if (1 && rt > 0 && ((++ctr % 3) == 0)) { 
-              //struct vki_timespec ts;
-              //ts.tv_sec = 0;
-              //ts.tv_nsec = 0*1000*1000;
-              //VG_(do_syscall2)(__NR_AIX5__nsleep, (UWord)&ts, (UWord)NULL);
-	      VG_(do_syscall0)(__NR_AIX5_yield);
-           }
-         }
-#        endif
-
-	 VG_(acquire_BigLock)(tid, "VG_(scheduler):timeslice");
+	 maybe_yield();
 	 /* ------------ now we do have The Lock ------------ */
 
 	 vg_assert(VG_(is_running_thread)(tid));
@@ -1642,17 +1705,6 @@ void scheduler_sanity ( ThreadId tid )
       VG_(message)(Vg_DebugMsg,
                    "Thread %d supposed to be in LWP %d, but we're actually %d\n",
                    tid, VG_(threads)[tid].os_state.lwpid, VG_(gettid)());
-      bad = True;
-   }
-#endif
-
-#if !defined(VGO_darwin)
-   // GrP fixme
-   if (!VG_(tool_handles_synchronisation) &&
-       lwpid != the_BigLock.owner_lwpid) {
-      VG_(message)(Vg_DebugMsg,
-                   "Thread (LWPID) %d doesn't own the_BigLock\n",
-                   tid);
       bad = True;
    }
 #endif

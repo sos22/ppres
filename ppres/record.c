@@ -969,7 +969,6 @@ dump_snapshot(void)
 		VG_(do_sys_sigaction)(x, NULL, &isr->handlers[x]);
 
 	for (x = 1; x < VG_N_THREADS; x++) {
-		VG_(printf)("Thread %d status %d\n", x, VG_(threads)[x].status);
 		if (VG_(threads)[x].status != VgTs_Empty) {
 			regs = _emit_record(&logfile, RECORD_initial_registers, sizeof(*regs), 1);
 			*regs = VG_(threads)[x].arch.vex;

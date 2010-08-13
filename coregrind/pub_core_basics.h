@@ -109,6 +109,12 @@ typedef
    UnwindStartRegs;
 
 
+void start_slow_syscall(void);
+void finish_slow_syscall(ThreadId tid);
+void maybe_yield(void);
+void start_thread(ThreadId tid);
+void finish_thread(void);
+
 #endif   // __PUB_CORE_BASICS_H
 
 /*--------------------------------------------------------------------*/

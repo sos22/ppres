@@ -49,7 +49,6 @@ int arch_prctl(int code, unsigned long *addr);
 void setup_file_descriptors(void);
 Addr ML_(allocstack)(ThreadId tid);
 extern UInt VG_(dispatch_ctr);
-extern vg_sema_t the_BigLock;
 extern VgSchedReturnCode (*VG_(tool_provided_scheduler))(ThreadId);
 
 static unsigned char interim_stack[16384];
@@ -111,8 +110,6 @@ initialise_valgrind(unsigned long initial_rsp)
 
     setup_file_descriptors();
 
-    ML_(sema_init)(&the_BigLock);
-
     ok = VG_(am_create_reservation)(
 	VG_(brk_base),
 	8 * 1024 * 1024 - VKI_PAGE_SIZE,
@@ -129,7 +126,7 @@ initialise_valgrind(unsigned long initial_rsp)
 static VgSchedReturnCode
 my_scheduler(ThreadId tid)
 {
-    ThreadState *tas = VG_(get_ThreadState)(tid);
+    ThreadState *volatile tas = VG_(get_ThreadState)(tid);
 
     block_signals();
 
@@ -155,9 +152,7 @@ my_scheduler(ThreadId tid)
 
 	case VEX_TRC_JMP_YIELD:
 	case VG_TRC_INNER_COUNTERZERO:
-	    VG_(release_BigLock)(tid, VgTs_Yielding,
-				 "scheduler timeslice");
-	    VG_(acquire_BigLock)(tid, "scheduler timeslice");
+	    maybe_yield();
 	    VG_(poll_signals)(tid);
 	    VG_(dispatch_ctr) = 10000;
 	    break;
@@ -184,11 +179,12 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
 
     tid = VG_(alloc_ThreadState)();
 
-    if (tid == 1)
+    if (tid == 1) {
 	VG_(sigstartup_actions)();
+	block_signals();
+    }
 
-
-    VG_(acquire_BigLock)(tid, "thread starts");
+    start_thread(tid);
 
     tas = &VG_(threads)[tid];
     gas = &tas->arch.vex;
@@ -272,7 +268,7 @@ new_thread_capture(ThreadId tid)
 	syscall(__NR_futex, &memory_snapshot_completed,
 		FUTEX_WAIT, 0, NULL);
 
-    VG_(acquire_BigLock)(tid, "thread starts");
+    start_thread(tid);
 
     /* Most of the capture work is already done. */
     tas->os_state.lwpid = VG_(gettid)();
@@ -491,6 +487,7 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
     DIR *d;
     struct dirent *de;
 
+    printf("Hello world\n");
     initialise_valgrind(initial_rsp);
 
     asprintf(&path, "/proc/%d/task", self);
@@ -534,24 +531,24 @@ _init()
 
     VG_(tool_provided_scheduler) = my_scheduler;
 
-    asm ("pushq %%rbp\n"
-	 "lea 1f(%%rip), %%rsi\n"
-	 "xchg %%rsp, %%rdi\n"
-	 "call start_interpreting@PLT\n"
-
-	 "1:\n" /* We never actually run this, but it's the first
-		   thing which gets interpreted.  Everything register
-		   except rip, rsp, and the floating point state is
-		   clobbered when we get here. */
-	 "popq %%rbp\n" /* Can't asm clobber rbp, so save it
-			 * ourselves. */
-	 : "=D" (ign)
-	 : "0" (interim_stack + sizeof(interim_stack))
-	 : "rax", "rbx", "rcx", "rdx", "rsi",
-	   "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-	   "flags", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",
-	   "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11",
-	   "xmm12", "xmm13", "xmm14", "xmm15" );
+    asm volatile ("pushq %%rbp\n"
+		  "lea 1f(%%rip), %%rsi\n"
+		  "xchg %%rsp, %%rdi\n"
+		  "call start_interpreting@PLT\n"
+		  
+		  "1:\n" /* We never actually run this, but it's the first
+			    thing which gets interpreted.  Everything register
+			    except rip, rsp, and the floating point state is
+			    clobbered when we get here. */
+		  "popq %%rbp\n" /* Can't asm clobber rbp, so save it
+				  * ourselves. */
+		  : "=D" (ign)
+		  : "0" (interim_stack + sizeof(interim_stack))
+		  : "rax", "rbx", "rcx", "rdx", "rsi",
+		    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+		    "flags", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",
+		    "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11",
+		    "xmm12", "xmm13", "xmm14", "xmm15", "memory" );
 
     printf("Should now be being interpreted\n");
 }
