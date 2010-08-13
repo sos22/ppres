@@ -1,4 +1,4 @@
-CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef
+CFLAGS=-DHAVE_CONFIG_H -I../include -I../VEX/pub -DVGA_amd64=1 -DVGO_linux=1 -DVGP_amd64_linux=1 -g -Wall -fno-strict-aliasing -fno-stack-protector -Wundef -O2
 
 RECORD_OBJS=record.o recordi.o
 RECORD_POBJS=record.po recordi.po

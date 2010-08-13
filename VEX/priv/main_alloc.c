@@ -73,9 +73,11 @@ gc_visit(const void *what)
 static void
 poison(void *start, unsigned nr_bytes, unsigned pattern)
 {
+#if 0
   unsigned x;
   for (x = 0; x < nr_bytes / 4; x++)
     ((unsigned *)start)[x] = pattern;
+#endif
 }
 
 static void
