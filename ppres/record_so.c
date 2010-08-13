@@ -140,7 +140,6 @@ my_scheduler(ThreadId tid)
 	r = VG_(run_innerloop)(&tas->arch, 0);
 	switch (r) {
 	case VEX_TRC_JMP_SYS_SYSCALL: {
-	    VG_(printf)("Client syscall in %d\n", tid);
 	    Bool jumped =  __builtin_setjmp(tas->sched_jmpbuf);
 	    if (!jumped) {
 		tas->sched_jmpbuf_valid = True;
@@ -154,6 +153,7 @@ my_scheduler(ThreadId tid)
 	    break;
 	}
 
+	case VEX_TRC_JMP_YIELD:
 	case VG_TRC_INNER_COUNTERZERO:
 	    VG_(release_BigLock)(tid, VgTs_Yielding,
 				 "scheduler timeslice");
