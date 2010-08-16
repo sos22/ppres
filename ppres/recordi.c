@@ -15,6 +15,7 @@
 #include "../VEX/priv/main_util.h"
 #include "../coregrind/pub_core_dispatch_asm.h"
 #include "../coregrind/pub_core_threadstate.h"
+#include "../coregrind/pub_core_scheduler.h"
 
 typedef struct vki_sigaction_base sigaction_t;
 
@@ -1673,13 +1674,16 @@ runToEvent(struct interpret_state *is)
 			translateNextBlock(is);
 			tl_assert(is->currentIRSB);
 		}
+
+		/* segv etc. in this block of code indicates a client
+		   bug, not a VG one. */
+		VG_(in_generated_code) = True;
+
 		while (is->currentIRSBOffset < is->currentIRSB->stmts_used) {
 			IRStmt *stmt = is->currentIRSB->stmts[is->currentIRSBOffset];
 			is->currentIRSBOffset++;
 
 			nr_ops++;
-			if (nr_ops % 10000000 == 0)
-				VG_(printf)("Done %ld ops\n", nr_ops);
 
 			switch (stmt->tag) {
 			case Ist_NoOp:
@@ -1920,6 +1924,8 @@ runToEvent(struct interpret_state *is)
 			sanity_check_ait(next_addr.lo);
 			is->regs->guest_RIP = next_addr.lo;
 		}
+
+		VG_(in_generated_code) = False;
 
 		if (is->currentIRSB->jumpkind == Ijk_Yield) {
 			is->currentIRSB = NULL;
