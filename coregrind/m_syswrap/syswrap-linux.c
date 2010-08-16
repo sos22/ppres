@@ -77,6 +77,8 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
    vg_assert(tst->status == VgTs_Init);
 
    /* make sure we get the CPU lock before doing anything significant */
+   VG_(printf)("New thread %d\n", tid);
+   tst->priority = 100;
    start_thread(tid);
 
    if (0)

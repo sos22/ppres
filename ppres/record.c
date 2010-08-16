@@ -149,9 +149,9 @@ _emit_record(struct record_emitter *re,
 	record_size += sizeof(*hdr);
 	if (re->current_block_used + record_size > RECORD_BLOCK_SIZE) {
 		VG_(write)(re->fd, re->current_block, re->current_block_used);
-		if (real_size / 100000000 != (real_size + re->current_block_used) / 100000000)
-			VG_(printf)("Log file %ld bytes\n",
-				    real_size);
+		if (real_size / 1000000000 != (real_size + re->current_block_used) / 1000000000)
+			VG_(printf)("Log file %ldGB\n",
+				    real_size / 1000000000);
 		real_size += re->current_block_used;
 		re->current_block_used = 0;
 	}

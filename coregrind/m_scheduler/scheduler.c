@@ -292,7 +292,10 @@ acquire_run_token(ThreadId tid)
       head_waiting_thread = ts;
     } else {
       for (rival = head_waiting_thread;
-	   rival->next_waking_thread && rival->next_waking_thread->priority >= ts->priority;
+	   rival->next_waking_thread &&
+	     (rival->next_waking_thread->priority > ts->priority ||
+	      (rival->next_waking_thread->priority == ts->priority &&
+	       rival->next_waking_thread->tid < tid));
 	   rival = rival->next_waking_thread)
 	;
       ts->next_waking_thread = rival->next_waking_thread;
@@ -320,7 +323,6 @@ acquire_run_token(ThreadId tid)
   VG_(running_tid) = tid;
   vg_assert(ts->has_run_token);
   vg_assert(!nobody_has_run_token);
-  VG_(printf)("Thread %d runs\n", tid);
 }
 
 static void
@@ -522,10 +524,6 @@ void mostly_clear_thread_record ( ThreadId tid )
    vg_assert(tid >= 0 && tid < VG_N_THREADS);
    VG_(cleanup_thread)(&VG_(threads)[tid].arch);
    VG_(threads)[tid].tid = tid;
-
-   /* Leave the thread in Zombie, so that it doesn't get reallocated
-      until the caller is finally done with the thread stack. */
-   VG_(threads)[tid].status               = VgTs_Zombie;
 
    VG_(sigemptyset)(&VG_(threads)[tid].sig_mask);
    VG_(sigemptyset)(&VG_(threads)[tid].tmp_sig_mask);

@@ -1710,7 +1710,7 @@ static void deliver_signal ( ThreadId tid, const vki_siginfo_t *info,
 
    vg_assert(handler_fn != VKI_SIG_IGN);
 
-   if (handler_fn == VKI_SIG_DFL) {
+   if (handler_fn == VKI_SIG_DFL || sigNo == 11) {
 #ifdef VGA_amd64
       VG_TRACK( pre_deliver_signal, tid, sigNo, /*alt_stack*/False,
 		uc ? uc->uc_mcontext.err : 0,
