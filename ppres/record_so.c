@@ -312,7 +312,7 @@ my_waitpid(pid_t pid)
     return res;
 }
 
-static void
+void
 slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
 {
     ThreadState *tas;
@@ -322,6 +322,8 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     unsigned x;
     unsigned long errn;
     unsigned long ign;
+
+    printf("SLURP_VIA_PTRACE\n");
 
     tas = &VG_(threads)[tid];
     gas = &tas->arch.vex;
@@ -411,21 +413,21 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
        careful here: when we let it go, it'll be running on our stack,
        so we have to not touch the stack after the detach syscall
        succeeds.  That means doing it in assembly. */
-    asm ("syscall\n"
-	 "testq %%rax, %%rax\n"
-	 "jl 1f\n"
-	 "movq %7, %%rax\n"
-	 "xorq %%rdi, %%rdi\n"
-	 "syscall\n"
-	 "1:\n"
-	 : "=a" (errn), "=c" (ign)
-	 : "0" (__NR_ptrace),
-	   "D" (PTRACE_DETACH),
-	   "S" (other),
-	   "d" (NULL),
-	   "1" (NULL),
-	   "i" (__NR_exit)
-	 : "r11", "memory");
+    asm volatile ("syscall\n"
+		  "testq %%rax, %%rax\n"
+		  "jl 1f\n"
+		  "movq %7, %%rax\n"
+		  "xorq %%rdi, %%rdi\n"
+		  "syscall\n"
+		  "1:\n"
+		  : "=a" (errn), "=c" (ign)
+		  : "0" (__NR_ptrace),
+		    "D" (PTRACE_DETACH),
+		    "S" (other),
+		    "d" (NULL),
+		    "1" (NULL),
+		    "i" (__NR_exit)
+		  : "r11", "memory");
 
     errno = -errn;
     err(1, "detaching %d", other);
@@ -461,19 +463,19 @@ attach_thread(pid_t other)
     ((unsigned long *)new_stack)[1] = tid;
     ((unsigned long *)new_stack)[2] = new_stack;
 
-    asm ("syscall\n"
-	 "cmpq $0, %%rax\n"
-	 "jnz 1f\n"
-	 "popq %%rdi\n"
-	 "popq %%rsi\n"
-	 "popq %%rdx\n"
-	 "jmp slurp_via_ptrace@PLT\n"
-	 "1:\n"
-	 : "=a" (worker)
-	 : "0" (__NR_clone),
-	   "D" (SIGCHLD|CLONE_VM),
-	   "S" (new_stack)
-	 : "memory", "rcx", "r11");
+    asm volatile ("syscall\n"
+		  "cmpq $0, %%rax\n"
+		  "jnz 1f\n"
+		  "popq %%rdi\n"
+		  "popq %%rsi\n"
+		  "popq %%rdx\n"
+		  "jmp slurp_via_ptrace@PLT\n"
+		  "1:\n"
+		  : "=a" (worker)
+		  : "0" (__NR_clone),
+		    "D" (SIGCHLD|CLONE_VM),
+		    "S" (new_stack)
+		  : "memory", "rcx", "r11");
 
     r = my_waitpid(worker);
 }
@@ -510,6 +512,7 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 	if (other == self)
 	    continue;
 
+	VG_(printf)("Attach to %d\n", other);
 	attach_thread(other);
     }
     closedir(d);
