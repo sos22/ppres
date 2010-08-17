@@ -70,6 +70,28 @@ struct fpu_save {
     unsigned char registers[80];
 };
 
+static int
+my_futex(int *uaddr, int op, int val, const struct timespec *timeout,
+	 int *uaddr2, int val3)
+{
+    long res;
+    long ign;
+    register unsigned long r8 asm("r8") = (unsigned long)uaddr2;
+    register unsigned long r9 asm("r9") = val3;
+    asm ("syscall\n"
+	 : "=a" (res), "=c" (ign)
+	 : "0" (__NR_futex),
+	   "D" (uaddr),
+	   "S" (op),
+	   "d" (val),
+	   "1" (timeout),
+	   "r" (r8),
+	   "r" (r9)
+	 : "r11", "memory");
+
+    return res;
+}
+
 /* Set the standard set of blocked signals, used whenever we're not
    running a client syscall. */
 static void block_signals(void)
@@ -140,7 +162,7 @@ my_scheduler(ThreadId tid)
 	    if (!jumped) {
 		tas->sched_jmpbuf_valid = True;
 		if (tas->arch.vex.guest_RAX == __NR_clone)
-		    VG_(printf)("client clone syscall, rsp %lx\n",
+		    VG_(printf)("client clone syscall, rsp %llx\n",
 				tas->arch.vex.guest_RSP);
 		VG_(client_syscall)(tid, r);
 	    }
@@ -237,8 +259,8 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
        so just iterate a few times waking up 100 threads each time.
        This is really paranoia: you only need multiple iterations if
        you have >100 threads, which sounds unlikely. */
-    while (syscall(__NR_futex, &memory_snapshot_completed,
-		   FUTEX_WAKE, 100, NULL))
+    while (my_futex(&memory_snapshot_completed, FUTEX_WAKE, 100, NULL,
+		    NULL, 0))
 	;
 
     tas->os_state.lwpid = VG_(gettid)();
@@ -267,8 +289,8 @@ new_thread_capture(ThreadId tid)
 
     /* Wait for the big memory snapshot to be completed */
     while (!memory_snapshot_completed)
-	syscall(__NR_futex, &memory_snapshot_completed,
-		FUTEX_WAIT, 0, NULL);
+	my_futex(&memory_snapshot_completed, FUTEX_WAIT, 0, NULL,
+		 NULL, 0);
 
     start_thread(tid);
 
@@ -322,7 +344,7 @@ copy_via_ptrace(const void *src, size_t size, pid_t pid,
     for (x = 0; x < size; x += 8) {
 	if (ptrace(PTRACE_POKEDATA, pid, remote_address + x,
 		   (void *)*(unsigned long *)(src + x)) < 0)
-	    err(1, "synchronising registers into %d, progress %d/%d", pid,
+	    err(1, "synchronising registers into %d, progress %d/%zd", pid,
 		x, size);
     }
 }
@@ -335,8 +357,6 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     struct user_regs_struct regs;
     struct user_fpregs_struct fpregs;
     unsigned x;
-    unsigned long errn;
-    unsigned long ign;
     int r;
 
     tas = &VG_(threads)[tid];

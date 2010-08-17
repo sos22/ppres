@@ -94,6 +94,28 @@
 #include "pub_core_redir.h"
 
 
+static int
+my_futex(int *uaddr, int op, int val, const void *timeout,
+	 int *uaddr2, int val3)
+{
+    long res;
+    long ign;
+    register unsigned long r8 asm("r8") = (unsigned long)uaddr2;
+    register unsigned long r9 asm("r9") = val3;
+    asm ("syscall\n"
+	 : "=a" (res), "=c" (ign)
+	 : "0" (__NR_futex),
+	   "D" (uaddr),
+	   "S" (op),
+	   "d" (val),
+	   "1" (timeout),
+	   "r" (r8),
+	   "r" (r9)
+	 : "r11", "memory");
+
+    return res;
+}
+
 extern Bool VG_(tool_handles_synchronisation);
 
 /* ---------------------------------------------------------------------
@@ -243,7 +265,7 @@ acquire_sched_lock(void)
     old = sched_lock;
     if (old & 1) {
       /* It's still held, so go back to sleep. */
-      syscall(__NR_futex, &sched_lock, FUTEX_WAIT, old, NULL);
+      my_futex(&sched_lock, FUTEX_WAIT, old, NULL, NULL, 0);
     } else {
       /* Nobody holds it, so we can have a go at grabbing it.  Need to
 	 clear ourselves from waiters (-= 2) and set the in-use bit
@@ -271,7 +293,7 @@ release_sched_lock(void)
 
   if (seen != 1) {
     /* wake up a waiter */
-    syscall(__NR_futex, &sched_lock, FUTEX_WAKE, 1, NULL);
+    my_futex(&sched_lock, FUTEX_WAKE, 1, NULL, NULL, 0);
   }
 }
 
@@ -303,7 +325,7 @@ acquire_run_token(ThreadId tid)
     }
     while (!ts->has_run_token) {
       release_sched_lock();
-      syscall(__NR_futex, &ts->has_run_token, FUTEX_WAIT, 0, NULL);
+      my_futex(&ts->has_run_token, FUTEX_WAIT, 0, NULL, NULL, 0);
       acquire_sched_lock();
     }
 
@@ -336,8 +358,7 @@ release_run_token(ThreadStatus status)
   ts->has_run_token = 0;
   if (head_waiting_thread) {
     head_waiting_thread->has_run_token = 1;
-    syscall(__NR_futex, &head_waiting_thread->has_run_token, FUTEX_WAKE,
-	    0, NULL);
+    my_futex(&head_waiting_thread->has_run_token, FUTEX_WAKE, 1, NULL, NULL, 0);
   } else {
     nobody_has_run_token = 1;
   }
@@ -1701,7 +1722,6 @@ void scheduler_sanity ( ThreadId tid )
    Bool bad = False;
    static UInt lasttime = 0;
    UInt now;
-   Int lwpid = VG_(gettid)();
 
    if (!VG_(is_running_thread)(tid)) {
       VG_(message)(Vg_DebugMsg,

@@ -454,6 +454,9 @@ static Addr build_rt_sigframe(ThreadState *tst,
    rsp = VG_ROUNDDN(rsp, 16);
    frame = (struct rt_sigframe *)rsp;
 
+   VG_(printf)("Injecting signal %d in thread %d\n",
+	       sigNo, tst->tid);
+
    if (!extend(tst, rsp, sizeof(*frame)))
       return rsp_top_of_frame;
 
