@@ -125,9 +125,18 @@ main(int argc, char *argv[])
 		}
 		case RECORD_memory: {
 			struct memory_record *mr = payload;
-			printf("memory: %p", mr->ptr);
-			dump_bytes(mr + 1, h.size - sizeof(h) - sizeof(*mr));
-			printf("\n");
+			if (mr->ptr == 0x7ff444e32000) {
+				unsigned x;
+				for (x = 0; x < 4096; x += 16) {
+					printf("memory: %p", mr->ptr + x);
+					dump_bytes((void *)(mr + 1) + x, 16);
+					printf("\n");
+				}
+			} else {
+				printf("memory: %p", mr->ptr);
+				dump_bytes(mr + 1, h.size - sizeof(h) - sizeof(*mr));
+				printf("\n");
+			}
 			break;
 		}
 		case RECORD_rdtsc: {

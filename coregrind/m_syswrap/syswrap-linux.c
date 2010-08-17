@@ -78,7 +78,13 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
 
    /* make sure we get the CPU lock before doing anything significant */
    VG_(printf)("New thread %d\n", tid);
-   tst->priority = 100;
+   {
+     static int x;
+     if (!x)
+       tst->priority = 100;
+     x = 1;
+   }
+
    start_thread(tid);
 
    if (0)
@@ -117,7 +123,6 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
    return ret;
 }
 
-
 /* ---------------------------------------------------------------------
    clone-related stuff
    ------------------------------------------------------------------ */
@@ -129,6 +134,8 @@ static void run_a_thread_NORETURN ( Word tidW )
    ThreadId          tid = (ThreadId)tidW;
    VgSchedReturnCode src;
    Int               c;
+
+   VG_(printf)("run_a_thread_NORETURN(%d)\n", tidW);
 
    VG_(debugLog)(1, "syswrap-linux", 
                     "run_a_thread_NORETURN(tid=%lld): pre-thread_wrapper\n",
@@ -274,6 +281,7 @@ Addr ML_(allocstack)(ThreadId tid)
    return tst->os_state.valgrind_stack_init_SP;
 }
 
+#if 0
 /* Allocate a stack for the main thread, and run it all the way to the
    end.  Although we already have a working VgStack
    (VG_(interim_stack)) it's better to allocate a new one, so that
@@ -316,7 +324,7 @@ void VG_(main_thread_wrapper_NORETURN)(ThreadId tid)
    /*NOTREACHED*/
    vg_assert(0);
 }
-
+#endif
 
 /* Do a clone which is really a fork() */
 SysRes ML_(do_fork_clone) ( ThreadId tid, UInt flags,
@@ -946,8 +954,6 @@ PRE(sys_futex)
       break;
    }
 
-   *flags |= SfMayBlock;
-
    switch(ARG2 & ~(VKI_FUTEX_PRIVATE_FLAG|VKI_FUTEX_CLOCK_REALTIME)) {
    case VKI_FUTEX_WAIT:
    case VKI_FUTEX_LOCK_PI:
@@ -956,6 +962,7 @@ PRE(sys_futex)
       PRE_MEM_READ( "futex(futex)", ARG1, sizeof(Int) );
       if (ARG4 != 0)
 	 PRE_MEM_READ( "futex(timeout)", ARG4, sizeof(struct vki_timespec) );
+      *flags |= SfMayBlock;
       break;
 
    case VKI_FUTEX_REQUEUE:

@@ -564,6 +564,19 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 		}
 		break;
 
+	case __NR_recvfrom:
+		if (!sr_isError(res)) {
+			capture_memory((void *)syscall_args[1],
+				       sr_Res(res));
+			if (syscall_args[5])
+				capture_memory((void *)syscall_args[5],
+					       4);
+			if (syscall_args[4])
+				capture_memory((void *)syscall_args[4],
+					       *(int *)syscall_args[5]);
+		}
+		break;
+
 	case __NR_recvmsg:
 		capture_recvmsg((struct msghdr *)syscall_args[1], syscall_args[2], res);
 		break;
@@ -801,6 +814,15 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_sysinfo:
 		if (!sr_isError(res))
 			capture_memory((void *)syscall_args[0], sizeof(struct sysinfo));
+		break;
+
+	case __NR_getsockopt:
+		if (!sr_isError(res)) {
+			capture_memory((void *)syscall_args[4], 4);
+			if (syscall_args[3])
+				capture_memory((void *)syscall_args[3],
+					       *(int *)syscall_args[4]);
+		}
 		break;
 
 	default:

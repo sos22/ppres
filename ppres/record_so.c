@@ -140,6 +140,9 @@ my_scheduler(ThreadId tid)
 	    Bool jumped =  __builtin_setjmp(tas->sched_jmpbuf);
 	    if (!jumped) {
 		tas->sched_jmpbuf_valid = True;
+		if (tas->arch.vex.guest_RAX == __NR_clone)
+		    VG_(printf)("client clone syscall, rsp %lx\n",
+				tas->arch.vex.guest_RSP);
 		VG_(client_syscall)(tid, r);
 	    }
 	    tas->sched_jmpbuf_valid = False;
@@ -312,6 +315,19 @@ my_waitpid(pid_t pid)
     return res;
 }
 
+static void
+copy_via_ptrace(const void *src, size_t size, pid_t pid,
+		unsigned long remote_address)
+{
+    unsigned x;
+    for (x = 0; x < size; x += 8) {
+	if (ptrace(PTRACE_POKEDATA, pid, remote_address + x,
+		   (void *)*(unsigned long *)(src + x)) < 0)
+	    err(1, "synchronising registers into %d, progress %d/%d", pid,
+		x, size);
+    }
+}
+
 void
 slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
 {
@@ -322,6 +338,7 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     unsigned x;
     unsigned long errn;
     unsigned long ign;
+    int r;
 
     printf("SLURP_VIA_PTRACE\n");
 
@@ -331,11 +348,16 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     if (ptrace(PTRACE_ATTACH, other, NULL, NULL) < 0)
 	err(1, "attaching to %d", other);
 
+    /* XXX: There's a race somewhere.  Make it go away. */
+    sleep(5);
+
+    r = my_waitpid(other);
+    printf("my_waitpid said %d\n", r);
+
     /* Slurp out its brains XXX can we share any of this with the main
      * thread conversion bits? */
-    while (ptrace(PTRACE_GETREGS, other, NULL, &regs) < 0) {
-	warn("getting registers");
-    }
+    if (ptrace(PTRACE_GETREGS, other, NULL, &regs) < 0)
+	err(1, "getting registers");
 
     /* Initialise the guest state. */
     memset(gas, 0, sizeof(*gas));
@@ -394,6 +416,8 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     gas->guest_FC3210 = ((fpregs.swd >> 8) & 7) | ((fpregs.swd >> 11) & 8);
     memcpy(&gas->guest_XMM0, fpregs.xmm_space, 256);
 
+    copy_via_ptrace(gas, sizeof(*gas), other, (unsigned long)gas);
+
     /* Okay, the thread is now properly captured.  Allocate a new
        stack for it and then cajole it onto the trampoline. */
     regs.rsp = stack;
@@ -409,28 +433,10 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     VG_(printf)("detaching, rip %lx, stack %lx\n",
 		regs.rip, regs.rsp);
 
-    /* Let it go, and hope for the best.  Have to be a little bit
-       careful here: when we let it go, it'll be running on our stack,
-       so we have to not touch the stack after the detach syscall
-       succeeds.  That means doing it in assembly. */
-    asm volatile ("syscall\n"
-		  "testq %%rax, %%rax\n"
-		  "jl 1f\n"
-		  "movq %7, %%rax\n"
-		  "xorq %%rdi, %%rdi\n"
-		  "syscall\n"
-		  "1:\n"
-		  : "=a" (errn), "=c" (ign)
-		  : "0" (__NR_ptrace),
-		    "D" (PTRACE_DETACH),
-		    "S" (other),
-		    "d" (NULL),
-		    "1" (NULL),
-		    "i" (__NR_exit)
-		  : "r11", "memory");
+    if (ptrace(PTRACE_DETACH, other, NULL, NULL) < 0)
+	err(1, "detaching %d", other);
 
-    errno = -errn;
-    err(1, "detaching %d", other);
+    _exit(0);
 }
 
 static void
@@ -455,27 +461,11 @@ attach_thread(pid_t other)
 
     new_stack = ML_(allocstack)(tid);
 
-    /* Annoyingly, you can't ptrace another thread in the same
-     * process, so have to do a clone() here and do all the work from
-     * the child. */
-    new_stack -= 24;
-    ((unsigned long *)new_stack)[0] = other;
-    ((unsigned long *)new_stack)[1] = tid;
-    ((unsigned long *)new_stack)[2] = new_stack;
-
-    asm volatile ("syscall\n"
-		  "cmpq $0, %%rax\n"
-		  "jnz 1f\n"
-		  "popq %%rdi\n"
-		  "popq %%rsi\n"
-		  "popq %%rdx\n"
-		  "jmp slurp_via_ptrace@PLT\n"
-		  "1:\n"
-		  : "=a" (worker)
-		  : "0" (__NR_clone),
-		    "D" (SIGCHLD|CLONE_VM),
-		    "S" (new_stack)
-		  : "memory", "rcx", "r11");
+    worker = fork();
+    if (worker == 0) {
+	slurp_via_ptrace(other, tid, new_stack);
+	_exit(0);
+    }
 
     r = my_waitpid(worker);
 }
@@ -516,6 +506,8 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 	attach_thread(other);
     }
     closedir(d);
+
+    sleep(7);
 
     run_thread(initial_rsp, initial_rip);
 

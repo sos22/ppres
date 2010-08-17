@@ -221,6 +221,8 @@ static SysRes do_clone ( ThreadId ptid,
    Long         rax;
    vki_sigset_t blockall, savedmask;
 
+   VG_(printf)("Doing a clone syscall\n");
+
    VG_(sigfillset)(&blockall);
 
    vg_assert(VG_(is_valid_tid)(ctid));
@@ -402,7 +404,7 @@ PRE(sys_clone)
 {
    ULong cloneflags;
 
-   PRINT("sys_clone ( %lx, %#lx, %#lx, %#lx, %#lx )",ARG1,ARG2,ARG3,ARG4,ARG5);
+   VG_(printf)("sys_clone ( %lx, %#lx, %#lx, %#lx, %#lx )",ARG1,ARG2,ARG3,ARG4,ARG5);
    PRE_REG_READ5(int, "clone",
                  unsigned long, flags,
                  void *, child_stack,
@@ -410,9 +412,11 @@ PRE(sys_clone)
                  int *, child_tidptr,
                  void *, tlsaddr);
 
+#if 0
    if (ARG1 & VKI_CLONE_PARENT_SETTID) {
       PRE_MEM_WRITE("clone(parent_tidptr)", ARG3, sizeof(Int));
       if (!VG_(am_is_valid_for_client)(ARG3, sizeof(Int), VKI_PROT_WRITE)) {
+	VG_(printf)("fault on parent tid %#lx\n", ARG3);
          SET_STATUS_Failure( VKI_EFAULT );
          return;
       }
@@ -421,13 +425,16 @@ PRE(sys_clone)
       PRE_MEM_WRITE("clone(child_tidptr)", ARG4, sizeof(Int));
       if (!VG_(am_is_valid_for_client)(ARG4, sizeof(Int), VKI_PROT_WRITE)) {
          SET_STATUS_Failure( VKI_EFAULT );
+	 VG_(printf)("Fault on child tid\n");
          return;
       }
    }
+#endif
 
    cloneflags = ARG1;
 
    if (!ML_(client_signal_OK)(ARG1 & VKI_CSIGNAL)) {
+     VG_(printf)("Wibble wibble wibble\n");
       SET_STATUS_Failure( VKI_EINVAL );
       return;
    }
@@ -437,6 +444,7 @@ PRE(sys_clone)
                          | VKI_CLONE_FILES | VKI_CLONE_VFORK)) {
    case VKI_CLONE_VM | VKI_CLONE_FS | VKI_CLONE_FILES:
       /* thread creation */
+     VG_(printf)("I should really create a thread about now\n");
       SET_STATUS_from_SysRes(
          do_clone(tid,
                   ARG1,          /* flags */
@@ -447,10 +455,12 @@ PRE(sys_clone)
       break;
 
    case VKI_CLONE_VFORK | VKI_CLONE_VM: /* vfork */
+     VG_(printf)("vfork\n");
       /* FALLTHROUGH - assume vfork == fork */
       cloneflags &= ~(VKI_CLONE_VFORK | VKI_CLONE_VM);
 
    case 0: /* plain fork */
+     VG_(printf)("fork\n");
       SET_STATUS_from_SysRes(
          ML_(do_fork_clone)(tid,
                        cloneflags,      /* flags */

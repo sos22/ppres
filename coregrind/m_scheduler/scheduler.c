@@ -347,6 +347,10 @@ release_run_token(ThreadStatus status)
 void
 start_slow_syscall(void)
 {
+  if (VG_(threads)[VG_(running_tid)].priority)
+    VG_(printf)("Thread %d prio %d starts slow syscall\n",
+		VG_(running_tid),
+		VG_(threads)[VG_(running_tid)].priority);
   acquire_sched_lock();
   release_run_token(VgTs_WaitSys);
   release_sched_lock();
@@ -358,10 +362,19 @@ finish_slow_syscall(ThreadId tid)
   ThreadState *ts = &VG_(threads)[tid];
   vg_assert(ts->status == VgTs_WaitSys);
 
+  if (VG_(threads)[VG_(running_tid)].priority)
+    VG_(printf)("Thread %d prio %d finishes slow syscall\n",
+		VG_(running_tid),
+		VG_(threads)[VG_(running_tid)].priority);
   acquire_sched_lock();
   ts->status = VgTs_Yielding;
   acquire_run_token(tid);
   release_sched_lock();
+  if (VG_(threads)[VG_(running_tid)].priority)
+    VG_(printf)("Thread %d prio %d running again\n",
+		VG_(running_tid),
+		VG_(threads)[VG_(running_tid)].priority);
+
 }
 
 void

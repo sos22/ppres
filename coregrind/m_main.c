@@ -2296,7 +2296,7 @@ Int valgrind_main ( Int argc, HChar **argv, HChar **envp )
 
    /* Run the first thread, eventually ending up at the continuation
       address. */
-   VG_(main_thread_wrapper_NORETURN)(1);
+   //VG_(main_thread_wrapper_NORETURN)(1);
 
    /*NOTREACHED*/
    vg_assert(0);
