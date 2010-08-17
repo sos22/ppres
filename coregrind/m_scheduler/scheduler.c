@@ -102,16 +102,17 @@ my_futex(int *uaddr, int op, int val, const void *timeout,
     long ign;
     register unsigned long r8 asm("r8") = (unsigned long)uaddr2;
     register unsigned long r9 asm("r9") = val3;
+    register unsigned long r10 asm ("r10") = (unsigned long)timeout;
     asm volatile ("syscall\n"
-		  : "=a" (res), "=c" (ign)
+		  : "=a" (res)
 		  : "0" (__NR_futex),
 		    "D" (uaddr),
 		    "S" (op),
 		    "d" (val),
-		    "1" (timeout),
+		    "r" (r10),
 		    "r" (r8),
 		    "r" (r9)
-		  : "r11", "memory");
+		  : "r11", "rcx", "memory");
 
     return res;
 }

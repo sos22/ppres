@@ -98,16 +98,17 @@ my_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     long ign;
     register unsigned long r8 asm("r8") = (unsigned long)uaddr2;
     register unsigned long r9 asm("r9") = val3;
+    register unsigned long r10 asm ("r10") = (unsigned long)timeout;
     asm volatile ("syscall\n"
-	 : "=a" (res), "=c" (ign)
-	 : "0" (__NR_futex),
-	   "D" (uaddr),
-	   "S" (op),
-	   "d" (val),
-	   "1" (timeout),
-	   "r" (r8),
-	   "r" (r9)
-	 : "r11", "memory");
+		  : "=a" (res)
+		  : "0" (__NR_futex),
+		    "D" (uaddr),
+		    "S" (op),
+		    "d" (val),
+		    "r" (r10),
+		    "r" (r8),
+		    "r" (r9)
+		  : "r11", "rcx", "memory");
 
     return res;
 }
@@ -119,15 +120,15 @@ my_ptrace(enum __ptrace_request request,
 	  unsigned long data)
 {
     long res;
-    long ign;
+    register unsigned long r10 asm ("r10") = data;
     asm volatile ("syscall\n"
-		  : "=a" (res), "=c" (ign)
+		  : "=a" (res)
 		  : "0" (__NR_ptrace),
 		    "D" (request),
 		    "S" (pid),
 		    "d" (addr),
-		    "1" (data)
-		  : "r11", "memory");
+		    "r" (r10)
+		  : "r11", "cx", "memory");
     return res;
 }
 
@@ -172,6 +173,7 @@ my_err(int code, const char *fmt, ...)
     VG_(printf)("Dying: ");
     va_start(args, fmt);
     VG_(vprintf)(fmt, args);
+    VG_(printf)("\n");
     my_exit(code);
 }
 
@@ -465,8 +467,11 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
 
     /* Slurp out its brains XXX can we share any of this with the main
      * thread conversion bits? */
-    if (my_ptrace(PTRACE_GETREGS, other, 0, (unsigned long)&regs) < 0)
-	my_err(1, "getting registers");
+    VG_(memset)(&regs, 0x72, sizeof(regs));
+    if ((r = my_ptrace(PTRACE_GETREGS, other, 0, (unsigned long)&regs)) < 0)
+	my_err(1, "getting registers: %d", r);
+
+    VG_(printf)("Slurp rip %lx\n", regs.rip);
 
     /* Initialise the guest state. */
     memset(gas, 0, sizeof(*gas));
@@ -499,8 +504,9 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     DO_REG(FS_ZERO, fs_base);
 #undef DO_REG
 
-    if (my_ptrace(PTRACE_GETFPREGS, other, 0, (unsigned long)&fpregs) < 0)
-	my_err(1, "getting FP registers");
+    VG_(memset)(&fpregs, 0, sizeof(fpregs));
+    if ((r = my_ptrace(PTRACE_GETFPREGS, other, 0, (unsigned long)&fpregs)) < 0)
+	my_err(1, "getting FP registers: %d", r);
     gas->guest_SSEROUND = (fpregs.mxcsr >> 13) & 3;
     gas->guest_FTOP = (fpregs.swd >> 10) & 7;
 
