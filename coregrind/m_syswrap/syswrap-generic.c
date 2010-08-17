@@ -2476,9 +2476,10 @@ static Bool i_am_the_only_thread ( void )
 /* Wait until all other threads disappear. */
 void VG_(reap_threads)(ThreadId self)
 {
+   VG_(threads)[self].priority = -1;
    while (!i_am_the_only_thread()) {
       /* Let other thread(s) run */
-      VG_(vg_yield)();
+      maybe_yield();
       VG_(poll_signals)(self);
    }
    vg_assert(i_am_the_only_thread());

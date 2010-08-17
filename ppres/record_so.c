@@ -581,21 +581,19 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 {
     pid_t self = VG_(getpid)();
     pid_t other;
-    char *path;
+    char path[4096];
     DIR *d;
     struct dirent *de;
 
     initialise_valgrind(initial_rsp);
 
-    asprintf(&path, "/proc/%d/task", self);
+    VG_(sprintf)(path, "/proc/%d/task", self);
     d = opendir(path);
     if (!d) {
 	/* Give up */
 	my_warn("opening %s", path);
-	free(path);
 	return;
     }
-    free(path);
     while (1) {
 	de = readdir(d);
 	if (!de)
