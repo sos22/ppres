@@ -21,8 +21,9 @@
 #include <pub_tool_basics.h>
 #include <pub_tool_libcbase.h>
 #include <pub_tool_libcassert.h>
-#include <pub_tool_libcprint.h>
 #include <pub_tool_vki.h>
+#include <pub_tool_libcfile.h>
+#include <pub_tool_libcprint.h>
 #include <pub_tool_libcproc.h>
 #include <pub_tool_mallocfree.h>
 #include <pub_tool_options.h>
@@ -83,7 +84,7 @@ my_sleep(int seconds)
 			"D" (&ts),
 			"S" (&ts)
 		      : "rcx", "r11", "memory");
-	if (res < 0)
+	if (res != EINTR)
 	    return res;
     }
     return 0;
@@ -576,39 +577,131 @@ attach_thread(pid_t other)
     r = my_waitpid(worker);
 }
 
+typedef struct {
+    int fd;
+    char buf[8192];
+    int next_offset;
+    int buffer_start; /* Offset of buf[0] in file */
+    int buffer_end; /* Last offset in file which is present in buf */
+} MY_DIR;
+
+static MY_DIR *
+my_opendir(const char *path)
+{
+    SysRes sr;
+    int fd;
+    MY_DIR *res;
+
+    sr = VG_(open)((const Char *)path, VKI_O_RDONLY, 0);
+    if (sr_isError(sr))
+	return NULL;
+    fd = sr_Res(sr);
+
+    res = VG_(malloc)((HChar *)"MY_DIR", sizeof(*res));
+    memset(res, 0, sizeof(*res));
+    res->fd = fd;
+
+    return res;
+}
+
+static void
+replenish_buffer(MY_DIR *d)
+{
+    Int r;
+
+    VG_(memmove)(d->buf,
+		 d->buf + d->next_offset - d->buffer_start,
+		 d->buffer_end - d->next_offset);
+    d->buffer_start = d->next_offset;
+    r = VG_(getdents)(d->fd,
+		      (void *)d->buf + d->buffer_end - d->buffer_start,
+		      sizeof(d->buf) - (d->buffer_end - d->buffer_start));
+    d->buffer_end += r;
+}
+
+struct linux_dirent {
+    long d_ino;
+    long d_off;
+    unsigned short d_reclen;
+    char d_name[0];
+};
+
+static char *
+my_readdir(MY_DIR *d)
+{
+    struct linux_dirent *raw_de;
+
+    VG_(printf)("Buffer %d:%d, next offset %d\n",
+		d->buffer_start, d->buffer_end,
+		d->next_offset);
+    if (d->next_offset + sizeof(*raw_de) > d->buffer_end) {
+	VG_(printf)("Replenish\n");
+	replenish_buffer(d);
+	if (d->buffer_start == d->buffer_end) {
+	    /* EOF */
+	    return NULL;
+	}
+	if (d->next_offset + sizeof(*raw_de) > d->buffer_end)
+	    my_err(1, "corrupted directory");
+    }
+    VG_(printf)("Got header at %d, buffer %d:%d\n",
+		d->next_offset, d->buffer_start, d->buffer_end);
+    raw_de = (struct linux_dirent *)(d->buf + d->next_offset - d->buffer_start);
+    if (d->next_offset + raw_de->d_reclen > d->buffer_end) {
+	replenish_buffer(d);
+	raw_de = (struct linux_dirent *)(d->buf + d->next_offset - d->buffer_start);
+	if (d->next_offset + raw_de->d_reclen > d->buffer_end)
+	    my_err(1, "corrupted directory 2: %d + %d > %d",
+		   d->next_offset, raw_de->d_reclen, d->buffer_end);
+    }
+
+    VG_(printf)("Got de name %s next offset %ld reclen %d\n",
+		raw_de->d_name, raw_de->d_off,
+		raw_de->d_reclen);
+    d->next_offset += raw_de->d_reclen;
+    return raw_de->d_name;
+}
+
+static void
+my_closedir(MY_DIR *d)
+{
+    VG_(close)(d->fd);
+    VG_(free)(d);
+}
+
 void
 start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 {
     pid_t self = VG_(getpid)();
     pid_t other;
     char path[4096];
-    DIR *d;
-    struct dirent *de;
+    MY_DIR *d;
+    char *de_name;
 
     initialise_valgrind(initial_rsp);
 
-    VG_(sprintf)(path, "/proc/%d/task", self);
-    d = opendir(path);
+    VG_(sprintf)((Char *)path, "/proc/%d/task", self);
+    d = my_opendir(path);
     if (!d) {
 	/* Give up */
 	my_warn("opening %s", path);
 	return;
     }
     while (1) {
-	de = readdir(d);
-	if (!de)
+	de_name = my_readdir(d);
+	if (!de_name)
 	    break;
-	if (!strcmp(de->d_name, ".") ||
-	    !strcmp(de->d_name, ".."))
+	if (!strcmp(de_name, ".") ||
+	    !strcmp(de_name, ".."))
 	    continue;
-	other = VG_(strtoll10)((Char *)de->d_name, NULL);
+	other = VG_(strtoll10)((Char *)de_name, NULL);
 	if (other == self)
 	    continue;
 
 	VG_(printf)("Attach to %d\n", other);
 	attach_thread(other);
     }
-    closedir(d);
+    my_closedir(d);
 
     my_sleep(7);
 
