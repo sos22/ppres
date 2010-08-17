@@ -6,7 +6,6 @@
 #include <sys/ptrace.h>
 #include <sys/user.h>
 #include <dirent.h>
-#include <err.h>
 #include <errno.h>
 #include <sched.h>
 #include <setjmp.h>
@@ -44,7 +43,6 @@
 #include "../coregrind/m_scheduler/priv_sema.h"
 #include "../coregrind/pub_core_clientstate.h"
 
-int arch_prctl(int code, unsigned long *addr);
 void setup_file_descriptors(void);
 Addr ML_(allocstack)(ThreadId tid);
 extern UInt VG_(dispatch_ctr);
@@ -71,6 +69,27 @@ struct fpu_save {
 };
 
 static int
+my_sleep(int seconds)
+{
+    struct timespec ts;
+    long res;
+
+    ts.tv_sec = seconds;
+    ts.tv_nsec = 0;
+    while (ts.tv_sec || ts.tv_nsec) {
+	asm volatile ("syscall\n"
+		      : "=a" (res)
+		      : "0" (__NR_nanosleep),
+			"D" (&ts),
+			"S" (&ts)
+		      : "rcx", "r11", "memory");
+	if (res < 0)
+	    return res;
+    }
+    return 0;
+}
+
+static int
 my_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 	 int *uaddr2, int val3)
 {
@@ -78,7 +97,7 @@ my_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     long ign;
     register unsigned long r8 asm("r8") = (unsigned long)uaddr2;
     register unsigned long r9 asm("r9") = val3;
-    asm ("syscall\n"
+    asm volatile ("syscall\n"
 	 : "=a" (res), "=c" (ign)
 	 : "0" (__NR_futex),
 	   "D" (uaddr),
@@ -90,6 +109,79 @@ my_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 	 : "r11", "memory");
 
     return res;
+}
+
+static int
+my_ptrace(enum __ptrace_request request,
+	  pid_t pid,
+	  unsigned long addr,
+	  unsigned long data)
+{
+    long res;
+    long ign;
+    asm volatile ("syscall\n"
+		  : "=a" (res), "=c" (ign)
+		  : "0" (__NR_ptrace),
+		    "D" (request),
+		    "S" (pid),
+		    "d" (addr),
+		    "1" (data)
+		  : "r11", "memory");
+    return res;
+}
+
+static unsigned long
+get_fsbase()
+{
+    unsigned long buf;
+    unsigned long ign;
+
+    asm ("syscall\n"
+	 : "=a" (ign)
+	 : "0" (__NR_arch_prctl),
+	   "D" (ARCH_GET_FS),
+	   "S" (&buf)
+	 : "memory", "rcx", "r11");
+    return buf;
+}
+
+static void my_exit(int code)
+{
+    asm volatile ("syscall\n"
+		  :
+		  : "a" (__NR_exit),
+		    "D" (code)
+	);
+}
+
+static pid_t my_fork(void)
+{
+    long res;
+    asm volatile ("syscall\n"
+		  : "=a" (res)
+		  : "0" (__NR_fork)
+		  : "memory", "rcx", "r11");
+    return res;
+}
+
+static void
+my_err(int code, const char *fmt, ...)
+{
+    va_list args;
+    VG_(printf)("Dying: ");
+    va_start(args, fmt);
+    VG_(vprintf)(fmt, args);
+    my_exit(code);
+}
+
+static void
+my_warn(const char *fmt, ...)
+{
+    va_list args;
+    VG_(printf)("WARNING: ");
+    va_start(args, fmt);
+    VG_(vprintf)(fmt, args);
+    va_end(args);
 }
 
 /* Set the standard set of blocked signals, used whenever we're not
@@ -215,7 +307,7 @@ run_thread(unsigned long initial_rsp, unsigned long initial_rip)
 
     gas->guest_RSP = initial_rsp;
     gas->guest_RIP = initial_rip;
-    arch_prctl(ARCH_GET_FS, &gas->guest_FS_ZERO);
+    gas->guest_FS_ZERO = get_fsbase();
 
     asm ("stmxcsr %0\n"
 	 : "=m" (mxcsr));
@@ -342,14 +434,14 @@ copy_via_ptrace(const void *src, size_t size, pid_t pid,
 {
     unsigned x;
     for (x = 0; x < size; x += 8) {
-	if (ptrace(PTRACE_POKEDATA, pid, remote_address + x,
-		   (void *)*(unsigned long *)(src + x)) < 0)
-	    err(1, "synchronising registers into %d, progress %d/%zd", pid,
-		x, size);
+	if (my_ptrace(PTRACE_POKEDATA, pid, remote_address + x,
+		      *(unsigned long *)(src + x)) < 0)
+	    my_err(1, "synchronising registers into %d, progress %d/%zd", pid,
+		   x, size);
     }
 }
 
-void
+static void
 slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
 {
     ThreadState *tas;
@@ -362,18 +454,18 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     tas = &VG_(threads)[tid];
     gas = &tas->arch.vex;
 
-    if (ptrace(PTRACE_ATTACH, other, NULL, NULL) < 0)
-	err(1, "attaching to %d", other);
+    if (my_ptrace(PTRACE_ATTACH, other, 0, 0) < 0)
+	my_err(1, "attaching to %d", other);
 
     /* XXX: There's a race somewhere.  Make it go away. */
-    sleep(5);
+    my_sleep(5);
 
     r = my_waitpid(other);
 
     /* Slurp out its brains XXX can we share any of this with the main
      * thread conversion bits? */
-    if (ptrace(PTRACE_GETREGS, other, NULL, &regs) < 0)
-	err(1, "getting registers");
+    if (my_ptrace(PTRACE_GETREGS, other, 0, (unsigned long)&regs) < 0)
+	my_err(1, "getting registers");
 
     /* Initialise the guest state. */
     memset(gas, 0, sizeof(*gas));
@@ -406,8 +498,8 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     DO_REG(FS_ZERO, fs_base);
 #undef DO_REG
 
-    if (ptrace(PTRACE_GETFPREGS, other, NULL, &fpregs) < 0)
-	err(1, "getting FP registers");
+    if (my_ptrace(PTRACE_GETFPREGS, other, 0, (unsigned long)&fpregs) < 0)
+	my_err(1, "getting FP registers");
     gas->guest_SSEROUND = (fpregs.mxcsr >> 13) & 3;
     gas->guest_FTOP = (fpregs.swd >> 10) & 7;
 
@@ -440,19 +532,19 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     regs.rdi = tid;
     regs.rip = (unsigned long)new_thread_capture + 2;
     regs.r13 = 0x1122334455667788ul;
-    if (ptrace(PTRACE_SETREGS, other, NULL, &regs) < 0)
-	err(1, "imposing will on %d", other);
+    if (my_ptrace(PTRACE_SETREGS, other, 0, (unsigned long)&regs) < 0)
+	my_err(1, "imposing will on %d", other);
 
-    if (ptrace(PTRACE_GETREGS, other, NULL, &regs) < 0)
-	err(1, "regetting registers of %d", other);
+    if (my_ptrace(PTRACE_GETREGS, other, 0, (unsigned long)&regs) < 0)
+	my_err(1, "regetting registers of %d", other);
 
     VG_(printf)("detaching, rip %lx, stack %lx\n",
 		regs.rip, regs.rsp);
 
-    if (ptrace(PTRACE_DETACH, other, NULL, NULL) < 0)
-	err(1, "detaching %d", other);
+    if (my_ptrace(PTRACE_DETACH, other, 0, 0) < 0)
+	my_err(1, "detaching %d", other);
 
-    _exit(0);
+    my_exit(0);
 }
 
 static void
@@ -477,11 +569,9 @@ attach_thread(pid_t other)
 
     new_stack = ML_(allocstack)(tid);
 
-    worker = fork();
-    if (worker == 0) {
+    worker = my_fork();
+    if (worker == 0)
 	slurp_via_ptrace(other, tid, new_stack);
-	_exit(0);
-    }
 
     r = my_waitpid(worker);
 }
@@ -489,7 +579,7 @@ attach_thread(pid_t other)
 void
 start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 {
-    pid_t self = getpid();
+    pid_t self = VG_(getpid)();
     pid_t other;
     char *path;
     DIR *d;
@@ -501,7 +591,7 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
     d = opendir(path);
     if (!d) {
 	/* Give up */
-	warn("opening %s", path);
+	my_warn("opening %s", path);
 	free(path);
 	return;
     }
@@ -513,7 +603,7 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
 	if (!strcmp(de->d_name, ".") ||
 	    !strcmp(de->d_name, ".."))
 	    continue;
-	other = atoi(de->d_name);
+	other = VG_(strtoll10)((Char *)de->d_name, NULL);
 	if (other == self)
 	    continue;
 
@@ -522,7 +612,7 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
     }
     closedir(d);
 
-    sleep(7);
+    my_sleep(7);
 
     run_thread(initial_rsp, initial_rip);
 

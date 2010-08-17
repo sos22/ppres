@@ -54,7 +54,6 @@
 __attribute__ ((noreturn))
 void ML_(am_exit)( Int status )
 {
-  abort();
 #  if defined(VGO_linux)
    (void)VG_(do_syscall1)(__NR_exit_group, status);
 #  endif

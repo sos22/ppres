@@ -385,7 +385,7 @@ instrument_func(VgCallbackClosure *closure,
 				log_reads_expr(sb_out, out_stmt->Ist.Exit.guard);
 			break;
 		default:
-			abort();
+			VG_(tool_panic)((signed char *)"Bad statement type");
 		}
 		addStmtToIRSB(sb_out, out_stmt);
 	}
