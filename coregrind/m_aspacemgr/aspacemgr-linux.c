@@ -1531,6 +1531,7 @@ static void read_maps_callback ( Addr addr, SizeT len, UInt prot,
                                  const UChar* filename )
 {
    NSegment seg;
+
    init_nsegment( &seg );
    seg.start  = addr;
    seg.end    = addr+len-1;
@@ -1542,13 +1543,16 @@ static void read_maps_callback ( Addr addr, SizeT len, UInt prot,
    seg.hasX   = toBool(prot & VKI_PROT_EXEC);
    seg.hasT   = False;
 
+   VG_(printf)("Init maps line %lx->%lx prot %x\n",
+	       seg.start, seg.end, prot);
+
    /* Don't use the presence of a filename to decide if a segment in
       the initial /proc/self/maps to decide if the segment is an AnonV
       or FileV segment as some systems don't report the filename. Use
       the device and inode numbers instead. Fixes bug #124528. */
-   seg.kind = SkAnonV;
+   seg.kind = SkAnonC;
    if (dev != 0 && ino != 0) 
-      seg.kind = SkFileV;
+      seg.kind = SkFileC;
 
 #  if defined(VGO_darwin)
    // GrP fixme no dev/ino on darwin
