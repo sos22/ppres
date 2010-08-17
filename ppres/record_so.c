@@ -13,7 +13,6 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <linux/futex.h>
 
@@ -340,8 +339,6 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     unsigned long ign;
     int r;
 
-    printf("SLURP_VIA_PTRACE\n");
-
     tas = &VG_(threads)[tid];
     gas = &tas->arch.vex;
 
@@ -352,7 +349,6 @@ slurp_via_ptrace(pid_t other, ThreadId tid, unsigned long stack)
     sleep(5);
 
     r = my_waitpid(other);
-    printf("my_waitpid said %d\n", r);
 
     /* Slurp out its brains XXX can we share any of this with the main
      * thread conversion bits? */
@@ -479,7 +475,6 @@ start_interpreting(unsigned long initial_rsp, unsigned long initial_rip)
     DIR *d;
     struct dirent *de;
 
-    printf("Hello world\n");
     initialise_valgrind(initial_rsp);
 
     asprintf(&path, "/proc/%d/task", self);
@@ -520,7 +515,6 @@ _init()
     unsigned long ign;
     unsigned x;
 
-    printf("init() called\n");
     for (x = 0; x < VG_N_THREADS; x++)
 	VG_(threads)[x].tid = x;
 
@@ -544,6 +538,4 @@ _init()
 		    "flags", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",
 		    "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11",
 		    "xmm12", "xmm13", "xmm14", "xmm15", "memory" );
-
-    printf("Should now be being interpreted\n");
 }
