@@ -212,8 +212,6 @@ do_dirty_call(IRDirty *details, struct interpret_state *is)
 
 	if (!strcmp(details->cee->name, "amd64g_dirtyhelper_RDTSC")) {
 		res.lo = record_rdtsc();
-		res.hi = res.lo >> 32;
-		res.lo &= 0xffffffff;
 	} else if (!strcmp(details->cee->name, "helper_load_8")) {
 		res.lo = helper_load_8((const void *)args[0].lo, 0, 0);
 	} else if (!strcmp(details->cee->name, "helper_load_16")) {
