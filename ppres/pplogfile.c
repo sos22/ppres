@@ -1,10 +1,13 @@
 /* Simple thing for pretty-printing the logfile */
+#define _GNU_SOURCE
+#include <sys/fcntl.h>
 #include <ctype.h>
 #include <err.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <unistd.h>
 
 typedef unsigned long Word;
 typedef unsigned int UInt;
@@ -84,10 +87,43 @@ main(int argc, char *argv[])
 	unsigned record_nr;
 	unsigned epoch;
 
+	if (argc < 2)
+		errx(1, "need at least the name of the logfile");
+	if (argc > 3)
+		errx(1, "need at most a logfile and a starting record number");
+
 	f = fopen(argv[1], "r");
 	if (!f)
 		err(1, "opening %s", argv[1]);
+
 	record_nr = 0;
+
+	if (argc == 3) {
+		char *index;
+		int index_fd;
+		unsigned target = atoi(argv[2]);
+		struct index_record prev_record, current_record;
+
+		(void)asprintf(&index, "%s.idx", argv[1]);
+		index_fd = open(index, O_RDONLY);
+		if (index_fd < 0)
+			err(1, "opening %s", index);
+		free(index);
+
+		prev_record.record_nr = 0;
+		prev_record.offset_in_file = 0;
+		while (1) {
+			if (read(index_fd, &current_record, sizeof(current_record)) != sizeof(current_record))
+				break;
+			if (current_record.record_nr >= target)
+				break;
+			prev_record = current_record;
+		}
+
+		record_nr = prev_record.record_nr;
+		fseek(f, prev_record.offset_in_file, SEEK_SET);
+	}
+
 	epoch = 0;
 	while (1) {
 		payload = read_record(f, &h);
@@ -125,18 +161,9 @@ main(int argc, char *argv[])
 		}
 		case RECORD_memory: {
 			struct memory_record *mr = payload;
-			if (mr->ptr == 0x7ff444e32000) {
-				unsigned x;
-				for (x = 0; x < 4096; x += 16) {
-					printf("memory: %p", mr->ptr + x);
-					dump_bytes((void *)(mr + 1) + x, 16);
-					printf("\n");
-				}
-			} else {
-				printf("memory: %p", mr->ptr);
-				dump_bytes(mr + 1, h.size - sizeof(h) - sizeof(*mr));
-				printf("\n");
-			}
+			printf("memory: %p", mr->ptr);
+			dump_bytes(mr + 1, h.size - sizeof(h) - sizeof(*mr));
+			printf("\n");
 			break;
 		}
 		case RECORD_rdtsc: {
