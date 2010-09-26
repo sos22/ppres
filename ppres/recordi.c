@@ -21,8 +21,28 @@ typedef struct vki_sigaction_base sigaction_t;
 
 #include "ppres.h"
 
+static unsigned debug;
+
 //#define DBG VG_(printf)
-#define DBG(x, ...) do {} while (0)
+#define _DBG(what)							\
+	do {								\
+		if (debug) {						\
+			debug--;					\
+			what;						\
+		}							\
+	} while (0)
+#define DBG(x, args...)							\
+	_DBG(VG_(printf)("%s:%d:%d " x "\n", __FILE__, __LINE__,	\
+			 VG_(running_tid), ## args))
+
+#define do_debug(x)							\
+	do {								\
+		if (!debug)						\
+			VG_(printf)("%s:%d: -------- START DEBUG --------\n", \
+				    __FILE__, __LINE__);		\
+		if (debug < (x))					\
+			debug = (x);					\
+	} while (0)
 
 extern UInt VG_(dispatch_ctr);
 
@@ -656,6 +676,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			ppIRExpr(expr);
 			VG_(tool_panic)((Char *)"NotImplementedException");
 		}
+		DBG("get %d type %d -> %lx:%lx", offset, getType, dest->lo, dest->hi);
 		break;
 
 	case Iex_GetI: {
@@ -666,6 +687,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		idx.lo += expr->Iex.GetI.descr->base;
 		offset = idx.lo;
 		getType = expr->Iex.GetI.descr->elemTy;
+		//do_debug(100);
 		goto do_get;
 	}
 
@@ -1204,7 +1226,7 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			} in;
 			union {
 				float f;
-				unsigned long l;
+				unsigned l;
 			} out;
 			in.l = arg2.lo;
 			out.f = in.d;
@@ -1226,6 +1248,8 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			asm ("fsin\n"
 			     : "=t" (out.f)
 			     : "0" (in.f));
+			//do_debug(100);
+			DBG("sin %lx -> %lx", arg2.lo, out.l);
 			dest->lo = out.l;
 			break;
 		}
@@ -1239,6 +1263,8 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 			asm ("fcos\n"
 			     : "=t" (out.f)
 			     : "0" (in.f));
+			//do_debug(100);
+			DBG("cos %lx -> %lx", arg2.lo, out.l);
 			dest->lo = out.l;
 			break;
 		}
@@ -1500,6 +1526,13 @@ eval_expression(struct interpret_state *is, IRExpr *expr)
 		VG_(printf)("Bad expression tag %x\n", expr->tag);
 	}
 
+	_DBG(do {
+			VG_(printf)("eval ");
+			ppIRExpr(expr);
+			VG_(printf)(" -> %lx:%lx\n",
+				    res.lo, res.hi);
+		} while (0));
+
 	return res;
 }
 
@@ -1653,6 +1686,7 @@ static void translateNextBlock(struct interpret_state *is)
 		}
 	}
 	irsb->stmts_used = output;
+
 	*cache_slot = is->currentIRSB = irsb;
 }
 
@@ -1703,7 +1737,7 @@ runToEvent(struct interpret_state *is)
 			case Ist_WrTmp:
 				is->temporaries[stmt->Ist.WrTmp.tmp] =
 					eval_expression(is,stmt->Ist.WrTmp.data);
-				DBG("temp %d -> %016lx%016lx\n",
+				DBG("temp %d -> %016lx%016lx",
 				    stmt->Ist.WrTmp.tmp,
 				    is->temporaries[stmt->Ist.WrTmp.tmp].hi,
 				    is->temporaries[stmt->Ist.WrTmp.tmp].lo);
@@ -1717,7 +1751,7 @@ runToEvent(struct interpret_state *is)
 					eval_expression(is, stmt->Ist.Store.addr);
 				unsigned size = sizeofIRType(typeOfIRExpr(is->currentIRSB->tyenv,
 									  stmt->Ist.Store.data));
-				DBG("store %016lx%016lx:%d @ %016lx%016lx\n",
+				DBG("store %016lx%016lx:%d @ %016lx%016lx",
 				    addr.hi,
 				    addr.lo,
 				    size,
@@ -1777,7 +1811,7 @@ runToEvent(struct interpret_state *is)
 					eval_expression(is, stmt->Ist.CAS.details->expdLo);
 				unsigned size = sizeofIRType(typeOfIRExpr(is->currentIRSB->tyenv,
 									  stmt->Ist.CAS.details->dataLo));
-				DBG("CAS %016lx%016lx:%d:%016lx%016lx -> %016lx%016lx\n",
+				DBG("CAS %016lx%016lx:%d:%016lx%016lx -> %016lx%016lx",
 				    addr.hi,
 				    addr.lo,
 				    size,
@@ -1819,7 +1853,7 @@ runToEvent(struct interpret_state *is)
 				do_put:
 				byte_offset = offset & 7;
 				dest = read_reg(is->regs, offset - byte_offset);
-				DBG("put %d -> %016lx%016lx\n",
+				DBG("put %d -> %016lx%016lx",
 				    offset, put_data.hi, put_data.lo);
 				switch (put_type) {
 				case Ity_I8:
@@ -1890,6 +1924,7 @@ runToEvent(struct interpret_state *is)
 
 			case Ist_PutI: {
 				struct expression_result idx = eval_expression(is, stmt->Ist.PutI.ix);
+				unsigned old_idx = idx.lo;
 
 				/* Crazy bloody encoding scheme */
 				idx.lo += stmt->Ist.PutI.bias;
@@ -1900,6 +1935,12 @@ runToEvent(struct interpret_state *is)
 				offset = idx.lo;
 				put_data = eval_expression(is, stmt->Ist.PutI.data);
 				put_type = stmt->Ist.PutI.descr->elemTy;
+				DBG("PutI offset %d bias %d nElems %d size %d base %d -> index %d",
+				    old_idx, stmt->Ist.PutI.bias,
+				    stmt->Ist.PutI.descr->nElems,
+				    sizeofIRType(stmt->Ist.PutI.descr->elemTy),
+				    stmt->Ist.PutI.descr->base,
+				    offset);
 				goto do_put;
 			}
 

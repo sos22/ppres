@@ -732,10 +732,11 @@ _init()
 		  "xchg %%rsp, %%rdi\n"
 		  "call start_interpreting@PLT\n"
 		  
-		  "1:\n" /* We never actually run this, but it's the first
-			    thing which gets interpreted.  Everything register
-			    except rip, rsp, and the floating point state is
-			    clobbered when we get here. */
+		  "1:\n" /* We never actually run this, but it's the
+			    first thing which gets interpreted.  Every
+			    register except rip, rsp, and the floating
+			    point state is clobbered when we get
+			    here. */
 		  "popq %%rbp\n" /* Can't asm clobber rbp, so save it
 				  * ourselves. */
 		  : "=D" (ign)

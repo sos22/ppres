@@ -1,6 +1,7 @@
 #include <sys/types.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
 
 volatile unsigned global;
@@ -22,8 +23,9 @@ int
 main()
 {
   pthread_t pthr;
-  unsigned x;
 
+  sleep(10);
+  printf("Hello\n");
   pthread_create(&pthr, NULL, thread, NULL);
   while (1) {
     global++;

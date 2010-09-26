@@ -175,10 +175,17 @@ emit_record(struct record_emitter *re,
 }
 
 static void
-close_logfile(struct record_emitter *re)
+flush_logfile(struct record_emitter *re)
 {
 	if (re->current_block_used != 0)
 		VG_(write)(re->fd, re->current_block, re->current_block_used);
+	re->current_block_used = 0;
+}
+
+static void
+close_logfile(struct record_emitter *re)
+{
+	flush_logfile(re);
 	VG_(close)(re->fd);
 	VG_(free)(re->current_block);
 	re->current_block = NULL;
@@ -521,7 +528,6 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_exit_group:
 	case __NR_set_tid_address:
 	case __NR_set_robust_list:
-	case __NR_rt_sigprocmask:
 	case __NR_lseek:
 	case __NR_exit:
 	case __NR_getuid:
@@ -553,6 +559,13 @@ post_syscall(ThreadId tid, UInt syscall_nr, UWord *syscall_args, UInt nr_args,
 	case __NR_shmget:
 	case __NR_dup2:
 	case __NR_dup:
+		break;
+
+	case __NR_rt_sigprocmask:
+		if (!sr_isError(res) && syscall_args[2]) {
+			capture_memory((void *)syscall_args[2],
+				       syscall_args[3]);
+		}
 		break;
 
 	case __NR_accept:
@@ -937,31 +950,13 @@ process_proc_line(char *line, struct record_emitter *logfile,
 	    (regs->guest_RSP >= start && regs->guest_RSP < end))
 		flags |= MAP_GROWSDOWN | MAP_STACK;
 
-	if (!(prot & PROT_READ)) {
-		/* Grant ourselves read access to the memory so that
-		 * we can dump it out */
-		/* This is kind of a stupid thing for a program to do
-		   on x86 (because no read implies no access at all),
-		   but it is technically valid, and the contents of
-		   the memory can make a difference if they mprotect()
-		   it later. */
-		my_mprotect((void *)start,
-			    end - start,
-			    PROT_READ);
-	}
 	amr = emit_record(logfile, RECORD_allocate_memory, sizeof(*amr));
 	amr->start = start;
 	amr->size = end - start;
 	amr->prot = prot;
 	amr->flags = flags;
-	capture_memory((void *)start, end - start);
-	if (!(prot & PROT_READ)) {
-		/* Put the protections back to what they were
-		 * again. */
-		my_mprotect((void *)start,
-			    end - start,
-			    prot);
-	}
+	if (prot != 0)
+		capture_memory((void *)start, end - start);
 }
 
 extern Addr  VG_(brk_limit);
@@ -1100,11 +1095,16 @@ pre_deliver_signal(ThreadId tid, Int signal, Bool alt_stack,
 {
 	struct signal_record *sr;
 
+	VG_(printf)("pre_delivery_signal\n");
 	sr = emit_record(&logfile, RECORD_signal, sizeof(*sr));
+	VG_(printf)("sr is %p\n", sr);
 	sr->rip = rip;
 	sr->signo = signal;
 	sr->err = err;
 	sr->virtaddr = virtaddr;
+	VG_(printf)("Flushing.\n");
+	flush_logfile(&logfile);
+	VG_(printf)("Done pre deliver.\n");
 }
 
 extern void (*VG_(tool_about_to_start))(void);
