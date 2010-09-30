@@ -929,6 +929,7 @@ void VG_(redir_initialise) ( void )
 
 #  elif defined(VGP_amd64_linux)
    /* Redirect vsyscalls to local versions */
+#if 0
    add_hardwired_active(
       0xFFFFFFFFFF600000ULL,
       (Addr)&VG_(amd64_linux_REDIR_FOR_vgettimeofday) 
@@ -937,6 +938,7 @@ void VG_(redir_initialise) ( void )
       0xFFFFFFFFFF600400ULL,
       (Addr)&VG_(amd64_linux_REDIR_FOR_vtime) 
    );
+#endif
 
    /* If we're using memcheck, use these intercepts right from
       the start, otherwise ld.so makes a lot of noise. */

@@ -41,6 +41,7 @@
 
 #include "priv_aspacemgr.h"
 #include "config.h"
+#include "pub_tool_libcprint.h"
 
 
 /* Note: many of the exported functions implemented below are
@@ -1542,6 +1543,9 @@ static void read_maps_callback ( Addr addr, SizeT len, UInt prot,
    seg.hasX   = toBool(prot & VKI_PROT_EXEC);
    seg.hasT   = False;
 
+   VG_(printf)("proc maps line has %lx, %lx, %x, %s\n",
+	       addr, len, prot, filename);
+
    /* Don't use the presence of a filename to decide if a segment in
       the initial /proc/self/maps to decide if the segment is an AnonV
       or FileV segment as some systems don't report the filename. Use
@@ -1549,6 +1553,9 @@ static void read_maps_callback ( Addr addr, SizeT len, UInt prot,
    seg.kind = SkAnonV;
    if (dev != 0 && ino != 0) 
       seg.kind = SkFileV;
+
+   if (addr == 0xffffffffff600000)
+     seg.kind = SkAnonC;
 
 #  if defined(VGO_darwin)
    // GrP fixme no dev/ino on darwin

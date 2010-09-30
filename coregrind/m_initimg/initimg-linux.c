@@ -379,7 +379,6 @@ struct auxv *find_auxv(UWord* sp)
    return (struct auxv *)sp;
 }
 
-static 
 Addr setup_client_stack( void*  init_sp,
                          char** orig_envp, 
                          const ExeInfo* info,
@@ -450,7 +449,9 @@ Addr setup_client_stack( void*  init_sp,
    /* now, how big is the auxv? */
    auxsize = sizeof(*auxv);	/* there's always at least one entry: AT_NULL */
    for (cauxv = orig_auxv; cauxv->a_type != AT_NULL; cauxv++) {
-      if (cauxv->a_type == AT_RANDOM)
+     if (cauxv->a_type == AT_RANDOM ||
+	 cauxv->a_type == AT_SYSINFO_EHDR ||
+	 cauxv->a_type == AT_SYSINFO)
 	 continue;
       if (cauxv->a_type == AT_PLATFORM ||
           cauxv->a_type == AT_BASE_PLATFORM)
@@ -624,8 +625,12 @@ Addr setup_client_stack( void*  init_sp,
    for (; orig_auxv->a_type != AT_NULL; auxv++, orig_auxv++) {
       const NSegment *ehdrseg;
 
-      if (orig_auxv->a_type == AT_RANDOM)
-	 continue;
+      if (orig_auxv->a_type == AT_RANDOM ||
+	  orig_auxv->a_type == AT_SYSINFO ||
+	  orig_auxv->a_type == AT_SYSINFO_EHDR) {
+	auxv--;
+	continue;
+      }
 
       /* copy the entry... */
       *auxv = *orig_auxv;

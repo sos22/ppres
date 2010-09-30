@@ -858,8 +858,6 @@ process_proc_line(char *line, struct record_emitter *logfile,
 
 	/* This isn't really ideal, but I don't know any other way of
 	 * doing it. */
-	if (!VG_(strcmp)((Char *)path, (Char *)"[vsyscall]"))
-		return;
 	if (!VG_(strcmp)((Char *)path, (Char *)"[stack]") ||
 	    (regs->guest_RSP >= start && regs->guest_RSP < end))
 		flags |= MAP_GROWSDOWN | MAP_STACK;
