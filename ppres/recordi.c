@@ -1680,7 +1680,7 @@ static void translateNextBlock(struct interpret_state *is)
 
 	output = 0;
 	for (input = 0; input < irsb->stmts_used; input++) {
-		if (irsb->stmts[input]->tag != Ist_IMark) {
+		if (1 || irsb->stmts[input]->tag != Ist_IMark) {
 			irsb->stmts[output] = irsb->stmts[input];
 			output++;
 		}
@@ -1721,7 +1721,7 @@ runToEvent(struct interpret_state *is)
 			case Ist_NoOp:
 				break;
 			case Ist_IMark:
-#if 0
+#if 1
 				record_instr(stmt->Ist.IMark.addr,
 					     read_reg(is->regs, FOOTSTEP_REG_0_OFFSET),
 					     read_reg(is->regs, FOOTSTEP_REG_1_OFFSET),
