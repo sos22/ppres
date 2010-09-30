@@ -1955,7 +1955,16 @@ runToEvent(struct interpret_state *is)
 			  is->currentIRSB->jumpkind == Ijk_Call ||
 			  is->currentIRSB->jumpkind == Ijk_Ret ||
 			  is->currentIRSB->jumpkind == Ijk_Sys_syscall ||
-			  is->currentIRSB->jumpkind == Ijk_Yield);
+			  is->currentIRSB->jumpkind == Ijk_Yield ||
+			  is->currentIRSB->jumpkind == Ijk_ClientReq);
+
+		if (is->currentIRSB->jumpkind == Ijk_ClientReq) {
+			VG_(printf)("Increasin priority of %d\n",
+				    VG_(running_tid));
+			VG_(threads)[VG_(running_tid)].priority += 1000;
+			VG_(printf)("Is now %d\n",
+				    VG_(threads)[VG_(running_tid)].priority);
+		}
 
 		{
 			struct expression_result next_addr =

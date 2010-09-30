@@ -298,6 +298,15 @@ release_sched_lock(void)
   }
 }
 
+void
+increase_priority(ThreadId tid)
+{
+  ThreadState *ts = &VG_(threads)[tid];
+  VG_(printf)("Increase thread %d priority from %d to 10000\n",
+	      ts->priority, 10000);
+  ts->priority = 10000;
+}
+
 static void
 acquire_run_token(ThreadId tid)
 {

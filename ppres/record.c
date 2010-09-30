@@ -1075,15 +1075,19 @@ static Bool
 handle_client_request(ThreadId tid, UWord *arg_block, UWord *ret)
 {
 	struct client_req_record *crr;
+	unsigned a;
 
 	if (VG_IS_TOOL_USERREQ('P', 'P', arg_block[0])) {
 		crr = emit_record(&logfile, RECORD_client, sizeof(*crr));
 		crr->flavour = arg_block[0];
 	} else if (VG_IS_TOOL_USERREQ('E', 'A', arg_block[0])) {
-		if ((arg_block[0] & 0xffff) == 0) {
+		a = arg_block[0] & 0xffff;
+		if (a == 0) {
 			client_entering_monitor(tid);
-		} else {
+		} else if (a == 1) {
 			client_exiting_monitor(tid);
+		} else {
+			increase_priority(tid);
 		}
 	}
 	return False;
